@@ -1,6 +1,47 @@
 # Changelog
 
-## [2.1.0-beta.3][Unreleased] - 08-21-2026 (beta)
+## [2.2.0-beta.1] - 08-28-2026 (beta)
+
+> Eight global themes replace the dark/light switch, the NeX-Up Generator Studio
+> arrives with two new preroll templates (your own message, and a scannable QR
+> code NeXroll generates), and a batch of controls that looked functional but
+> were wired to nothing now do what they say. Also fixes a retention bug that
+> quietly stopped NeX-Up from ever deleting a trailer. No configuration change;
+> the new settings columns migrate automatically on first start.
+
+### Added
+
+- **Eight global themes, applied the same way dark and light were.** Midnight, Daylight, Cinema, Nocturne, Parchment, Terminal, Neon, and Carbon. Each declares a light or dark base, so anything that keyed off the old mode keeps working; the theme adds only color on top. Pick one from the swatch grid in Settings > General, or cycle with the topbar button. An existing dark/light preference migrates to Midnight or Daylight on first load, so nothing resets. The five section accents are re-tuned per theme so Library, Schedules, NeX-Up, Connect, and Community stay distinguishable at a glance without fighting the palette.
+- **The NeX-Up Generator Studio**, a single workspace for building animated prerolls: template, timing, typography, colors, logo, soundtrack, and render profile, with a live animated preview that is the exact thing that gets rendered.
+- **A Custom Message template.** Your own headline and an optional supporting line, with no fixed wording and nothing translated — for the intros the other templates cannot express ("Back in 5 minutes", a house rule, an announcement). The layout adapts to one line or two.
+- **A QR Code template.** Enter a link and NeXroll generates the code, drawn on a white plate so it stays scannable on every theme, with an optional caption underneath. Useful for sharing a watch-party invite, a Discord link, or guest Wi-Fi details on screen. The preview shows the real encoded code, so you can test it with your phone before rendering.
+- **A "Show NeX-Up trailers" filter on the Library page**, plus a More filters toggle that hides generator output by default, so the Library keeps showing your permanent collection rather than auto-managed files.
+- **A real Filters panel on Schedules** (playback, behavior, conflicts-only), wired into the result list.
+
+### Changed
+
+- **Every page now shares the approved layout system** — Library, Schedules, NeX-Up, Connect, Community Prerolls, Settings, and their supporting pages — including the search toolbars, the schedule calendar, and the NeX-Up pages.
+- **Light mode is a complete companion theme**, not a partial inversion: sidebar, headers, forms, cards, tables, status surfaces, inspectors, and dialogs all use dedicated light tokens.
+- **The trailer retention setting says what it does.** It was labelled "Deleted trailer history / Keep cleanup records for diagnostics", describing a diagnostics feature that does not exist — so anyone adjusting it was scheduling deletion of their trailers while believing they were changing log retention. It now reads "Delete trailers after", states that it counts from the release date, and calls the 0 option "Never delete". The Your Trailers column reads "Deletes on" rather than "Retention", and an unscheduled trailer says "Not scheduled".
+- **Failed trailer downloads now report the real cause.** The reported error used to be whichever strategy ran last, which is the browser-cookie one — so a trailer blocked for an unrelated reason surfaced "Could not copy Chrome cookie database" and sent people to fix cookies that were never the problem.
+- The changelog shipped inside NeXroll now covers 2.0.0 and later. Earlier entries moved to `CHANGELOG-ARCHIVE.md` in the repo. The served file drops from 224 KB to 31 KB.
+- The Generator's Render confidence panel and its Render button now derive from one list of requirements, so the panel can no longer read all-clear while the button stays disabled.
+
+### Fixed
+
+- **NeX-Up never deleted a trailer, so storage grew without bound.** Retention matched rows on `status == 'downloaded'`, but a completed download can sit at the model default of `pending` — with a real file, a `downloaded_at` and a `local_path`, yet invisible to every query keyed on that status, about a dozen of them. The Your Trailers page showed a removal date that silently passed and nothing happened; observed on a trailer 23 days past its window. Affected rows are repaired once at startup, and retention now keys on the download itself, excluding only in-flight transfers so nothing is deleted mid-write.
+- **Failed downloads left `.part` and fragment files behind forever.** They accumulated in the storage folder, counted toward reported usage, and left yt-dlp trying to resume a partial that would only fail again. They are now cleaned up when a title exhausts every strategy, and existing leftovers are swept at the start of each sync.
+- **NeXroll reported the wrong version number.** `backend/version.py` shadowed the root `version.py` on import, so 2.1.0-beta.3 shipped describing itself as 2.1.0-beta.2. The backend file now reads the root one, which is the single source of truth.
+- **Themes stopped at the edge of the dashboard.** `--raised-bg` was referenced about 60 times and never declared, so every surface asking for it silently fell back to transparent, and the dashboard and sidebar each redeclared the whole palette with hardcoded values.
+- **Connect and Path Mappings reported the server selected for editing rather than the one actually connected.** Path mapping counts also included the form's blank placeholder row, and Schedules counted every enabled schedule instead of the active ones.
+- **Controls that did nothing now work.** Schedules' Compact/Detailed toggled a state no row read, and its Filters button navigated to the Conflicts page. NeX-Up's sync coverage bar was hardcoded to `enabled ? 5 : 2` and measured nothing (removed); the Upcoming week strip was inert divs and now filters by day; enable/disable used a three-dot menu icon instead of a toggle; the "Reconfigure sign-in" wizard existed only inside a dead render function, so the button flipped state with nothing to show; and Automatic trailer downloads always showed an ON badge even when off. On Video scaling, the row Scale button only selected the row instead of scaling it.
+- **The Now Showing preview disagreed with the video it was previewing**, omitting the "on"/"at" connector between the title and the server name that the renderer has always written.
+- Settings and NeX-Up Settings sat in two independent columns, so paired cards never matched height, and the Fallback Filler section used a different type scale from its neighbours.
+- Save and Discard controls are gone from pages that save on change, along with the Connect page's diagnostics button, which did nothing.
+- Opening category selectors for multiple Community Prerolls no longer links their choices together, its preview no longer shows a raw file path as the identifier, and its results-per-page control now refetches.
+- Theme application runs before the browser paints, so the old theme no longer flashes while the app loads.
+
+## [2.1.0-beta.3] - 08-21-2026 (beta)
 
 > A full dashboard UI pass, plus a yt-dlp reliability fix (a startup race that could silently break every
 > trailer download, plus a self-service update path so Docker users aren't

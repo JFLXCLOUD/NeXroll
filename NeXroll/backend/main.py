@@ -292,6 +292,10 @@ def ensure_schema() -> None:
                 ("nexup_dynamic_preroll_subject_color", "nexup_dynamic_preroll_subject_color TEXT"),
                 ("nexup_dynamic_preroll_audio_mode", "nexup_dynamic_preroll_audio_mode TEXT DEFAULT 'none'"),
                 ("nexup_dynamic_preroll_custom_audio_path", "nexup_dynamic_preroll_custom_audio_path TEXT"),
+                ("nexup_dynamic_preroll_custom_headline", "nexup_dynamic_preroll_custom_headline TEXT"),
+                ("nexup_dynamic_preroll_custom_subtext", "nexup_dynamic_preroll_custom_subtext TEXT"),
+                ("nexup_dynamic_preroll_qr_data", "nexup_dynamic_preroll_qr_data TEXT"),
+                ("nexup_dynamic_preroll_qr_caption", "nexup_dynamic_preroll_qr_caption TEXT"),
                 ("nexup_coming_soon_list_resolution", "nexup_coming_soon_list_resolution TEXT DEFAULT '1080'"),
                 ("nexup_coming_soon_list_frame_rate", "nexup_coming_soon_list_frame_rate INTEGER DEFAULT 30"),
                 ("nexup_coming_soon_list_render_quality", "nexup_coming_soon_list_render_quality TEXT DEFAULT 'balanced'"),
@@ -22957,6 +22961,10 @@ async def generate_preroll_from_preview(
     title_color: Optional[str] = Body(None, description="Optional #RRGGBB heading color override"),
     subject_color: Optional[str] = Body(None, description="Optional #RRGGBB server-name color override"),
     audio_mode: str = Body("none", description="Soundtrack choice: none, default, or custom"),
+    custom_headline: Optional[str] = Body(None, description="Custom Message template: main line"),
+    custom_subtext: Optional[str] = Body(None, description="Custom Message template: supporting line"),
+    qr_data: Optional[str] = Body(None, description="QR Code template: URL or text to encode"),
+    qr_caption: Optional[str] = Body(None, description="QR Code template: caption under the code"),
     name: Optional[str] = Body(None, description="Optional user-supplied name; saves this as a distinct, individually selectable preroll instead of overwriting the template/theme combo's file"),
     db: Session = Depends(get_db)
 ):
@@ -23081,6 +23089,10 @@ async def generate_preroll_from_preview(
                     nexup_dynamic_preroll_title_color=normalized_title_color,
                     nexup_dynamic_preroll_subject_color=normalized_subject_color,
                     nexup_dynamic_preroll_audio_mode=normalized_audio_mode,
+                    nexup_dynamic_preroll_custom_headline=(custom_headline or '').strip() or None,
+                    nexup_dynamic_preroll_custom_subtext=(custom_subtext or '').strip() or None,
+                    nexup_dynamic_preroll_qr_data=(qr_data or '').strip() or None,
+                    nexup_dynamic_preroll_qr_caption=(qr_caption or '').strip() or None,
                 )
             )
             db.commit()
@@ -23126,6 +23138,37 @@ async def generate_preroll_from_preview(
         log_event('ERROR', 'user', f'Preroll from preview generation failed: {e}', source='generate_preroll_from_preview')
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/nexup/preroll/qr")
+def render_preroll_qr(data: str, size: int = 620):
+    """Render `data` as a QR PNG for the generator preview.
+
+    The preview canvas draws the same code the backend would encode, so what the
+    operator scans while designing is what ends up in the rendered preroll.
+    """
+    payload = (data or '').strip()
+    if not payload:
+        raise HTTPException(status_code=400, detail="No data to encode")
+    if len(payload) > 2000:
+        raise HTTPException(status_code=400, detail="QR payload too long (2000 character limit)")
+    try:
+        import segno
+    except ImportError:
+        raise HTTPException(status_code=500, detail="QR support requires the 'segno' package")
+    try:
+        target = max(120, min(1200, int(size)))
+        qr = segno.make(payload, error='h')
+        modules = qr.symbol_size(border=4)[0]
+        scale = max(2, int(target / max(1, modules)))
+        buf = io.BytesIO()
+        qr.save(buf, kind='png', scale=scale, border=4, dark='#000000', light='#ffffff')
+        return Response(content=buf.getvalue(), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=300"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"QR render failed: {e}")
+
+
 @app.get("/nexup/preroll/settings")
 def get_preroll_settings(db: Session = Depends(get_db)):
     """Get saved dynamic preroll settings"""
@@ -23146,8 +23189,12 @@ def get_preroll_settings(db: Session = Depends(get_db)):
             "subject_color": None,
             "audio_mode": "none",
             "custom_audio_filename": None,
+            "custom_headline": "COMING SOON",
+            "custom_subtext": "",
+            "qr_data": "",
+            "qr_caption": "SCAN TO LEARN MORE",
         }
-    
+
     storage_path = getattr(setting, 'nexup_storage_path', None)
     preroll_path = None
     
@@ -23175,7 +23222,11 @@ def get_preroll_settings(db: Session = Depends(get_db)):
         "audio_mode": resolve_dynamic_audio_mode(getattr(setting, 'nexup_dynamic_preroll_audio_mode', 'none')),
         "preroll_path": preroll_path,
         "custom_logo_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', '') or '') or None,
-        "custom_audio_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', '') or '') or None
+        "custom_audio_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', '') or '') or None,
+        "custom_headline": getattr(setting, 'nexup_dynamic_preroll_custom_headline', None) or "COMING SOON",
+        "custom_subtext": getattr(setting, 'nexup_dynamic_preroll_custom_subtext', None) or "",
+        "qr_data": getattr(setting, 'nexup_dynamic_preroll_qr_data', None) or "",
+        "qr_caption": getattr(setting, 'nexup_dynamic_preroll_qr_caption', None) or "SCAN TO LEARN MORE",
     }
 
 @app.get("/nexup/preroll/list")

@@ -25,6 +25,19 @@ const FONT_SIZES = [
   { value: 1.3, label: 'Extra large', detail: '130%' },
 ];
 
+// Keyed by the Render confidence check label, so the blocked-render line always
+// names the step the checklist is actually flagging.
+const BLOCK_REASONS = {
+  'FFmpeg encoder': 'Install FFmpeg',
+  'Output folder': 'Choose a NeX-Up storage folder',
+  'Media source': 'Connect Radarr or Sonarr',
+  'Titles to list': 'Raise the maximum item count above zero',
+  'Custom soundtrack': 'Upload a soundtrack or switch to Default audio',
+  'Server name': 'Enter a server name',
+  Headline: 'Enter a headline for the custom message',
+  'Link to encode': 'Enter the link the QR code should encode',
+};
+
 const COPY = {
   en: { coming: 'COMING SOON', to: 'to', feature: 'FEATURE PRESENTATION', now: 'NOW SHOWING', comingTo: 'COMING SOON TO', available: 'Available Now!' },
   fr: { coming: 'PROCHAINEMENT', to: 'sur', feature: 'LONG M\u00c9TRAGE', now: '\u00c0 L\'AFFICHE', comingTo: 'PROCHAINEMENT SUR', available: 'Maintenant disponible!' },
@@ -102,7 +115,7 @@ function RenderControls({ settings, update, defaultQuality }) {
   );
 }
 
-function DynamicCanvas({ settings, selectedTemplate, selectedTheme, previewRef, logoUrl }) {
+function DynamicCanvas({ settings, selectedTemplate, selectedTheme, previewRef, logoUrl, qrUrl }) {
   const template = settings.template || 'coming_soon';
   const canvasRef = React.useRef(null);
 
@@ -114,6 +127,7 @@ function DynamicCanvas({ settings, selectedTemplate, selectedTheme, previewRef, 
       theme: { ...selectedTheme },
       templateName: selectedTemplate?.name || 'Dynamic preroll',
       logoUrl,
+      qrUrl,
     }).then(options => {
       if (!disposed) stopPreview = startDynamicPrerollPreview(canvasRef.current, options);
     });
@@ -121,7 +135,7 @@ function DynamicCanvas({ settings, selectedTemplate, selectedTheme, previewRef, 
       disposed = true;
       stopPreview();
     };
-  }, [settings, selectedTemplate?.name, selectedTheme, logoUrl]);
+  }, [settings, selectedTemplate?.name, selectedTheme, logoUrl, qrUrl]);
 
   const assignPreviewRef = node => {
     canvasRef.current = node;
@@ -185,7 +199,7 @@ export default function NeXUpGeneratorStudio(props) {
     settings, generatorTab, setGeneratorTab,
     dynamicSettings, setDynamicSettings, templates, colorThemes, ffmpegAvailable,
     dynamicGenerating, generatedPrerolls, onGenerateDynamic, onPreviewDynamic, onDeleteDynamic,
-    previewRef, dynamicLogoUrl, comingLogoUrl, onUploadAsset, onRemoveAsset,
+    previewRef, dynamicLogoUrl, dynamicQrUrl, comingLogoUrl, onUploadAsset, onRemoveAsset,
     comingSettings, setComingSettings, comingGenerating, generatedComingLists,
     onGenerateComing, onPreviewComing, onDeleteComing, onNavigate, onSaveDynamic, onSaveComing,
   } = props;
@@ -206,8 +220,40 @@ export default function NeXUpGeneratorStudio(props) {
   const updateDynamic = updates => setDynamicSettings(previous => ({ ...previous, ...updates }));
   const updateComing = updates => setComingSettings(previous => ({ ...previous, ...updates }));
   const isGenerating = generatorTab === 'dynamic' ? dynamicGenerating : comingGenerating;
-  const customDynamicAudioReady = dynamicSettings.audioMode !== 'custom' || Boolean(dynamicSettings.customAudioFilename);
-  const canGenerate = connected && Boolean(settings.storage_path) && ffmpegAvailable && (generatorTab !== 'dynamic' || (Boolean(dynamicSettings.server_name?.trim()) && customDynamicAudioReady));
+  // Custom Message and QR Code render no server name and no translated copy, so
+  // they require their own field instead of the server name every other
+  // template gates on.
+  const isCustomText = dynamicSettings.template === 'custom_text';
+  const isQrShare = dynamicSettings.template === 'qr_share';
+  const usesServerName = !isCustomText && !isQrShare;
+  const dynamicRequiredField = isCustomText ? 'Headline' : isQrShare ? 'Link to encode' : 'Server name';
+  const dynamicRequiredReady = isCustomText
+    ? Boolean(String(dynamicSettings.customHeadline || '').trim() || String(dynamicSettings.customSubtext || '').trim())
+    : isQrShare
+      ? Boolean(String(dynamicSettings.qrData || '').trim())
+      : Boolean(dynamicSettings.server_name?.trim());
+  // One list drives both the Generate button and the Render confidence panel, so
+  // the panel can never read all-clear while the button stays disabled. Each
+  // entry mirrors a condition the backend actually enforces: dynamic prerolls
+  // draw their own canvas and need no Radarr/Sonarr connection, while a Coming
+  // Soon list is built from what those sources report.
+  const renderChecks = generatorTab === 'dynamic'
+    ? [
+      { label: 'FFmpeg encoder', ready: ffmpegAvailable },
+      { label: 'Output folder', ready: Boolean(settings.storage_path) },
+      { label: dynamicRequiredField, ready: dynamicRequiredReady },
+      ...(dynamicSettings.audioMode === 'custom'
+        ? [{ label: 'Custom soundtrack', ready: Boolean(dynamicSettings.customAudioFilename) }]
+        : []),
+    ]
+    : [
+      { label: 'FFmpeg encoder', ready: ffmpegAvailable },
+      { label: 'Output folder', ready: Boolean(settings.storage_path) },
+      { label: 'Media source', ready: connected },
+      { label: 'Titles to list', ready: Number(comingSettings.maxItems) > 0 },
+    ];
+  const canGenerate = renderChecks.every(check => check.ready);
+  const blockingCheck = renderChecks.find(check => !check.ready);
   const generate = () => generatorTab === 'dynamic' ? onGenerateDynamic() : onGenerateComing(comingSettings.layout);
   const previewItem = generatorTab === 'dynamic'
     ? (dynamicSettings.preroll_path ? { filename: String(dynamicSettings.preroll_path).split(/[\\/]/).pop() } : generatedPrerolls[0])
@@ -220,7 +266,7 @@ export default function NeXUpGeneratorStudio(props) {
         <div className="nx-gen-toolbar-actions"><div className="nx-gen-mode"><button type="button" className={generatorTab === 'dynamic' ? 'active' : ''} onClick={() => setGeneratorTab('dynamic')}><Sparkles size={14} /> Dynamic</button><button type="button" className={generatorTab === 'coming-soon' ? 'active' : ''} onClick={() => setGeneratorTab('coming-soon')}><Film size={14} /> Coming Soon</button></div><div className="nx-gen-health"><StudioBadge tone={ffmpegAvailable ? 'good' : 'warn'}>{ffmpegAvailable ? 'FFmpeg ready' : 'FFmpeg required'}</StudioBadge><StudioBadge tone={settings.storage_path ? 'good' : 'warn'}>{settings.storage_path ? 'Storage ready' : 'Choose storage'}</StudioBadge></div></div>
       </section>
 
-      {!connected && <div className="nx-gen-notice"><AlertTriangle size={17} /><div><strong>Connect Radarr or Sonarr before rendering.</strong><span>You can design and save defaults now. A connected source is required when you generate.</span></div><button type="button" className="nx-gen-btn subtle" onClick={() => onNavigate('nexup')}>Open connections</button></div>}
+      {!connected && generatorTab !== 'dynamic' && <div className="nx-gen-notice"><AlertTriangle size={17} /><div><strong>Connect Radarr or Sonarr before rendering.</strong><span>A Coming Soon list is built from the upcoming titles those sources report, so one has to be connected to generate.</span></div><button type="button" className="nx-gen-btn subtle" onClick={() => onNavigate('nexup')}>Open connections</button></div>}
       {!ffmpegAvailable && <div className="nx-gen-notice danger"><AlertTriangle size={17} /><div><strong>FFmpeg is not available.</strong><span>Install FFmpeg to enable H.264 video rendering. All design controls remain editable.</span></div></div>}
 
       <div className="nx-gen-layout">
@@ -232,9 +278,17 @@ export default function NeXUpGeneratorStudio(props) {
               <div className="nx-gen-card-body">
                 <div className="nx-gen-fields">
                   <label><span>Name this preroll <small>(optional)</small></span><input value={dynamicSettings.name || ''} onChange={event => updateDynamic({ name: event.target.value })} placeholder="e.g. Holiday Intro" /><small>Naming it saves a distinct file you can pick individually in the Sequence Builder. Leave blank to keep overwriting the template/theme combo as before.</small></label>
-                  <label><span>Server name</span><input value={dynamicSettings.server_name} onChange={event => updateDynamic({ server_name: event.target.value })} placeholder="My Media Server" /></label>
+                  {usesServerName && <label><span>Server name</span><input value={dynamicSettings.server_name} onChange={event => updateDynamic({ server_name: event.target.value })} placeholder="My Media Server" /></label>}
+                  {isCustomText && <>
+                    <label><span>Headline</span><input value={dynamicSettings.customHeadline || ''} onChange={event => updateDynamic({ customHeadline: event.target.value })} placeholder="BACK IN 5 MINUTES" maxLength={60} /></label>
+                    <label><span>Supporting line <small>(optional)</small></span><input value={dynamicSettings.customSubtext || ''} onChange={event => updateDynamic({ customSubtext: event.target.value })} placeholder="Grab a refill" maxLength={80} /></label>
+                  </>}
+                  {isQrShare && <>
+                    <label><span>Link or text to encode</span><input value={dynamicSettings.qrData || ''} onChange={event => updateDynamic({ qrData: event.target.value })} placeholder="https://example.com/watch-party" maxLength={2000} /><small>Anything scannable: a URL, a Wi-Fi guest note, a Discord invite. The preview shows the real code, so test it with your phone before rendering.</small></label>
+                    <label><span>Caption <small>(optional)</small></span><input value={dynamicSettings.qrCaption || ''} onChange={event => updateDynamic({ qrCaption: event.target.value })} placeholder="SCAN TO LEARN MORE" maxLength={60} /></label>
+                  </>}
                   <label><span>Duration</span><select value={dynamicSettings.duration} onChange={event => updateDynamic({ duration: Number(event.target.value) })}>{[3, 4, 5, 6, 7, 8, 10, 15, 20].map(value => <option key={value} value={value}>{value} seconds</option>)}</select></label>
-                  <label><span>Text language</span><select value={dynamicSettings.language} onChange={event => updateDynamic({ language: event.target.value })}><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="de">German</option></select></label>
+                  {usesServerName && <label><span>Text language</span><select value={dynamicSettings.language} onChange={event => updateDynamic({ language: event.target.value })}><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="de">German</option></select></label>}
                   <label><span>Font size</span><select aria-label="Dynamic preroll font size" value={Number(dynamicSettings.fontScale || 1)} onChange={event => updateDynamic({ fontScale: Number(event.target.value) })}>{FONT_SIZES.map(option => <option key={option.value} value={option.value}>{option.label} / {option.detail}</option>)}</select></label>
                   <label><span>Visual theme</span><select value={dynamicSettings.theme} onChange={event => updateDynamic({ theme: event.target.value })}>{themeEntries.length ? themeEntries.map(([id, theme]) => <option key={id} value={id}>{themeLabel(id, theme)}</option>) : <option value={dynamicSettings.theme || 'midnight'}>Midnight</option>}</select></label>
                 </div>
@@ -271,12 +325,12 @@ export default function NeXUpGeneratorStudio(props) {
         <aside className="nx-gen-preview-rail">
           <section className="nx-gen-preview-card">
             <header><div><span>Live 16:9 canvas</span><strong>{generatorTab === 'dynamic' ? selectedTemplate?.name : 'Coming Soon list'}</strong></div><StudioBadge tone="live">LIVE</StudioBadge></header>
-            <div className="nx-gen-stage">{generatorTab === 'dynamic' ? <DynamicCanvas settings={dynamicSettings} selectedTemplate={selectedTemplate} selectedTheme={selectedTheme} previewRef={previewRef} logoUrl={dynamicLogoUrl} /> : <ComingCanvas settings={comingSettings} logoUrl={comingLogoUrl} />}</div>
+            <div className="nx-gen-stage">{generatorTab === 'dynamic' ? <DynamicCanvas settings={dynamicSettings} selectedTemplate={selectedTemplate} selectedTheme={selectedTheme} previewRef={previewRef} logoUrl={dynamicLogoUrl} qrUrl={dynamicQrUrl} /> : <ComingCanvas settings={comingSettings} logoUrl={comingLogoUrl} />}</div>
             <div className="nx-gen-render-summary"><div><span>Output</span><strong>{modeOutput.label} / {modeOutput.size}</strong></div><div><span>Motion</span><strong>{modeSettings.frameRate || 30} fps</strong></div><div><span>Quality</span><strong>{modeProfile.label} / {modeProfile.crf}</strong></div><div><span>Container</span><strong>H.264 MP4</strong></div></div>
             <div className="nx-gen-preview-actions"><button type="button" className="nx-gen-btn subtle" disabled={!previewItem} onClick={() => generatorTab === 'dynamic' ? onPreviewDynamic(previewItem) : onPreviewComing(previewItem)}><Play size={14} /> Play latest</button><button type="button" className="nx-gen-btn primary" disabled={!canGenerate || isGenerating} onClick={generate}>{isGenerating ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />} {isGenerating ? 'Rendering video...' : generatorTab === 'dynamic' ? 'Render preroll' : comingSettings.layout === 'both' ? 'Render both lists' : 'Render list'}</button></div>
-            {!canGenerate && <p className="nx-gen-block-reason">{!connected ? 'Connect Radarr or Sonarr' : !settings.storage_path ? 'Choose a NeX-Up storage folder' : !ffmpegAvailable ? 'Install FFmpeg' : 'Enter a server name'} to enable rendering.</p>}
+            {!canGenerate && <p className="nx-gen-block-reason">{BLOCK_REASONS[blockingCheck?.label] || `Complete ${blockingCheck?.label || 'the remaining step'}`} to enable rendering.</p>}
           </section>
-          <section className="nx-gen-checklist"><strong>Render confidence</strong><div className={ffmpegAvailable ? 'ready' : ''}><i>{ffmpegAvailable ? <Check size={12} /> : '1'}</i><span>FFmpeg encoder</span></div><div className={settings.storage_path ? 'ready' : ''}><i>{settings.storage_path ? <Check size={12} /> : '2'}</i><span>Output folder</span></div><div className={connected ? 'ready' : ''}><i>{connected ? <Check size={12} /> : '3'}</i><span>Media source</span></div><div className={generatorTab !== 'dynamic' || dynamicSettings.server_name?.trim() ? 'ready' : ''}><i>{generatorTab !== 'dynamic' || dynamicSettings.server_name?.trim() ? <Check size={12} /> : '4'}</i><span>Required title</span></div></section>
+          <section className="nx-gen-checklist"><strong>Render confidence</strong>{renderChecks.map((check, index) => <div key={check.label} className={check.ready ? 'ready' : ''}><i>{check.ready ? <Check size={12} /> : index + 1}</i><span>{check.label}</span></div>)}</section>
         </aside>
       </div>
 

@@ -1271,9 +1271,21 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     audioMode: 'none',
     preroll_path: null,
     customLogoFilename: null,
-    customAudioFilename: null
+    customAudioFilename: null,
+    customHeadline: 'COMING SOON',
+    customSubtext: '',
+    qrData: '',
+    qrCaption: 'SCAN TO LEARN MORE'
   });
   const [dynamicPrerollTemplates, setDynamicPrerollTemplates] = useState([]);
+  // Each dynamic template gates on the field it actually draws: Custom Message
+  // and QR Code render no server name, so requiring one would block them.
+  const dynamicPrerollReady = (dynamicPrerollSettings.template === 'custom_text'
+    ? Boolean(String(dynamicPrerollSettings.customHeadline || '').trim() || String(dynamicPrerollSettings.customSubtext || '').trim())
+    : dynamicPrerollSettings.template === 'qr_share'
+      ? Boolean(String(dynamicPrerollSettings.qrData || '').trim())
+      : Boolean(dynamicPrerollSettings.server_name?.trim()))
+    && (dynamicPrerollSettings.audioMode !== 'custom' || Boolean(dynamicPrerollSettings.customAudioFilename));
   const [dynamicPrerollGenerating, setDynamicPrerollGenerating] = useState(false);
   const [ffmpegAvailable, setFfmpegAvailable] = useState(false);
   const [colorThemes, setColorThemes] = useState({});
@@ -7995,7 +8007,7 @@ const DashboardTiles = {
             {activeTab === 'nexup/generator' && (
               <>
                 <button type="button" className="button button-secondary" onClick={() => document.querySelector('.nx-gen-recent')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Film size={15} /> Generated videos</button>
-                <button type="button" className="button" disabled={(!nexupSettings.radarr_connected && !nexupSettings.sonarr_connected) || !nexupSettings.storage_path || !ffmpegAvailable || (generatorTab === 'dynamic' && !dynamicPrerollSettings.server_name.trim())} onClick={() => generatorTab === 'dynamic' ? handleGenerateFromPreview() : handleGenerateComingSoonList(comingSoonListSettings.layout)}><Sparkles size={15} /> {generatorTab === 'dynamic' ? 'Generate preroll' : 'Generate list'}</button>
+                <button type="button" className="button" disabled={!nexupSettings.storage_path || !ffmpegAvailable || (generatorTab === 'dynamic' ? !dynamicPrerollReady : (!nexupSettings.radarr_connected && !nexupSettings.sonarr_connected))} onClick={() => generatorTab === 'dynamic' ? handleGenerateFromPreview() : handleGenerateComingSoonList(comingSoonListSettings.layout)}><Sparkles size={15} /> {generatorTab === 'dynamic' ? 'Generate preroll' : 'Generate list'}</button>
               </>
             )}
             {activeTab === 'settings/storage' && (
@@ -23652,7 +23664,11 @@ const DashboardTiles = {
           audioMode: data.audio_mode || 'none',
           preroll_path: data.preroll_path,
           customLogoFilename: data.custom_logo_filename || null,
-          customAudioFilename: data.custom_audio_filename || null
+          customAudioFilename: data.custom_audio_filename || null,
+          customHeadline: data.custom_headline ?? 'COMING SOON',
+          customSubtext: data.custom_subtext ?? '',
+          qrData: data.qr_data ?? '',
+          qrCaption: data.qr_caption ?? 'SCAN TO LEARN MORE'
         });
         setTimeout(() => { dynamicPrerollSettingsLoadedRef.current = true; }, 100);
       }
@@ -23707,7 +23723,20 @@ const DashboardTiles = {
 
   // Record the same animated canvas used by the live preview, then transcode it to MP4.
   const handleGenerateFromPreview = async () => {
-    if (!dynamicPrerollSettings.server_name.trim()) {
+    // Custom Message and QR Code never render the server name, so each gates on
+    // the field it actually draws instead.
+    const dynamicTemplate = dynamicPrerollSettings.template;
+    if (dynamicTemplate === 'custom_text') {
+      if (!String(dynamicPrerollSettings.customHeadline || '').trim() && !String(dynamicPrerollSettings.customSubtext || '').trim()) {
+        alert('Enter a headline or a supporting line for the custom message.');
+        return;
+      }
+    } else if (dynamicTemplate === 'qr_share') {
+      if (!String(dynamicPrerollSettings.qrData || '').trim()) {
+        alert('Enter the link or text the QR code should encode.');
+        return;
+      }
+    } else if (!dynamicPrerollSettings.server_name.trim()) {
       alert('Please enter your server name');
       return;
     }
@@ -23729,11 +23758,15 @@ const DashboardTiles = {
       const logoUrl = dynamicPrerollSettings.customLogoFilename
         ? `${apiUrl('/nexup/preroll/logo-image')}?v=${encodeURIComponent(dynamicPrerollSettings.customLogoFilename)}`
         : null;
+      const qrUrl = String(dynamicPrerollSettings.qrData || '').trim()
+        ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(dynamicPrerollSettings.qrData.trim())}`
+        : null;
       const motionOptions = await prepareDynamicPrerollOptions({
         settings: { ...dynamicPrerollSettings },
         theme: { ...selectedTheme },
         templateName: selectedTemplate?.name || 'Dynamic preroll',
         logoUrl,
+        qrUrl,
       });
       const motionCapture = await recordDynamicPrerollAnimation(motionOptions);
       const imageData = motionCapture ? null : captureDynamicPrerollFrame(motionOptions);
@@ -23759,7 +23792,11 @@ const DashboardTiles = {
           font_scale: dynamicPrerollSettings.fontScale || 1,
           title_color: dynamicPrerollSettings.titleColor || null,
           subject_color: dynamicPrerollSettings.subjectColor || null,
-          audio_mode: dynamicPrerollSettings.audioMode || 'none'
+          audio_mode: dynamicPrerollSettings.audioMode || 'none',
+          custom_headline: dynamicPrerollSettings.customHeadline || null,
+          custom_subtext: dynamicPrerollSettings.customSubtext || null,
+          qr_data: dynamicPrerollSettings.qrData || null,
+          qr_caption: dynamicPrerollSettings.qrCaption || null
         })
       });
       
@@ -24425,6 +24462,7 @@ const DashboardTiles = {
         onDeleteDynamic={handleDeleteSpecificPreroll}
         previewRef={previewContainerRef}
         dynamicLogoUrl={`${apiUrl('/nexup/preroll/logo-image')}?v=${encodeURIComponent(dynamicPrerollSettings.customLogoFilename || 'none')}`}
+        dynamicQrUrl={dynamicPrerollSettings.qrData?.trim() ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(dynamicPrerollSettings.qrData.trim())}` : ''}
         comingLogoUrl={`${apiUrl('/nexup/coming-soon-list/logo-image')}?v=${encodeURIComponent(comingSoonListSettings.customLogoFilename || 'none')}`}
         onUploadAsset={handleNexupAssetUpload}
         onRemoveAsset={handleNexupAssetRemove}

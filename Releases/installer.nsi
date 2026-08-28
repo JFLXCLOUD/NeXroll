@@ -22,8 +22,8 @@ ShowInstDetails show
 Icon "NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "2.1.0-beta.2"
-VIProductVersion "2.0.0.0"
+!define APP_VERSION "2.2.0-beta.1"
+VIProductVersion "2.2.0.1"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
@@ -159,7 +159,11 @@ Section "!NeXroll Application (Required)" SEC_APP
   File "start_windows.bat"
   
   ; Documentation
-  File "CHANGELOG.md"
+  ; Ship the same changelog the Docker image and NeXroll.spec bundle. This used
+  ; to read a local Releases\CHANGELOG.md copy that nothing kept in sync, so the
+  ; installer shipped a stale 220 KB file while every other build shipped the
+  ; trimmed one.
+  File "..\NeXroll\CHANGELOG.md"
   File /nonfatal "README.md"
 
   ; Clean up legacy directories from older versions

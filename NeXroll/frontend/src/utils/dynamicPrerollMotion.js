@@ -364,6 +364,59 @@ export function drawDynamicPrerollFrame(canvas, options, elapsedSeconds) {
       setFittedFont(context, subject, 42 * scale * fontScale, width * 0.78, 900);
       drawGlowText(context, subject, centerX, height * 0.61 + ((1 - state.subjectReveal) * 18 * scale), subjectColor, rgba(subjectColor, 0.55, '#7b2cbf'), 25 * scale, state.subjectReveal);
     }
+  } else if (template === 'custom_text') {
+    // No fixed copy and nothing to translate — whatever was typed is the whole
+    // message, so the layout adapts to one line or two rather than reserving a
+    // slot for a subject that never arrives.
+    const headline = String(settings.customHeadline || '').trim();
+    const subtext = String(settings.customSubtext || '').trim();
+    const titleSpacing = 6 * scale * fontScale;
+    if (headline && subtext) {
+      setFittedFont(context, headline, 34 * scale * fontScale, width * 0.80, 900, titleSpacing);
+      drawGlowText(context, headline, centerX, height * 0.43 + ((1 - state.titleReveal) * 15 * scale), titleColor, rgba(titleColor, 0.62, '#00d4ff'), 22 * scale, state.titleReveal, titleSpacing);
+      const ruleWidth = width * 0.20 * state.ruleReveal;
+      context.save();
+      context.globalAlpha *= state.ruleReveal;
+      context.fillStyle = subjectColor;
+      context.fillRect(centerX - (ruleWidth / 2), height * 0.53, ruleWidth, Math.max(1, 2 * scale));
+      context.restore();
+      setFittedFont(context, subtext, 22 * scale * fontScale, width * 0.72, 500);
+      drawGlowText(context, subtext, centerX, height * 0.62 + ((1 - state.subjectReveal) * 18 * scale), subjectColor, rgba(subjectColor, 0.55, '#7b2cbf'), 20 * scale, state.subjectReveal);
+    } else {
+      const single = headline || subtext || 'YOUR MESSAGE HERE';
+      setFittedFont(context, single, 38 * scale * fontScale, width * 0.80, 900, titleSpacing);
+      drawGlowText(context, single, centerX, height * 0.50 + ((1 - state.titleReveal) * 15 * scale), titleColor, rgba(titleColor, 0.62, '#00d4ff'), 22 * scale, state.titleReveal, titleSpacing);
+    }
+  } else if (template === 'qr_share') {
+    // The code sits on a white plate regardless of theme: scanners need the
+    // quiet zone to stay high-contrast, and a tinted one can fail to read.
+    const plateSize = Math.min(width, height) * 0.52;
+    const plateX = centerX - (plateSize / 2);
+    const plateY = height * 0.14;
+    const pad = plateSize * 0.05;
+    context.save();
+    context.globalAlpha *= state.subjectReveal;
+    context.fillStyle = '#ffffff';
+    context.shadowColor = rgba(primary, 0.45, '#00d4ff');
+    context.shadowBlur = 26 * scale;
+    context.fillRect(plateX, plateY, plateSize, plateSize);
+    context.shadowBlur = 0;
+    if (options.qrImage?.naturalWidth) {
+      context.imageSmoothingEnabled = false;
+      context.drawImage(options.qrImage, plateX + pad, plateY + pad, plateSize - (pad * 2), plateSize - (pad * 2));
+    } else {
+      // Nothing encoded yet: say so on the plate instead of showing a blank
+      // white square the operator would read as a broken preview.
+      context.fillStyle = 'rgba(0,0,0,0.55)';
+      setFittedFont(context, 'ADD A LINK', 20 * scale * fontScale, plateSize * 0.8, 700);
+      context.fillText('ADD A LINK', centerX, plateY + (plateSize / 2));
+    }
+    context.restore();
+    const caption = String(settings.qrCaption || '').trim();
+    if (caption) {
+      setFittedFont(context, caption, 30 * scale * fontScale, width * 0.78, 900, 4 * scale * fontScale);
+      drawGlowText(context, caption, centerX, height * 0.82 + ((1 - state.titleReveal) * 15 * scale), titleColor, rgba(titleColor, 0.62, '#00d4ff'), 22 * scale, state.titleReveal, 4 * scale * fontScale);
+    }
   } else {
     const titleSpacing = 6 * scale * fontScale;
     setFittedFont(context, text.coming, 34 * scale * fontScale, width * 0.78, 900, titleSpacing);
@@ -389,10 +442,13 @@ const loadLogo = async logoUrl => {
   });
 };
 
-export async function prepareDynamicPrerollOptions({ settings, theme, templateName, logoUrl }) {
+export async function prepareDynamicPrerollOptions({ settings, theme, templateName, logoUrl, qrUrl }) {
   if (document.fonts?.ready) await document.fonts.ready;
   const logoImage = settings.customLogoFilename ? await loadLogo(logoUrl) : null;
-  return { settings, theme, templateName, logoImage };
+  // The backend encodes the QR so the preview shows the exact code that gets
+  // rendered — a client-side approximation could scan to something else.
+  const qrImage = settings.template === 'qr_share' && qrUrl ? await loadLogo(qrUrl) : null;
+  return { settings, theme, templateName, logoImage, qrImage };
 }
 
 export function startDynamicPrerollPreview(canvas, options) {

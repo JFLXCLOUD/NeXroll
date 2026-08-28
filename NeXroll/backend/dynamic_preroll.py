@@ -168,6 +168,22 @@ class DynamicPrerollGenerator:
             'variables': ['server_name'],
             'default_values': {'server_name': ''},
             'style': 'retro'
+        },
+        'custom_text': {
+            'name': 'Custom Message',
+            'description': 'Your own headline and supporting line, on the theme background. No fixed wording.',
+            'duration': 5,
+            'variables': ['custom_headline', 'custom_subtext'],
+            'default_values': {'custom_headline': 'COMING SOON', 'custom_subtext': ''},
+            'style': 'custom'
+        },
+        'qr_share': {
+            'name': 'QR Code',
+            'description': 'A scannable QR code with a caption, for sharing a link with viewers.',
+            'duration': 8,
+            'variables': ['qr_data', 'qr_caption'],
+            'default_values': {'qr_data': '', 'qr_caption': 'SCAN TO LEARN MORE'},
+            'style': 'utility'
         }
     }
     
@@ -1416,6 +1432,184 @@ class DynamicPrerollGenerator:
         filter_str = ','.join(filter_parts)
         return self._run_ffmpeg_with_gradient(filter_str, output_path, duration, width, height, bg_color, text_color, accent)
     
+    def generate_custom_text(
+        self,
+        headline: str,
+        subtext: str = "",
+        duration: float = 5,
+        output_filename: str = "custom_text_preroll.mp4",
+        width: int = 1920,
+        height: int = 1080,
+        theme: str = "midnight",
+    ) -> Optional[str]:
+        """Generate a preroll carrying the operator's own wording.
+
+        Unlike the other templates there is no fixed phrase and nothing to
+        translate — whatever is typed is what renders, so this covers the cases
+        the fixed templates cannot ("Back in 5 minutes", a house rule, an
+        announcement).
+        """
+        if not self.is_available() or not self.output_dir:
+            return None
+
+        output_path = self.output_dir / output_filename
+
+        colors = self.COLOR_THEMES.get(theme, self.COLOR_THEMES['midnight'])
+        bg_color = colors['bg']
+        text_color = colors['primary']
+        accent = colors['secondary']
+
+        headline_text = self._escape_text((headline or '').strip())
+        subtext_text = self._escape_text((subtext or '').strip())
+        if not headline_text and not subtext_text:
+            logger.error("custom_text: nothing to render (no headline or subtext)")
+            return None
+
+        _, font_param = self._get_font_path('impact')
+        _, regular_font = self._get_font_path('arial')
+
+        # One line centres; two lines straddle the centre so the block stays
+        # optically balanced either way. drawtext y is the top of the glyph box,
+        # so the headline needs its full 96px clear of the divider rule.
+        filter_parts = []
+        if headline_text and subtext_text:
+            headline_y, subtext_y = "(h/2)-135", "(h/2)+40"
+        else:
+            headline_y, subtext_y = "(h-text_h)/2", "(h-text_h)/2"
+
+        if headline_text:
+            filter_parts.append(
+                f"drawtext=text='{headline_text}':fontsize=96:fontcolor={text_color}{font_param}"
+                f":x=(w-text_w)/2:y={headline_y}:shadowcolor=black@0.8:shadowx=4:shadowy=4"
+            )
+        if subtext_text:
+            filter_parts.append(
+                f"drawtext=text='{subtext_text}':fontsize=44:fontcolor={accent}{regular_font}"
+                f":x=(w-text_w)/2:y={subtext_y}"
+            )
+        if headline_text and subtext_text:
+            rule_x = (width // 2) - 160
+            filter_parts.append(f"drawbox=x={rule_x}:y={(height // 2) - 5}:w=320:h=3:c={accent}:t=fill")
+
+        filter_parts.append(f"fade=t=in:st=0:d=0.6,fade=t=out:st={duration - 0.6}:d=0.6")
+        filter_str = ','.join(filter_parts)
+        return self._run_ffmpeg_with_gradient(
+            filter_str, output_path, duration, width, height, bg_color, text_color, accent
+        )
+
+    def _render_qr_png(self, data: str, target_px: int = 620) -> Optional[Path]:
+        """Render `data` to a QR PNG and return its path, or None on failure.
+
+        Written with a quiet zone and no anti-aliasing so it survives video
+        compression — a blurred QR is an unscannable QR.
+        """
+        try:
+            import segno
+        except ImportError:
+            logger.error("QR template needs the 'segno' package (see requirements.txt)")
+            return None
+        if not (data or '').strip():
+            logger.error("QR template: no data to encode")
+            return None
+        try:
+            qr_path = self.output_dir / f"_qr_{abs(hash(data)) & 0xFFFFFFFF:08x}.png"
+            qr = segno.make(data.strip(), error='h')
+            # scale is per module; derive it so the finished image lands near
+            # target_px regardless of how dense the payload made the matrix.
+            modules = qr.symbol_size(border=4)[0]
+            scale = max(2, int(target_px / max(1, modules)))
+            qr.save(str(qr_path), scale=scale, border=4, dark='#000000', light='#ffffff')
+            return qr_path
+        except Exception as e:
+            logger.error(f"QR render failed: {e}")
+            return None
+
+    def generate_qr_share(
+        self,
+        qr_data: str,
+        caption: str = "",
+        duration: float = 8,
+        output_filename: str = "qr_share_preroll.mp4",
+        width: int = 1920,
+        height: int = 1080,
+        theme: str = "midnight",
+    ) -> Optional[str]:
+        """Generate a preroll showing a scannable QR code plus a caption.
+
+        Defaults to a longer duration than the other templates because a viewer
+        has to notice it, reach for a phone, and focus before it disappears.
+        """
+        if not self.is_available() or not self.output_dir:
+            return None
+
+        qr_path = self._render_qr_png(qr_data)
+        if not qr_path:
+            return None
+
+        output_path = self.output_dir / output_filename
+        colors = self.COLOR_THEMES.get(theme, self.COLOR_THEMES['midnight'])
+        bg_color = colors['bg']
+        text_color = colors['primary']
+
+        caption_text = self._escape_text((caption or '').strip())
+        _, font_param = self._get_font_path('impact')
+
+        bg_hex = str(bg_color).replace('0x', '').replace('#', '')
+        qr_size = 620
+        qr_y = (height - qr_size) // 2 - 60
+        # A white plate behind the QR keeps quiet-zone contrast on dark themes,
+        # which scanners need.
+        plate_pad = 26
+        plate_x = (width - qr_size) // 2 - plate_pad
+        plate_y = qr_y - plate_pad
+        plate_size = qr_size + plate_pad * 2
+
+        filters = [
+            f"[0:v]drawbox=x={plate_x}:y={plate_y}:w={plate_size}:h={plate_size}:c=white:t=fill[plate]",
+            f"[1:v]scale={qr_size}:{qr_size}:flags=neighbor[qr]",
+            f"[plate][qr]overlay=(W-w)/2:{qr_y}[withqr]",
+        ]
+        last = "withqr"
+        if caption_text:
+            filters.append(
+                f"[{last}]drawtext=text='{caption_text}':fontsize=64:fontcolor={text_color}{font_param}"
+                f":x=(w-text_w)/2:y={qr_y + plate_size + 40}:shadowcolor=black@0.8:shadowx=3:shadowy=3[capped]"
+            )
+            last = "capped"
+        filters.append(f"[{last}]fade=t=in:st=0:d=0.6,fade=t=out:st={duration - 0.6}:d=0.6[vout]")
+
+        cmd = [
+            self.ffmpeg_path, '-y',
+            '-f', 'lavfi', '-i', f"color=c=0x{bg_hex}:s={width}x{height}:d={duration}:r=30",
+            '-i', str(qr_path),
+            '-f', 'lavfi', '-i', f"anullsrc=r=48000:cl=stereo:d={duration}",
+            '-filter_complex', ';'.join(filters),
+            '-map', '[vout]', '-map', '2:a',
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
+            '-c:a', 'aac', '-b:a', '128k', '-shortest',
+            '-pix_fmt', 'yuv420p', '-t', str(duration),
+            str(output_path)
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=180,
+                startupinfo=STARTUPINFO,
+                creationflags=CREATE_NO_WINDOW
+            )
+            if result.returncode != 0 or not output_path.exists():
+                logger.error(f"QR preroll FFmpeg failed: {(result.stderr or '')[-500:]}")
+                return None
+            return str(output_path)
+        except Exception as e:
+            logger.error(f"QR preroll generation failed: {e}")
+            return None
+        finally:
+            try:
+                qr_path.unlink()
+            except Exception:
+                pass
+
     def generate_from_template(
         self,
         template_id: str,
@@ -1482,7 +1676,23 @@ class DynamicPrerollGenerator:
                 theme=theme,
                 language=language
             )
-        
+        elif template_id == 'custom_text':
+            return self.generate_custom_text(
+                headline=final_vars.get('custom_headline', ''),
+                subtext=final_vars.get('custom_subtext', ''),
+                duration=duration,
+                output_filename=output_filename,
+                theme=theme
+            )
+        elif template_id == 'qr_share':
+            return self.generate_qr_share(
+                qr_data=final_vars.get('qr_data', ''),
+                caption=final_vars.get('qr_caption', ''),
+                duration=duration,
+                output_filename=output_filename,
+                theme=theme
+            )
+
         return None
     
     def get_color_themes(self) -> Dict[str, Dict[str, Any]]:

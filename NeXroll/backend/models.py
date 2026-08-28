@@ -335,7 +335,11 @@ class Setting(Base):
     nexup_dynamic_preroll_subject_color = Column(String, nullable=True)  # Optional #RRGGBB override; null inherits theme secondary
     nexup_dynamic_preroll_audio_mode = Column(String, default='none')  # none, default, or custom
     nexup_dynamic_preroll_custom_audio_path = Column(String, nullable=True)  # User-uploaded soundtrack for dynamic prerolls
-    
+    nexup_dynamic_preroll_custom_headline = Column(String, nullable=True)  # Custom Message template: main line
+    nexup_dynamic_preroll_custom_subtext = Column(String, nullable=True)  # Custom Message template: supporting line
+    nexup_dynamic_preroll_qr_data = Column(String, nullable=True)  # QR Code template: URL or text to encode
+    nexup_dynamic_preroll_qr_caption = Column(String, nullable=True)  # QR Code template: caption under the code
+
     # Coming Soon List Auto-Regeneration Settings
     nexup_coming_soon_list_auto_regen = Column(Boolean, default=False)  # Auto-regenerate Coming Soon List after sync
     nexup_coming_soon_list_layout = Column(String, default='grid')  # Layout to use: 'grid', 'list', or 'both'
