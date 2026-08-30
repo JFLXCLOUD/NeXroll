@@ -111,12 +111,16 @@ ENV NEXROLL_BGUTIL_DIR=/opt/bgutil-provider/server
 
 WORKDIR /app/NeXroll
 
-# Install pre-built Python wheels (no compiler needed)
-COPY --from=builder /wheels /wheels
+# Install pre-built Python wheels (no compiler needed).
+# The wheels are bind-mounted from the builder stage rather than COPYed in. A
+# COPY commits them to their own layer, and the `rm -rf` that used to follow
+# could only write a whiteout on top of it -- a layer that is already committed
+# cannot be removed by a later one, so the wheels shipped in every pull. A bind
+# mount is never committed to a layer, so there is nothing left to remove.
 COPY requirements.txt /app/NeXroll/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt && \
-    rm -rf /wheels
+RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt
 
 # Fail the build if a broken/partial yt-dlp wheel is ever resolved — this is
 # the exact failure shape that caused a day-long outage in the field
