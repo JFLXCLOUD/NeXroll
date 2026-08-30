@@ -26904,6 +26904,79 @@ def download_community_preroll(
             pass
         raise HTTPException(status_code=500, detail=f"Download import failed: {str(e)}")
 
+@app.get("/community-prerolls/preview")
+def preview_community_preroll(request: Request, preroll_id: str, db: Session = Depends(get_db)):
+    """Stream a community preroll through the backend for in-app preview.
+
+    The preview <video> used to point straight at the community server, so the
+    browser had to reach that host itself and satisfy whatever it requires of a
+    cross-origin media request (hotlink/Referer rules, a browser User-Agent,
+    range support). Downloads never had that problem because they are fetched
+    server-side. Proxying the preview the same way makes the two behave alike:
+    if a file can be downloaded, it can be previewed.
+
+    Only paths under the configured community server are fetched, so this
+    cannot be used as a general-purpose proxy.
+    """
+    preroll_id_str = str(preroll_id or "")
+    if not preroll_id_str:
+        raise HTTPException(status_code=422, detail="preroll_id is required")
+    # Same rejections the download path applies to mangled/legacy ids.
+    if preroll_id_str.startswith('_') or '\\' in preroll_id_str:
+        raise HTTPException(status_code=400, detail="Invalid community preroll ID format. Please refresh the community search.")
+    if not preroll_id_str.startswith('/'):
+        preroll_id_str = '/' + preroll_id_str
+
+    base_url = (_get_community_base_url(db) or "").rstrip('/')
+    if not base_url:
+        raise HTTPException(status_code=503, detail="No community server is configured")
+    source_url = f"{base_url}{preroll_id_str}"
+
+    # Refuse anything that escapes the configured server, so a crafted id cannot
+    # turn this into an open proxy.
+    from urllib.parse import urlparse
+    if urlparse(source_url).netloc != urlparse(base_url).netloc:
+        raise HTTPException(status_code=400, detail="Invalid community preroll ID")
+
+    # Forward the browser's Range header so seeking and progressive playback work.
+    headers = _community_headers()
+    range_header = request.headers.get("range")
+    if range_header:
+        headers["Range"] = range_header
+
+    try:
+        upstream = requests.get(source_url, headers=headers, stream=True, timeout=30, allow_redirects=True)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach the community server: {e}")
+
+    if upstream.status_code >= 400:
+        upstream.close()
+        raise HTTPException(status_code=upstream.status_code,
+                            detail=f"Community server returned {upstream.status_code} for this file")
+
+    passthrough = {}
+    for header in ("Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag"):
+        if header in upstream.headers:
+            passthrough[header] = upstream.headers[header]
+    passthrough.setdefault("Accept-Ranges", "bytes")
+    passthrough["Cache-Control"] = "public, max-age=300"
+
+    def stream():
+        try:
+            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(
+        stream(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("Content-Type", "video/mp4"),
+        headers=passthrough,
+    )
+
+
 @app.get("/community-prerolls/downloaded-ids")
 def get_downloaded_community_preroll_ids(db: Session = Depends(get_db)):
     """

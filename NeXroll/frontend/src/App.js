@@ -109,15 +109,25 @@ const resolveTheme = (id) => (THEMES[id] ? id : DEFAULT_THEME);
 // them. The library hides them by default — they're managed from NeX-Up, and in
 // bulk they bury the prerolls someone actually curated.
 const NEXUP_GENERATED_CATEGORIES = ['nex-up prerolls', 'coming soon lists'];
+// Downloaded Radarr/Sonarr trailers. They are a separate concept from generator
+// output: NeX-Up registers them as real Preroll rows whenever its storage path
+// sits inside the prerolls folder (which NeX-Up Settings now recommends), so
+// they show up in the Library grid like anything else and need their own
+// matcher for the "NeX-Up trailers" toggle to reach them.
+const NEXUP_TRAILER_CATEGORIES = ['nex-up movie trailers', 'nex-up tv trailers'];
+const prerollCategoryNames = (preroll) => [
+  preroll?.category?.name,
+  ...(Array.isArray(preroll?.categories) ? preroll.categories.map(c => c?.name) : []),
+].filter(Boolean).map(n => String(n).toLowerCase());
 const isNexUpGeneratedPreroll = (preroll) => {
   if (!preroll) return false;
   const path = String(preroll.path || '').toLowerCase().replace(/\\/g, '/');
   if (path.includes('/dynamic_prerolls/') || path.includes('/coming_soon/')) return true;
-  const names = [
-    preroll.category?.name,
-    ...(Array.isArray(preroll.categories) ? preroll.categories.map(c => c?.name) : []),
-  ].filter(Boolean).map(n => String(n).toLowerCase());
-  return names.some(n => NEXUP_GENERATED_CATEGORIES.includes(n));
+  return prerollCategoryNames(preroll).some(n => NEXUP_GENERATED_CATEGORIES.includes(n));
+};
+const isNexUpTrailerPreroll = (preroll) => {
+  if (!preroll) return false;
+  return prerollCategoryNames(preroll).some(n => NEXUP_TRAILER_CATEGORIES.includes(n));
 };
 
 const HEALTH_CHECK_ACTIONS = {
@@ -270,6 +280,31 @@ const apiUrl = (path) => {
   } catch {
     return path;
   }
+};
+// Community previews load straight from the community server, which is the
+// fastest path and costs this server nothing. That does mean the browser has to
+// reach that host itself, which is not always true when a download would still
+// work: the backend fetches downloads server-side, so hotlink rules, an
+// extension, or network-level filtering can break preview while leaving
+// download fine. communityPreviewFallback retries once through the backend --
+// the same path downloads take -- so the proxy cost is only paid when the
+// direct load actually fails.
+const communityDirectSrc = (item) => item?.url || item?.download_url || '';
+const communityProxySrc = (item) => {
+  const id = item?.id ? String(item.id) : '';
+  if (!id || id.startsWith('_')) return '';
+  return apiUrl(`community-prerolls/preview?preroll_id=${encodeURIComponent(id)}`);
+};
+const communityPreviewFallback = (event, item, onGiveUp) => {
+  const video = event.currentTarget;
+  const proxy = communityProxySrc(item);
+  if (proxy && !video.dataset.triedProxy) {
+    video.dataset.triedProxy = '1';
+    video.src = proxy;
+    video.load();
+    return;
+  }
+  onGiveUp();
 };
 // Build a thumbnail URL that respects external URLs (NeX-Up trailers store TMDB poster
 // URLs in p.thumbnail directly). Previously every preroll-card site did
@@ -6258,17 +6293,28 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // 4. Hide generator output unless asked for. Skipped when the user has
     //    explicitly picked one of those categories, so choosing "NeX-Up Prerolls"
     //    from the category filter never returns an empty list.
-    const viewingGeneratedCategory = filterCategory && filterCategory !== 'uncategorized'
-      && NEXUP_GENERATED_CATEGORIES.includes(
-        String(categories.find(c => String(c.id) === String(filterCategory))?.name || '').toLowerCase()
-      );
+    const selectedCategoryName = filterCategory && filterCategory !== 'uncategorized'
+      ? String(categories.find(c => String(c.id) === String(filterCategory))?.name || '').toLowerCase()
+      : '';
+    const viewingGeneratedCategory = Boolean(selectedCategoryName) && NEXUP_GENERATED_CATEGORIES.includes(selectedCategoryName);
     if (!showNexupGeneratedInLibrary && !viewingGeneratedCategory) {
       filtered = filtered.filter(p => !isNexUpGeneratedPreroll(p));
     }
 
+    // 4b. Same treatment for downloaded trailers. NeX-Up registers these as
+    //     real Preroll rows when its storage path lives inside the prerolls
+    //     folder, so hiding them has to happen here - the trailers toggle used
+    //     to control only the separate read-only panel below the grid, which
+    //     left "Hide NeX-Up trailers" looking broken for anyone whose trailers
+    //     had been scanned in.
+    const viewingTrailerCategory = Boolean(selectedCategoryName) && NEXUP_TRAILER_CATEGORIES.includes(selectedCategoryName);
+    if (!showNexupTrailersInLibrary && !viewingTrailerCategory) {
+      filtered = filtered.filter(p => !isNexUpTrailerPreroll(p));
+    }
+
     // 5. Sort last, so the ordering applies to what survived the filters.
     return sortPrerolls(filtered, prerollSortField, prerollSortDirection);
-  }, [prerolls, categories, filterCategory, filterTags, filterMatchStatus, showNexupGeneratedInLibrary, prerollSortField, prerollSortDirection]);
+  }, [prerolls, categories, filterCategory, filterTags, filterMatchStatus, showNexupGeneratedInLibrary, showNexupTrailersInLibrary, prerollSortField, prerollSortDirection]);
 
   const totalPrerolls = filteredPrerolls.length;
   const totalPages = Math.max(1, Math.ceil(totalPrerolls / pageSize));
@@ -10953,7 +10999,7 @@ const DashboardTiles = {
                     <option value="unmatched">Unmatched</option>
                   </select>
                 </label>
-                <button type="button" onClick={() => { const next = !showNexupTrailersInLibrary; setShowNexupTrailersInLibrary(next); if (next) { loadNexupTrailers(); loadNexupTVTrailers(); } }}>
+                <button type="button" title="Trailers downloaded from Radarr and Sonarr" onClick={() => { const next = !showNexupTrailersInLibrary; setShowNexupTrailersInLibrary(next); setCurrentPage(1); if (next) { loadNexupTrailers(); loadNexupTVTrailers(); } }}>
                   {showNexupTrailersInLibrary ? <EyeOff size={13} /> : <Eye size={13} />} {showNexupTrailersInLibrary ? 'Hide' : 'Show'} NeX-Up trailers
                 </button>
                 <button
@@ -34996,9 +35042,15 @@ const DashboardTiles = {
                 {communityInspectorItem ? (
                   <>
                     <div className="nx-community-inspector-video">
-                      <video key={communityInspectorItem.id} controls preload="metadata">
-                        <source src={communityInspectorItem.url || communityInspectorItem.download_url} type="video/mp4" />
-                      </video>
+                      <video
+                        key={communityInspectorItem.id}
+                        controls
+                        preload="metadata"
+                        src={communityDirectSrc(communityInspectorItem)}
+                        onError={event => communityPreviewFallback(event, communityInspectorItem, () => {
+                          console.error('Community preroll preview failed:', communityInspectorItem?.id);
+                        })}
+                      />
                     </div>
                     <div className="nx-community-inspector-body">
                       <span className="nx-community-inspector-kicker">Community preroll</span>
@@ -37406,6 +37458,10 @@ const DashboardTiles = {
            </div>
            <div>
              <video
+               // Remount per preroll so the one-shot proxy retry flag on the
+               // element resets; without it only the first failing preview
+               // would ever fall back.
+               key={communityPreviewingPreroll?.id || communityPreviewingPreroll?.url}
                ref={previewVideoRef}
                controls
                autoPlay
@@ -37414,12 +37470,11 @@ const DashboardTiles = {
                  maxHeight: '70vh',
                  borderRadius: '4px'
                }}
-               onError={(e) => {
-                 console.error('Community preroll video error:', e);
-                 alert('Failed to load video. The file may not be accessible.');
-               }}
+               src={communityDirectSrc(communityPreviewingPreroll)}
+               onError={event => communityPreviewFallback(event, communityPreviewingPreroll, () => {
+                 alert('Failed to load video. NeXroll could not reach the community server directly or through this server - check that the community server is reachable from your network.');
+               })}
              >
-               <source src={communityPreviewingPreroll.url} type="video/mp4" />
                Your browser does not support the video tag.
              </video>
            </div>
