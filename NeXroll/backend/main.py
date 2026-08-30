@@ -299,6 +299,8 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_resolution", "nexup_coming_soon_list_resolution TEXT DEFAULT '1080'"),
                 ("nexup_coming_soon_list_frame_rate", "nexup_coming_soon_list_frame_rate INTEGER DEFAULT 30"),
                 ("nexup_coming_soon_list_render_quality", "nexup_coming_soon_list_render_quality TEXT DEFAULT 'balanced'"),
+                ("nexup_coming_soon_list_theme", "nexup_coming_soon_list_theme TEXT"),
+                ("nexup_coming_soon_list_qr_data", "nexup_coming_soon_list_qr_data TEXT"),
                 ("nexup_coming_soon_available_days", "nexup_coming_soon_available_days INTEGER DEFAULT 1"),
                 ("nexup_coming_soon_max_available_now", "nexup_coming_soon_max_available_now INTEGER DEFAULT 0"),
                 ("nexup_trailer_retention_days", "nexup_trailer_retention_days INTEGER DEFAULT 7"),
@@ -18478,6 +18480,8 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_resolution": getattr(setting, 'nexup_coming_soon_list_resolution', '1080'),
         "coming_soon_list_frame_rate": getattr(setting, 'nexup_coming_soon_list_frame_rate', 30),
         "coming_soon_list_render_quality": getattr(setting, 'nexup_coming_soon_list_render_quality', 'balanced'),
+        "coming_soon_list_theme": getattr(setting, 'nexup_coming_soon_list_theme', None),
+        "coming_soon_list_qr_data": getattr(setting, 'nexup_coming_soon_list_qr_data', None) or "",
         "dynamic_preroll_language": getattr(setting, 'nexup_dynamic_preroll_language', 'en'),
         "dynamic_preroll_resolution": getattr(setting, 'nexup_dynamic_preroll_resolution', '1080'),
         "dynamic_preroll_frame_rate": getattr(setting, 'nexup_dynamic_preroll_frame_rate', 30),
@@ -18530,6 +18534,8 @@ def update_nexup_settings(
     coming_soon_list_resolution: Optional[str] = None,
     coming_soon_list_frame_rate: Optional[int] = None,
     coming_soon_list_render_quality: Optional[str] = None,
+    coming_soon_list_theme: Optional[str] = None,
+    coming_soon_list_qr_data: Optional[str] = None,
     dynamic_preroll_template: Optional[str] = None,
     dynamic_preroll_server_name: Optional[str] = None,
     dynamic_preroll_duration: Optional[int] = None,
@@ -18697,6 +18703,11 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_frame_rate = resolve_render_settings(frame_rate=coming_soon_list_frame_rate)['frame_rate']
     if coming_soon_list_render_quality is not None:
         setting.nexup_coming_soon_list_render_quality = resolve_render_settings(quality=coming_soon_list_render_quality)['quality']
+    if coming_soon_list_theme is not None:
+        # Empty string clears the theme and falls back to the manual colours.
+        setting.nexup_coming_soon_list_theme = coming_soon_list_theme.strip() or None
+    if coming_soon_list_qr_data is not None:
+        setting.nexup_coming_soon_list_qr_data = coming_soon_list_qr_data.strip() or None
     if dynamic_preroll_template is not None:
         setting.nexup_dynamic_preroll_template = dynamic_preroll_template.strip()[:80] or 'coming_soon'
     if dynamic_preroll_server_name is not None:
@@ -19498,6 +19509,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         custom_logo_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
         logo_mode = getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark')
         language = getattr(setting, 'nexup_coming_soon_list_language', 'en') or 'en'
+        list_theme = getattr(setting, 'nexup_coming_soon_list_theme', None)
+        list_qr_data = getattr(setting, 'nexup_coming_soon_list_qr_data', None)
         render = resolve_render_settings(
             getattr(setting, 'nexup_coming_soon_list_resolution', '1080'),
             getattr(setting, 'nexup_coming_soon_list_frame_rate', 30),
@@ -19686,6 +19699,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 video_preset=render['preset'],
                 video_crf=render['crf'],
                 audio_bitrate=render['audio_bitrate'],
+                theme=list_theme,
+                qr_data=list_qr_data,
             )
             
             if output_path:
@@ -22777,6 +22792,8 @@ async def generate_coming_soon_list(
             video_preset=render['preset'],
             video_crf=render['crf'],
             audio_bitrate=render['audio_bitrate'],
+            theme=getattr(setting, 'nexup_coming_soon_list_theme', None),
+            qr_data=getattr(setting, 'nexup_coming_soon_list_qr_data', None),
         )
         
         if output_path:

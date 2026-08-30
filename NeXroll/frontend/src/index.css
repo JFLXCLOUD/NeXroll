@@ -7068,7 +7068,7 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 .nx-comm-inspector-toggle.active { border-color: var(--nx-section-accent); color: var(--text-color); }
 .nx-comm-inspector-toggle.active { background: color-mix(in srgb, var(--nx-section-accent) 8%, var(--card-bg)); }
 .nx-comm-inspector-toggle.active > span:last-child { background: color-mix(in srgb, var(--nx-section-accent) 17%, var(--input-bg)); color: var(--nx-section-accent); }
-.nx-community-browser { padding: 0 !important; overflow: hidden; }
+.nx-community-browser { padding: 0 !important; overflow: clip; }
 .nx-community-browser.has-inspector { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: stretch; }
 .nx-community-results-pane { min-width: 0; padding: 12px; }
 .nx-community-results-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
@@ -7078,7 +7078,7 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 .nx-community-browser .nx-comm-row { cursor: default; }
 .nx-community-browser.has-inspector .nx-comm-row { cursor: pointer; }
 .nx-community-browser .nx-comm-row.is-selected { background: color-mix(in srgb, var(--nx-section-accent) 9%, var(--raised-bg)); box-shadow: inset 3px 0 var(--nx-section-accent); }
-.nx-community-inspector { position: sticky; top: 76px; align-self: start; min-width: 0; min-height: 100%; background: var(--raised-bg); border-left: 1px solid var(--border-color); }
+.nx-community-inspector { position: sticky; top: 76px; align-self: start; min-width: 0; max-height: calc(100vh - 88px); overflow-y: auto; overscroll-behavior: contain; background: var(--raised-bg); border-left: 1px solid var(--border-color); }
 .nx-community-inspector > header { display: flex; align-items: center; justify-content: space-between; min-height: 50px; padding: 9px 11px 9px 13px; border-bottom: 1px solid var(--border-color); }
 .nx-community-inspector > header span,
 .nx-community-inspector > header strong { display: block; }
@@ -10099,3 +10099,45 @@ body.light .nx-draft-cal-event { color: #157a55; }
   .nx-trash-toolbar select { flex: 1 1 calc(50% - 7px) !important; min-width: 0; }
   .nx-library-categories .nx-category-grid { grid-template-columns: 1fr !important; }
 }
+
+/* Coming Soon preview: mirror where the renderer composites the QR so what the
+   operator lays out matches the finished video. */
+.nx-gen-coming-canvas { position: relative; }
+.nx-gen-coming-qr {
+  position: absolute;
+  right: 3.5%;
+  bottom: 3.5%;
+  width: 16%;
+  aspect-ratio: 1;
+  padding: 1%;
+  background: #fff;
+  border-radius: 3px;
+  image-rendering: pixelated;
+}
+
+/* Themed backdrop layer for the Coming Soon preview. It sits under the header,
+   list, and posters so the palette reads through the whole frame the way the
+   dynamic templates do. Only rendered when a theme is selected; the ::before
+   wash below stays the backdrop for hand-picked colours. */
+.nx-gen-coming-canvas > .nx-gen-coming-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+/* With a live backdrop the static wash would sit on top of it and flatten the
+   effect, so it steps aside. */
+.nx-gen-coming-canvas:has(> .nx-gen-coming-backdrop)::before { display: none; }
+/* Lift the flow content above the backdrop WITHOUT touching elements that are
+   already absolutely positioned - blanket `position: relative` here knocked the
+   QR out of its bottom-right corner and back into the normal flow. */
+.nx-gen-coming-canvas > .nx-gen-coming-head,
+.nx-gen-coming-canvas > .nx-gen-coming-rule,
+.nx-gen-coming-canvas > .nx-gen-sample-list,
+.nx-gen-coming-canvas > .nx-gen-poster-grid { position: relative; z-index: 1; }
+.nx-gen-coming-canvas > .nx-gen-coming-vignette { z-index: 1; pointer-events: none; }
+.nx-gen-coming-canvas > .nx-gen-watermark { z-index: 0; }
+.nx-gen-coming-canvas > .nx-gen-coming-qr { z-index: 2; }
