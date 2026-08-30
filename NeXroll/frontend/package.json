@@ -44,5 +44,8 @@
   },
   "devDependencies": {
     "ajv": "^8.17.1"
+  },
+  "overrides": {
+    "shell-quote": "1.9.0"
   }
 }
