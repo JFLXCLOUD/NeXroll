@@ -255,6 +255,60 @@ const drawLogo = (context, logoImage, centerX, centerY, maxWidth, maxHeight, alp
   return true;
 };
 
+// Paints just the themed backdrop -- the same aurora / cyber grid / orbital /
+// luxe / starfield / solar treatments the dynamic templates use -- with no
+// template copy on top. The Coming Soon preview draws its posters and list over
+// this so both generators read as the same visual family.
+export function startThemeBackdropPreview(canvas, theme) {
+  if (!canvas?.getContext?.('2d')) return () => {};
+  const context = canvas.getContext('2d');
+  const primary = normalizeDynamicColor(theme?.primary, '#00d4ff');
+  const secondary = normalizeDynamicColor(theme?.secondary, '#7b2cbf');
+  const accent = normalizeDynamicColor(theme?.accent, '#ff006e');
+  const background = normalizeDynamicColor(theme?.bg, '#141428');
+  const startedAt = performance.now();
+  let frame;
+
+  const paint = now => {
+    const width = canvas.width;
+    const height = canvas.height;
+    const scale = height / 720;
+    // A long cycle keeps the motion ambient rather than looping visibly.
+    const state = getDynamicFrameState(((now - startedAt) / 1000) % 12, 12);
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = background;
+    context.fillRect(0, 0, width, height);
+    const effect = drawDynamicThemeBackdrop(context, width, height, scale, state, theme, { primary, secondary, accent });
+
+    const glow = context.createRadialGradient(width * 0.5, height * 0.45, 0, width * 0.5, height * 0.45, height * 0.34);
+    glow.addColorStop(0, rgba(primary, 0.16, '#00d4ff'));
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    context.fillStyle = glow;
+    context.fillRect(0, 0, width, height);
+
+    if (effect === 'orbital') {
+      const orb = (x, y, radius, color) => {
+        const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+        gradient.addColorStop(0, rgba(color, 0.16, '#00d4ff'));
+        gradient.addColorStop(1, 'rgba(0,0,0,0)');
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(x, y, radius, 0, Math.PI * 2);
+        context.fill();
+      };
+      orb(width * (0.10 + state.driftX * 0.025), height * (0.10 + state.driftY * 0.018), height * 0.46, secondary);
+      orb(width * (0.91 - state.driftX * 0.022), height * (0.91 - state.driftY * 0.02), height * 0.42, accent);
+    }
+
+    context.fillStyle = effect === 'cyber_grid' ? 'rgba(255,255,255,0.032)' : 'rgba(255,255,255,0.018)';
+    for (let y = 0; y < height; y += Math.max(3, Math.round(3 * scale))) context.fillRect(0, y, width, Math.max(1, scale));
+
+    frame = requestAnimationFrame(paint);
+  };
+  frame = requestAnimationFrame(paint);
+  return () => cancelAnimationFrame(frame);
+}
+
 export function drawDynamicPrerollFrame(canvas, options, elapsedSeconds) {
   const context = canvas?.getContext?.('2d');
   if (!context) return;

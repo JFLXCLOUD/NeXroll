@@ -1349,7 +1349,9 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     frameRate: 30,
     renderQuality: 'balanced',
     availableDays: 1, // Days to show "Available Now!" before auto-removal
-    maxAvailableNow: 0 // Max "Available Now!" items to show (0 = no limit)
+    maxAvailableNow: 0, // Max "Available Now!" items to show (0 = no limit)
+    theme: '', // Named palette shared with the dynamic templates; '' keeps the manual colours below
+    qrData: '' // Optional link rendered as a QR in the bottom-right corner
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
@@ -22658,7 +22660,9 @@ const DashboardTiles = {
           frameRate: data.coming_soon_list_frame_rate || 30,
           renderQuality: data.coming_soon_list_render_quality || 'balanced',
           availableDays: data.coming_soon_available_days || 1,
-          maxAvailableNow: data.coming_soon_max_available_now ?? 0
+          maxAvailableNow: data.coming_soon_max_available_now ?? 0,
+          theme: data.coming_soon_list_theme || '',
+          qrData: data.coming_soon_list_qr_data || ''
         }));
         // Mark settings as loaded to enable auto-save
         setTimeout(() => { comingSoonListSettingsLoadedRef.current = true; }, 100);
@@ -22690,6 +22694,8 @@ const DashboardTiles = {
       if (settings.renderQuality !== undefined) params.append('coming_soon_list_render_quality', settings.renderQuality);
       if (settings.availableDays !== undefined) params.append('coming_soon_available_days', settings.availableDays.toString());
       if (settings.maxAvailableNow !== undefined) params.append('coming_soon_max_available_now', settings.maxAvailableNow.toString());
+      if (settings.theme !== undefined) params.append('coming_soon_list_theme', settings.theme);
+      if (settings.qrData !== undefined) params.append('coming_soon_list_qr_data', settings.qrData);
       
       const response = await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
       if (!response.ok) throw new Error('Coming Soon defaults could not be saved.');
@@ -24510,6 +24516,7 @@ const DashboardTiles = {
         dynamicLogoUrl={`${apiUrl('/nexup/preroll/logo-image')}?v=${encodeURIComponent(dynamicPrerollSettings.customLogoFilename || 'none')}`}
         dynamicQrUrl={dynamicPrerollSettings.qrData?.trim() ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(dynamicPrerollSettings.qrData.trim())}` : ''}
         comingLogoUrl={`${apiUrl('/nexup/coming-soon-list/logo-image')}?v=${encodeURIComponent(comingSoonListSettings.customLogoFilename || 'none')}`}
+        comingQrUrl={comingSoonListSettings.qrData?.trim() ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(comingSoonListSettings.qrData.trim())}&size=260` : ''}
         onUploadAsset={handleNexupAssetUpload}
         onRemoveAsset={handleNexupAssetRemove}
         comingSettings={comingSoonListSettings}
@@ -35045,6 +35052,10 @@ const DashboardTiles = {
                       <video
                         key={communityInspectorItem.id}
                         controls
+                        // Selecting a row is the user gesture that authorises
+                        // playback, so the pane starts playing rather than
+                        // making them click play on every result.
+                        autoPlay
                         preload="metadata"
                         src={communityDirectSrc(communityInspectorItem)}
                         onError={event => communityPreviewFallback(event, communityInspectorItem, () => {

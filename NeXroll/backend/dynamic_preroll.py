@@ -932,6 +932,34 @@ class DynamicPrerollGenerator:
             logger.error(f"FFmpeg gradient error: {e}")
             return self._run_ffmpeg_vignette_fallback(filter_str, output_path, duration, width, height, bg_color)
     
+    def _render_theme_backdrop_png(self, theme_id: str, palette: dict, width: int, height: int):
+        """Bake the theme's own backdrop to a still for FFmpeg to loop.
+
+        The effect is drawn by backend/theme_backdrop.py, which mirrors the
+        preview's renderer, so a themed list sits on the same aurora / grid /
+        orbital treatment the preview shows rather than a flat wash. Returns
+        None when Pillow is unavailable, and the caller falls back to the plain
+        background colour.
+        """
+        try:
+            from backend import theme_backdrop
+        except ImportError:
+            try:
+                import theme_backdrop
+            except ImportError:
+                return None
+        out = self.output_dir / f"_backdrop_{theme_id}_{width}x{height}.png"
+        return theme_backdrop.render_backdrop(
+            out,
+            effect=palette.get('effect', 'orbital'),
+            bg=palette.get('bg'),
+            primary=palette.get('primary'),
+            secondary=palette.get('secondary'),
+            accent=palette.get('accent'),
+            width=width,
+            height=height,
+        )
+
     def _run_ffmpeg_vignette_fallback(self, filter_str: str, output_path: Path, duration: float,
                            width: int, height: int, bg_color: str,
                            include_audio: bool = False,
@@ -944,7 +972,8 @@ class DynamicPrerollGenerator:
                            frame_rate: int = 30,
                            video_preset: str = 'fast',
                            video_crf: int = 20,
-                           audio_bitrate: str = '192k') -> Optional[str]:
+                           audio_bitrate: str = '192k',
+                           background_image: str = None) -> Optional[str]:
         """Fallback: Run FFmpeg with simple vignette (no colored orbs).
         Supports optional custom logo (faded, centered, behind text) and
         custom audio with auto fade in/out.
@@ -969,7 +998,13 @@ class DynamicPrerollGenerator:
             _verbose_log(f"Color parse error: {e}, using original")
             bright_bg = bg_color
         
-        vignette_filter = f"vignette=PI/3.5:0.6,{filter_str}"
+        # A themed backdrop already carries its own vignette from the Pillow
+        # render; applying FFmpeg's on top darkens the corners twice and eats
+        # the effect's detail at the edges.
+        if background_image and os.path.isfile(str(background_image)):
+            vignette_filter = filter_str
+        else:
+            vignette_filter = f"vignette=PI/3.5:0.6,{filter_str}"
         
         # Determine audio source
         audio_file = None
@@ -982,9 +1017,13 @@ class DynamicPrerollGenerator:
         cmd = [
             self.ffmpeg_path,
             '-y',
-            '-f', 'lavfi',
-            '-i', f'color=c={bright_bg}:s={width}x{height}:d={duration}:r={frame_rate}',
         ]
+        if background_image and os.path.isfile(str(background_image)):
+            # A themed backdrop still, looped for the clip's length.
+            cmd.extend(['-loop', '1', '-t', str(duration), '-r', str(frame_rate), '-i', str(background_image)])
+        else:
+            cmd.extend(['-f', 'lavfi',
+                        '-i', f'color=c={bright_bg}:s={width}x{height}:d={duration}:r={frame_rate}'])
         
         # Track input indices: 0 = color background
         next_input = 1
@@ -2014,6 +2053,89 @@ class DynamicPrerollGenerator:
         _verbose_log(f"Coming Soon audio file not found at: {audio_path}")
         return None
 
+    def _overlay_corner_qr(self, video_path: str, qr_data: str, corner: str = "bottom-right") -> Optional[str]:
+        """Composite a QR code into a corner of an already-rendered video.
+
+        Done as a second pass rather than inside the layout filter graphs: the
+        grid and text layouts each build a long chain with their own optional
+        poster and logo inputs, and threading another image through both is far
+        more fragile than one short re-encode of the finished file.
+        """
+        if not (qr_data or '').strip():
+            return video_path
+        source = Path(video_path)
+        if not source.exists():
+            return video_path
+
+        qr_path = self._render_qr_png(qr_data, target_px=420)
+        if not qr_path:
+            logger.warning("Coming Soon list: QR could not be rendered, leaving the video unchanged")
+            return video_path
+
+        probe = self._probe_dimensions(str(source))
+        width, height = probe if probe else (1920, 1080)
+        # Keep the code a consistent fraction of the frame so it stays scannable
+        # at 720p and does not dominate a 4K render.
+        qr_size = max(120, int(min(width, height) * 0.16))
+        pad = max(8, int(qr_size * 0.07))
+        margin = max(16, int(min(width, height) * 0.035))
+        plate = qr_size + pad * 2
+        plate_x = width - margin - plate if 'right' in corner else margin
+        plate_y = height - margin - plate if 'bottom' in corner else margin
+
+        out_path = source.with_name(source.stem + '_qr' + source.suffix)
+        filters = [
+            f"[0:v]drawbox=x={plate_x}:y={plate_y}:w={plate}:h={plate}:c=white:t=fill[plate]",
+            f"[1:v]scale={qr_size}:{qr_size}:flags=neighbor[qr]",
+            f"[plate][qr]overlay={plate_x + pad}:{plate_y + pad}[vout]",
+        ]
+        cmd = [
+            self.ffmpeg_path, '-y', '-i', str(source), '-i', str(qr_path),
+            '-filter_complex', ';'.join(filters),
+            '-map', '[vout]', '-map', '0:a?',
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
+            '-c:a', 'copy', '-pix_fmt', 'yuv420p', str(out_path),
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, encoding='utf-8', errors='replace',
+                timeout=300, startupinfo=STARTUPINFO, creationflags=CREATE_NO_WINDOW
+            )
+            if result.returncode != 0 or not out_path.exists():
+                logger.error(f"Coming Soon list QR overlay failed: {(result.stderr or '')[-400:]}")
+                return video_path
+            # Replace the original so callers keep the filename they asked for.
+            source.unlink(missing_ok=True)
+            out_path.replace(source)
+            return str(source)
+        except Exception as e:
+            logger.error(f"Coming Soon list QR overlay error: {e}")
+            return video_path
+        finally:
+            try:
+                qr_path.unlink()
+            except Exception:
+                pass
+
+    def _probe_dimensions(self, video_path: str):
+        """Return (width, height) for a rendered file, or None if ffprobe can't."""
+        probe = (self.ffmpeg_path or '').replace('ffmpeg.exe', 'ffprobe.exe').replace('ffmpeg.EXE', 'ffprobe.exe')
+        if probe == self.ffmpeg_path:
+            probe = str(Path(self.ffmpeg_path).with_name('ffprobe' + Path(self.ffmpeg_path).suffix))
+        if not os.path.isfile(probe):
+            return None
+        try:
+            result = subprocess.run(
+                [probe, '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                 'stream=width,height', '-of', 'csv=p=0:s=x', video_path],
+                capture_output=True, text=True, timeout=30,
+                startupinfo=STARTUPINFO, creationflags=CREATE_NO_WINDOW
+            )
+            w, h = result.stdout.strip().split('x')[:2]
+            return int(w), int(h)
+        except Exception:
+            return None
+
     def generate_coming_soon_list(
         self,
         items: List[Dict[str, Any]],
@@ -2036,6 +2158,8 @@ class DynamicPrerollGenerator:
         video_preset: str = 'fast',
         video_crf: int = 20,
         audio_bitrate: str = '192k',
+        theme: str = None,
+        qr_data: str = None,
     ) -> Optional[str]:
         """Generate a Coming Soon List video.
         
@@ -2077,6 +2201,18 @@ class DynamicPrerollGenerator:
         _verbose_log(f"Colors - BG: {bg_color}, Text: {text_color}, Accent: {accent_color}")
         _verbose_log(f"Custom audio: {custom_audio_path}, Custom logo: {custom_logo_path}, Logo mode: {logo_mode}")
         
+        # A named theme fills in the three colours, so Coming Soon lists can use
+        # the same palettes as the dynamic templates instead of only hand-picked
+        # hex values. Explicit colours still win when no theme is chosen.
+        backdrop_image = None
+        if theme and theme in self.COLOR_THEMES:
+            palette = self.COLOR_THEMES[theme]
+            bg_color, text_color, accent_color = palette['bg'], palette['primary'], palette['secondary']
+            _verbose_log(f"Theme '{theme}' applied - BG: {bg_color}, Text: {text_color}, Accent: {accent_color}")
+            # Give the list the same layered backdrop the dynamic templates get,
+            # rather than a flat wash behind the posters.
+            backdrop_image = self._render_theme_backdrop_png(theme, palette, 1920, 1080)
+
         # Limit items
         items = items[:max_items]
         
@@ -2085,7 +2221,7 @@ class DynamicPrerollGenerator:
             return None
         
         if layout == "grid":
-            return self._generate_list_grid_layout(
+            rendered = self._generate_list_grid_layout(
                 items, server_name, duration, output_filename,
                 bg_color, text_color, accent_color, 1920, 1080,
                 include_audio=include_audio,
@@ -2099,9 +2235,10 @@ class DynamicPrerollGenerator:
                 video_preset=video_preset,
                 video_crf=video_crf,
                 audio_bitrate=audio_bitrate,
+                background_image=str(backdrop_image) if backdrop_image else None,
             )
         else:
-            return self._generate_list_text_layout(
+            rendered = self._generate_list_text_layout(
                 items, server_name, duration, output_filename,
                 bg_color, text_color, accent_color, 1920, 1080,
                 include_audio=include_audio,
@@ -2115,7 +2252,19 @@ class DynamicPrerollGenerator:
                 video_preset=video_preset,
                 video_crf=video_crf,
                 audio_bitrate=audio_bitrate,
+                background_image=str(backdrop_image) if backdrop_image else None,
             )
+
+        if rendered and qr_data:
+            rendered = self._overlay_corner_qr(rendered, qr_data)
+        # The baked backdrop is scratch, and output_dir is a folder the user
+        # browses, so it does not get left behind.
+        if backdrop_image:
+            try:
+                Path(backdrop_image).unlink(missing_ok=True)
+            except Exception:
+                pass
+        return rendered
     
     def _generate_list_text_layout(
         self,
@@ -2139,6 +2288,7 @@ class DynamicPrerollGenerator:
         video_preset: str = 'fast',
         video_crf: int = 20,
         audio_bitrate: str = '192k',
+        background_image: str = None,
     ) -> Optional[str]:
         """Generate text-only list layout (no posters)"""
         output_path = self.output_dir / output_filename
@@ -2266,6 +2416,7 @@ class DynamicPrerollGenerator:
             video_preset=video_preset,
             video_crf=video_crf,
             audio_bitrate=audio_bitrate,
+            background_image=background_image,
         )
     
     def _generate_list_grid_layout(
@@ -2290,6 +2441,7 @@ class DynamicPrerollGenerator:
         video_preset: str = 'fast',
         video_crf: int = 20,
         audio_bitrate: str = '192k',
+        background_image: str = None,
     ) -> Optional[str]:
         """
         Generate grid layout with poster images.
@@ -2457,9 +2609,13 @@ class DynamicPrerollGenerator:
             cmd = [
                 self.ffmpeg_path,
                 '-y',
-                '-f', 'lavfi',
-                '-i', f'color=c={bg_color}:s={width}x{height}:d={duration}:r={frame_rate}',
             ]
+            if background_image and os.path.isfile(str(background_image)):
+                # Themed backdrop behind the posters, matching the preview.
+                cmd.extend(['-loop', '1', '-t', str(duration), '-r', str(frame_rate), '-i', str(background_image)])
+            else:
+                cmd.extend(['-f', 'lavfi',
+                            '-i', f'color=c={bg_color}:s={width}x{height}:d={duration}:r={frame_rate}'])
             
             # Add poster inputs
             for poster_path in poster_paths:

@@ -42,12 +42,12 @@ TILE_KEYS = (
     "quick_actions",
     "storage_mix",
     "whats_next",
-    "schedules",
     "servers",
+    "schedules",
     "scheduler",
-    "resolution_chart",
-    "nexup",
     "community",
+    "nexup",
+    "resolution_chart",
     "weekly_calendar",
 )
 
@@ -225,7 +225,12 @@ def apply_preset(layout: Optional[dict], preset: str) -> dict:
     result = copy.deepcopy(upgrade_layout(layout))
     visible = preset_tiles(preset)
     result["preset"] = preset if preset in tuple(PRESETS) + ("everything",) else "custom"
-    result["order"] = list(visible) + [
+    # Order visible tiles canonically rather than by the preset tuple. The tuple
+    # is a set, not a layout: following it put an 8-wide tile straight after
+    # another 8-wide one, which cannot share a 12-column row, so Operations left
+    # the whole top-right cell empty and Everything left a hole mid-grid.
+    # TILE_KEYS is sequenced so each preset's visible set fills whole rows.
+    result["order"] = [key for key in TILE_KEYS if key in visible] + [
         key for key in result["order"] if key not in visible
     ]
     result["hidden"] = [key for key in result["order"] if key not in visible]

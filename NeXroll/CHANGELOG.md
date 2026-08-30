@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.2.0-beta.2] - 08-30-2026 (beta)
+
+> Fixes two things beta.1 got wrong: the Library filter that was supposed to
+> hide NeX-Up trailers never touched the grid, and the dashboard left a
+> tile-sized hole in the top right on the Operations and Everything presets.
+> Coming Soon lists gain the theme palettes and backdrops the dynamic templates
+> already had, plus an optional QR code. No configuration change; the new
+> settings columns migrate automatically on first start.
+
+### Fixed
+
+- **"Hide NeX-Up trailers" on the Library page did nothing to the grid.** It only controlled a separate read-only panel, which is invisible until NeX-Up registers downloaded trailers as real preroll rows — which it does whenever its storage path sits inside the prerolls folder, the layout NeX-Up Settings has recommended since 2.1.0-beta.3 to avoid the Docker path-mapping failure. Once that happens the trailers sit in the grid like any other preroll, and neither filter reached them: the generated-output filter looks for `dynamic_prerolls`/`coming_soon` paths and the NeX-Up Prerolls / Coming Soon Lists categories, while a downloaded trailer lands under `NeXup/movies` in NeX-Up Movie Trailers. The toggle now filters the grid, and selecting either trailer category still lists its contents.
+- **The dashboard left an empty tile-sized gap in the top right.** Switching preset rebuilt the tile order from the preset's own list, which says which tiles are visible rather than how they sit — it placed two 8-column tiles back to back, and they cannot share a 12-column row, so the first sat alone. Operations and Everything both had further holes lower down. Every preset now fills whole rows: Essential 2, Operations 4, Everything 6, with nothing left over.
+
+### Added
+
+- **Coming Soon lists can use the theme palettes**, the same named themes the dynamic templates offer, instead of only three hand-picked colours. Choosing one hides the manual pickers it overrides.
+- **Themed backdrops behind the posters and list.** Dynamic prerolls got their backdrop free by recording the browser canvas; a Coming Soon list is assembled server-side and also regenerates after a sync, where no browser exists, so the same six effects are now redrawn server-side and composited behind the content. The preview shows the live version of the same effect.
+- **An optional QR code on Coming Soon lists**, rendered bottom-right on a white plate so it stays scannable on every palette — for putting a watch-party invite, a Discord link, or guest Wi-Fi on screen ahead of the feature.
+- **Community preroll previews fall back through this server.** Previews load directly from the community server, so the browser has to reach that host itself — which a working download does not imply, since downloads are fetched server-side. Hotlink rules, an extension, or network filtering could therefore break every preview while downloads kept working. The player now retries once through NeXroll when the direct load fails, so the proxy costs nothing unless it is needed.
+- The community preview pane stays in view while a long result list scrolls, and starts playing when a result is selected rather than waiting for a click.
+- The Docker image is now built and smoke-tested on pull requests that touch how it is built, instead of only when a release is published.
+
+### Changed
+
+- The Coming Soon preview drops the GRID / LIST badge and matches the dynamic preview's frame.
+- NeXroll reports its own version correctly. `backend/version.py` shadowed the root `version.py` on import, so 2.1.0-beta.3 described itself as 2.1.0-beta.2; the backend file now reads the root one, which stays the single source of truth.
+
 ## [2.2.0-beta.1] - 08-28-2026 (beta)
 
 > Eight global themes replace the dark/light switch, the NeX-Up Generator Studio
