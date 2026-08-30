@@ -1,0 +1,84 @@
+name: Docker image
+
+# Builds the image on PRs that touch how it is built. docker-build.yml only
+# runs on a published release, so until now nothing exercised the Dockerfile
+# before it shipped -- a change could be merged, tagged, and only fail when the
+# release build ran. Deliberately amd64-only and never pushed: the release
+# workflow still does the full multi-arch push.
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'requirements.txt'
+      - '.github/workflows/docker-ci.yml'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build and smoke-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          # Loaded into the local daemon so the checks below can run it.
+          load: true
+          tags: nexroll:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The Dockerfile installs from pre-built wheels with --no-index, so a
+      # missing or misnamed requirement fails at import rather than at build.
+      # segno backs the QR templates and Pillow the themed backdrops; both are
+      # imported lazily at render time, so nothing else would catch their
+      # absence until someone tried to generate a preroll.
+      - name: Runtime imports resolve
+        run: |
+          docker run --rm nexroll:ci python -c "
+          import fastapi, uvicorn, sqlalchemy, lxml, plexapi, yt_dlp, segno
+          from PIL import Image, ImageDraw, ImageFilter
+          print('imports ok')
+          "
+
+      - name: Backend starts and answers /health
+        run: |
+          docker run -d --name nexroll-ci -p 9393:9393 nexroll:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9393/health > /dev/null 2>&1; then
+              echo "healthy after ${i}s"; docker rm -f nexroll-ci; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Container never answered /health"
+          docker logs nexroll-ci
+          docker rm -f nexroll-ci
+          exit 1
+
+      # A COPY of the build-only wheel directory cannot be undone by a later
+      # `rm -rf`: the layer is already committed, so the bytes ship in every
+      # pull. Bind-mount them into the RUN instead.
+      - name: No build-only wheels committed to a layer
+        run: |
+          if docker history --no-trunc --format '{{.CreatedBy}}' nexroll:ci | grep -qE 'COPY .*/wheels'; then
+            echo "::error::A COPY of /wheels is committed to a layer. Its bytes ship in every pull even if a later RUN deletes them. Use RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels instead."
+            docker history nexroll:ci
+            exit 1
+          fi
+          echo "no committed wheels layer"
+
+      - name: Report image size
+        run: |
+          size=$(docker image inspect nexroll:ci --format '{{.Size}}')
+          echo "Image size: $(numfmt --to=iec --suffix=B "$size")" >> "$GITHUB_STEP_SUMMARY"
+          docker history nexroll:ci >> "$GITHUB_STEP_SUMMARY"
