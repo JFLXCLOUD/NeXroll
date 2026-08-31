@@ -1355,7 +1355,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     fontScale: 1, // Item text scale; the row pitch follows it so titles never collide
     titleColor: null, // null inherits the Text colour
     dateColor: null, // null inherits the Accent colour
-    availableColor: null // null keeps the default green
+    availableColor: null, // null keeps the default green
+    headingColor: null // null inherits the Accent colour
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
@@ -2454,6 +2455,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       setHolidayApiStatus({ status: 'offline', error: e.message });
     }
   };
+
+  // The schedule form's holiday pickers need the same lists the Holiday Browser
+  // uses, but without opening it. Load them when a holiday schedule is being
+  // built, and refresh the holiday list whenever the chosen country changes.
+  useEffect(() => {
+    if (scheduleForm.type !== 'holiday') return;
+    if (holidayCountries.length === 0) loadHolidayCountries();
+    if (scheduleForm.holiday_country) {
+      loadHolidays(scheduleForm.holiday_country, new Date().getFullYear());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scheduleForm.type, scheduleForm.holiday_country]);
 
   const openHolidayBrowser = () => {
     // Clear any leftover search text from a previous session so it can't
@@ -18821,8 +18834,15 @@ const DashboardTiles = {
                 )}
                 {scheduleForm.type === 'holiday' && (
                   <div className="nx-draft-fields nx-draft-date-fields">
-                    <label><span>Holiday</span><input value={scheduleForm.holiday_name} onChange={event => setScheduleForm({ ...scheduleForm, holiday_name: event.target.value })} placeholder="Labor Day" /></label>
-                    <label><span>Country</span><input value={scheduleForm.holiday_country} onChange={event => setScheduleForm({ ...scheduleForm, holiday_country: event.target.value })} placeholder="US" /></label>
+                    <label><span>Country</span><select value={scheduleForm.holiday_country || ''} onChange={event => { const cc = event.target.value; setScheduleForm({ ...scheduleForm, holiday_country: cc, holiday_name: '' }); if (cc) loadHolidays(cc, new Date().getFullYear()); }}>
+                      <option value="">Choose a country</option>
+                      {holidayCountries.map(country => <option key={country.countryCode || country} value={country.countryCode || country}>{country.name || country}</option>)}
+                    </select></label>
+                    <label><span>Holiday</span><select value={scheduleForm.holiday_name || ''} onChange={event => setScheduleForm({ ...scheduleForm, holiday_name: event.target.value })} disabled={!scheduleForm.holiday_country || holidaysLoading}>
+                      <option value="">{!scheduleForm.holiday_country ? 'Choose a country first' : holidaysLoading ? 'Loading…' : 'Choose a holiday'}</option>
+                      {holidays.map(holiday => <option key={`${holiday.date}-${holiday.name}`} value={holiday.name}>{holiday.name}{holiday.date ? ` — ${holiday.date}` : ''}</option>)}
+                    </select>
+                    <small>Only holidays this country's calendar actually publishes are listed, so a schedule can't be saved against a name that will never resolve. Easter, for instance, is not a US public holiday.</small></label>
                   </div>
                 )}
               </div>
@@ -22690,6 +22710,7 @@ const DashboardTiles = {
           autoRegenLayout: data.coming_soon_list_auto_regen_layout || 'both',
           includeAudio: data.coming_soon_list_include_audio || false,
           customAudioFilename: data.coming_soon_list_custom_audio_filename || null,
+          customAudioDuration: data.coming_soon_list_custom_audio_duration || null,
           customLogoFilename: data.coming_soon_list_custom_logo_filename || null,
           logoMode: (() => { const m = data.coming_soon_list_logo_mode || 'watermark'; return m === 'replace' ? 'below' : m; })(),
           language: data.coming_soon_list_language || 'en',
@@ -22703,7 +22724,8 @@ const DashboardTiles = {
           fontScale: data.coming_soon_list_font_scale || 1,
           titleColor: data.coming_soon_list_title_color || null,
           dateColor: data.coming_soon_list_date_color || null,
-          availableColor: data.coming_soon_list_available_color || null
+          availableColor: data.coming_soon_list_available_color || null,
+          headingColor: data.coming_soon_list_heading_color || null
         }));
         // Mark settings as loaded to enable auto-save
         setTimeout(() => { comingSoonListSettingsLoadedRef.current = true; }, 100);
@@ -22742,6 +22764,7 @@ const DashboardTiles = {
       if (settings.titleColor !== undefined) params.append('coming_soon_list_title_color', settings.titleColor || '');
       if (settings.dateColor !== undefined) params.append('coming_soon_list_date_color', settings.dateColor || '');
       if (settings.availableColor !== undefined) params.append('coming_soon_list_available_color', settings.availableColor || '');
+      if (settings.headingColor !== undefined) params.append('coming_soon_list_heading_color', settings.headingColor || '');
       
       const response = await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
       if (!response.ok) throw new Error('Coming Soon defaults could not be saved.');
@@ -23763,6 +23786,7 @@ const DashboardTiles = {
           preroll_path: data.preroll_path,
           customLogoFilename: data.custom_logo_filename || null,
           customAudioFilename: data.custom_audio_filename || null,
+          customAudioDuration: data.custom_audio_duration || null,
           customHeadline: data.custom_headline ?? 'COMING SOON',
           customSubtext: data.custom_subtext ?? '',
           qrData: data.qr_data ?? '',
