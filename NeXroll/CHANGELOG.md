@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.2.0-beta.3] - 08-30-2026 (beta)
+
+> Trailer downloads work again on the Windows installer, which was shipping a
+> five-month-old yt-dlp that YouTube had moved past. Coming Soon lists get the
+> animated theme backdrop the preview was already showing, plus text size and
+> per-role colours. Several Sequence Builder features that the scheduler has
+> always supported now have controls. No configuration change; new settings
+> migrate automatically on first start.
+
+### Fixed
+
+- **Trailer downloads failed with a SABR error on the Windows installer, and updating yt-dlp yourself made no difference.** The frozen build bundles its own copy, so a system-wide update never reached it — and the bundled one was 2026.03.17, five months behind YouTube's delivery changes. This build ships 2026.8.19, verified against a trailer that previously failed partway through with a 403. Docker was never affected: it installs a current yt-dlp on every build.
+- **A sequence containing a pause could not be saved.** The validator rejected `separator` as an invalid block type even though the scheduler has always played them, so any sequence with one failed on save.
+- **The Coming Soon backdrop rendered as a still** while the preview animated. The Studio now records the backdrop from the same canvas the preview draws, and the finished video moves the way the preview does. Regenerating after a sync has no browser, so it keeps using a rendered still.
+- **A logo placed "right of heading" overlapped the heading**, and one placed below it landed on the first title in the list layout. Both now have their own space, and the list re-fits its rows around the logo.
+- **Generating both layouts previewed only the grid**, despite producing two videos. Both are previewed now, stacked.
+- The failure message for a blocked download was cut off mid-sentence, losing the one line that said what to do about it.
+
+### Added
+
+- **Text size for Coming Soon lists.** The item font and the row spacing scale together, and the list is capped so a larger size can never overlap the next title or run off the frame. The dynamic templates gain two larger steps.
+- **Colours for titles, dates, and "Available Now!"** — the last of which had no control at all. Each is an override on top of the theme or manual colours, so it works either way, and each swatch shows the colour that will actually render.
+- **Sequence Builder: how many prerolls a category block plays** (1–10). The scheduler always honoured this and the validator always checked it; nothing ever set it.
+- **Sequence Builder: playback order for category blocks and NeX-Up trailers** — shuffled, or in order. Both were fixed to shuffled with no way to change them.
+
+### Changed
+
+- Generated content is one block type in the Sequence Builder rather than two. The item picker covers both: "always the latest" tracks whatever was generated most recently for a layout, while a named file plays that exact video every time.
+- The Generator Studio header drops its blurb, and the Coming Soon preview drops the GRID / LIST badge.
+
 ## [2.2.0-beta.2] - 08-30-2026 (beta)
 
 > Fixes two things beta.1 got wrong: the Library filter that was supposed to
