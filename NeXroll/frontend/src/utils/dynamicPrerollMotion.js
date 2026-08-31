@@ -259,22 +259,20 @@ const drawLogo = (context, logoImage, centerX, centerY, maxWidth, maxHeight, alp
 // luxe / starfield / solar treatments the dynamic templates use -- with no
 // template copy on top. The Coming Soon preview draws its posters and list over
 // this so both generators read as the same visual family.
-export function startThemeBackdropPreview(canvas, theme) {
-  if (!canvas?.getContext?.('2d')) return () => {};
-  const context = canvas.getContext('2d');
+export function drawThemeBackdropFrame(canvas, options, elapsedSeconds) {
+  const context = canvas?.getContext?.('2d');
+  if (!context) return;
+  const theme = options?.theme || {};
   const primary = normalizeDynamicColor(theme?.primary, '#00d4ff');
   const secondary = normalizeDynamicColor(theme?.secondary, '#7b2cbf');
   const accent = normalizeDynamicColor(theme?.accent, '#ff006e');
   const background = normalizeDynamicColor(theme?.bg, '#141428');
-  const startedAt = performance.now();
-  let frame;
-
-  const paint = now => {
+  {
     const width = canvas.width;
     const height = canvas.height;
     const scale = height / 720;
     // A long cycle keeps the motion ambient rather than looping visibly.
-    const state = getDynamicFrameState(((now - startedAt) / 1000) % 12, 12);
+    const state = getDynamicFrameState((Number(elapsedSeconds) || 0) % 12, 12);
     context.clearRect(0, 0, width, height);
     context.fillStyle = background;
     context.fillRect(0, 0, width, height);
@@ -302,7 +300,18 @@ export function startThemeBackdropPreview(canvas, theme) {
 
     context.fillStyle = effect === 'cyber_grid' ? 'rgba(255,255,255,0.032)' : 'rgba(255,255,255,0.018)';
     for (let y = 0; y < height; y += Math.max(3, Math.round(3 * scale))) context.fillRect(0, y, width, Math.max(1, scale));
+  }
+}
 
+// Animates the backdrop on screen. Shares drawThemeBackdropFrame with the
+// recorder below, so what the preview shows and what gets baked into a Coming
+// Soon list are the same drawing code at the same point in the cycle.
+export function startThemeBackdropPreview(canvas, theme) {
+  if (!canvas?.getContext?.('2d')) return () => {};
+  const startedAt = performance.now();
+  let frame;
+  const paint = now => {
+    drawThemeBackdropFrame(canvas, { theme }, (now - startedAt) / 1000);
     frame = requestAnimationFrame(paint);
   };
   frame = requestAnimationFrame(paint);
@@ -529,6 +538,7 @@ const blobToDataUrl = blob => new Promise((resolve, reject) => {
 });
 
 export async function recordDynamicPrerollAnimation(options) {
+  const drawFrame = options.drawFrame || drawDynamicPrerollFrame;
   if (typeof MediaRecorder === 'undefined') return null;
   const dimensions = resolveDynamicOutput(options.settings?.resolution);
   const frameRate = [24, 30, 60].includes(Number(options.settings?.frameRate)) ? Number(options.settings.frameRate) : 30;
@@ -562,7 +572,7 @@ export async function recordDynamicPrerollAnimation(options) {
     recorder.addEventListener('error', event => reject(event.error || new Error('Unable to record the preview animation.')), { once: true });
   });
   const duration = Math.max(1, Number(options.settings?.duration) || 5);
-  drawDynamicPrerollFrame(canvas, options, 0);
+  drawFrame(canvas, options, 0);
   recorder.start(500);
   const startedAt = performance.now();
 
@@ -572,14 +582,14 @@ export async function recordDynamicPrerollAnimation(options) {
       const targetTime = startedAt + ((frame / frameRate) * 1000);
       const delay = targetTime - performance.now();
       if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-      drawDynamicPrerollFrame(canvas, options, Math.min(duration, frame / frameRate));
+      drawFrame(canvas, options, Math.min(duration, frame / frameRate));
       videoTrack.requestFrame();
     }
   } else {
     await new Promise(resolve => {
       const paint = now => {
         const elapsed = Math.min(duration, (now - startedAt) / 1000);
-        drawDynamicPrerollFrame(canvas, options, elapsed);
+        drawFrame(canvas, options, elapsed);
         if (elapsed < duration) requestAnimationFrame(paint);
         else resolve();
       };

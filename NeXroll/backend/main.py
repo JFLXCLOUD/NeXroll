@@ -301,6 +301,10 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_render_quality", "nexup_coming_soon_list_render_quality TEXT DEFAULT 'balanced'"),
                 ("nexup_coming_soon_list_theme", "nexup_coming_soon_list_theme TEXT"),
                 ("nexup_coming_soon_list_qr_data", "nexup_coming_soon_list_qr_data TEXT"),
+                ("nexup_coming_soon_list_font_scale", "nexup_coming_soon_list_font_scale REAL DEFAULT 1.0"),
+                ("nexup_coming_soon_list_title_color", "nexup_coming_soon_list_title_color TEXT"),
+                ("nexup_coming_soon_list_date_color", "nexup_coming_soon_list_date_color TEXT"),
+                ("nexup_coming_soon_list_available_color", "nexup_coming_soon_list_available_color TEXT"),
                 ("nexup_coming_soon_available_days", "nexup_coming_soon_available_days INTEGER DEFAULT 1"),
                 ("nexup_coming_soon_max_available_now", "nexup_coming_soon_max_available_now INTEGER DEFAULT 0"),
                 ("nexup_trailer_retention_days", "nexup_trailer_retention_days INTEGER DEFAULT 7"),
@@ -18482,6 +18486,10 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_render_quality": getattr(setting, 'nexup_coming_soon_list_render_quality', 'balanced'),
         "coming_soon_list_theme": getattr(setting, 'nexup_coming_soon_list_theme', None),
         "coming_soon_list_qr_data": getattr(setting, 'nexup_coming_soon_list_qr_data', None) or "",
+        "coming_soon_list_font_scale": getattr(setting, 'nexup_coming_soon_list_font_scale', 1.0) or 1.0,
+        "coming_soon_list_title_color": getattr(setting, 'nexup_coming_soon_list_title_color', None),
+        "coming_soon_list_date_color": getattr(setting, 'nexup_coming_soon_list_date_color', None),
+        "coming_soon_list_available_color": getattr(setting, 'nexup_coming_soon_list_available_color', None),
         "dynamic_preroll_language": getattr(setting, 'nexup_dynamic_preroll_language', 'en'),
         "dynamic_preroll_resolution": getattr(setting, 'nexup_dynamic_preroll_resolution', '1080'),
         "dynamic_preroll_frame_rate": getattr(setting, 'nexup_dynamic_preroll_frame_rate', 30),
@@ -18536,6 +18544,10 @@ def update_nexup_settings(
     coming_soon_list_render_quality: Optional[str] = None,
     coming_soon_list_theme: Optional[str] = None,
     coming_soon_list_qr_data: Optional[str] = None,
+    coming_soon_list_font_scale: Optional[float] = None,
+    coming_soon_list_title_color: Optional[str] = None,
+    coming_soon_list_date_color: Optional[str] = None,
+    coming_soon_list_available_color: Optional[str] = None,
     dynamic_preroll_template: Optional[str] = None,
     dynamic_preroll_server_name: Optional[str] = None,
     dynamic_preroll_duration: Optional[int] = None,
@@ -18708,6 +18720,15 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_theme = coming_soon_list_theme.strip() or None
     if coming_soon_list_qr_data is not None:
         setting.nexup_coming_soon_list_qr_data = coming_soon_list_qr_data.strip() or None
+    if coming_soon_list_font_scale is not None:
+        setting.nexup_coming_soon_list_font_scale = max(0.85, min(1.6, float(coming_soon_list_font_scale)))
+    # An empty string clears the override and restores the inherited colour.
+    if coming_soon_list_title_color is not None:
+        setting.nexup_coming_soon_list_title_color = coming_soon_list_title_color.strip() or None
+    if coming_soon_list_date_color is not None:
+        setting.nexup_coming_soon_list_date_color = coming_soon_list_date_color.strip() or None
+    if coming_soon_list_available_color is not None:
+        setting.nexup_coming_soon_list_available_color = coming_soon_list_available_color.strip() or None
     if dynamic_preroll_template is not None:
         setting.nexup_dynamic_preroll_template = dynamic_preroll_template.strip()[:80] or 'coming_soon'
     if dynamic_preroll_server_name is not None:
@@ -19701,6 +19722,10 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 audio_bitrate=render['audio_bitrate'],
                 theme=list_theme,
                 qr_data=list_qr_data,
+                font_scale=getattr(setting, 'nexup_coming_soon_list_font_scale', 1.0) or 1.0,
+                title_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_title_color', None)),
+                date_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_date_color', None)),
+                available_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_available_color', None)),
             )
             
             if output_path:
@@ -21200,7 +21225,15 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
             else:
                 help_msg = "Couldn't download this trailer right now — this is often a transient YouTube block, so try again in a moment."
                 if clean and clean != help_msg:
-                    help_msg += f" (Details: {clean[:180]})"
+                    # The cap guards against dumping raw yt-dlp stderr, but our own
+                    # classified reasons run to ~290 characters and 180 cut them
+                    # mid-sentence - SABR_BLOCKED lost "Upgrade yt-dlp from the
+                    # System page, then retry", which is the only actionable part
+                    # of it. Keep the guard, raise it clear of our longest message,
+                    # and mark a real truncation instead of ending on a dangling
+                    # dash.
+                    detail = clean if len(clean) <= 400 else clean[:400].rstrip() + '...'
+                    help_msg += f" (Details: {detail})"
 
             _file_log(f"Failed to download trailer for {movie.get('title')} - err={err_code} detail={fail_detail[:200]}")
             log_event('ERROR', 'nexup', f'Trailer download failed: {movie.get("title")} - {err_code or "unknown"}', source='download_trailer', db=db)
@@ -22541,6 +22574,12 @@ def get_coming_soon_logo(db: Session = Depends(get_db)):
     return FileResponse(logo_path)
 
 
+def _csl_role_color(value):
+    """#RRGGBB from the picker to FFmpeg's 0xRRGGBB, or None to inherit."""
+    text = str(value or '').strip()
+    return text.replace('#', '0x') if text else None
+
+
 @app.post("/nexup/preroll/generate-coming-soon-list")
 async def generate_coming_soon_list(
     layout: str = "list",  # "list" or "grid"
@@ -22556,6 +22595,7 @@ async def generate_coming_soon_list(
     resolution: str = "1080",
     frame_rate: int = 30,
     quality: str = "balanced",
+    backdrop_video: Optional[str] = Body(None, embed=True, description="Data-URL of the themed backdrop recorded in the browser; omitted by auto-regeneration, which falls back to a still"),
     db: Session = Depends(get_db)
 ):
     """
@@ -22769,7 +22809,28 @@ async def generate_coming_soon_list(
         raise HTTPException(status_code=500, detail="FFmpeg not found. Please install FFmpeg to generate this video.")
     
     output_filename = f"coming_soon_{layout}.mp4"
-    
+
+    # The Studio records the themed backdrop from the same canvas the preview
+    # animates, so the finished list moves the way the preview does. Auto-regen
+    # after a sync has no browser and sends nothing, and the generator falls
+    # back to the still it bakes itself.
+    _backdrop_tmp = None
+    if backdrop_video:
+        try:
+            import base64 as _b64
+            import tempfile as _tempfile
+            payload = backdrop_video.split(',', 1)[-1] if ',' in backdrop_video else backdrop_video
+            raw = _b64.b64decode(payload)
+            if len(raw) > 120 * 1024 * 1024:
+                raise ValueError("backdrop recording too large")
+            fd, _backdrop_tmp = _tempfile.mkstemp(suffix='.webm', prefix='nexroll_backdrop_')
+            with os.fdopen(fd, 'wb') as handle:
+                handle.write(raw)
+            _file_log(f"[COMING-SOON-LIST] Using recorded backdrop ({len(raw)} bytes)")
+        except Exception as e:
+            _file_log(f"[COMING-SOON-LIST] Recorded backdrop unusable, falling back to a still: {e}")
+            _backdrop_tmp = None
+
     try:
         output_path = generator.generate_coming_soon_list(
             items=items,
@@ -22794,8 +22855,20 @@ async def generate_coming_soon_list(
             audio_bitrate=render['audio_bitrate'],
             theme=getattr(setting, 'nexup_coming_soon_list_theme', None),
             qr_data=getattr(setting, 'nexup_coming_soon_list_qr_data', None),
+            backdrop_video=_backdrop_tmp,
+            font_scale=getattr(setting, 'nexup_coming_soon_list_font_scale', 1.0) or 1.0,
+            title_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_title_color', None)),
+            date_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_date_color', None)),
+            available_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_available_color', None)),
         )
         
+        if _backdrop_tmp:
+            try:
+                os.unlink(_backdrop_tmp)
+            except Exception:
+                pass
+            _backdrop_tmp = None
+
         if output_path:
             _file_log(f"[COMING-SOON-LIST] Generated: {output_path}")
             log_event('INFO', 'nexup', f'Coming Soon List generated successfully ({layout} layout, {min(len(items), max_items)} items)',

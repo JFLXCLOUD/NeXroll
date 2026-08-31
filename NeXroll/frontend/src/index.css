@@ -10122,7 +10122,6 @@ body.light .nx-draft-cal-event { color: #157a55; }
 .nx-gen-coming-canvas > .nx-gen-coming-backdrop {
   position: absolute;
   inset: 0;
-  z-index: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -10131,13 +10130,48 @@ body.light .nx-draft-cal-event { color: #157a55; }
 /* With a live backdrop the static wash would sit on top of it and flatten the
    effect, so it steps aside. */
 .nx-gen-coming-canvas:has(> .nx-gen-coming-backdrop)::before { display: none; }
-/* Lift the flow content above the backdrop WITHOUT touching elements that are
-   already absolutely positioned - blanket `position: relative` here knocked the
-   QR out of its bottom-right corner and back into the normal flow. */
-.nx-gen-coming-canvas > .nx-gen-coming-head,
-.nx-gen-coming-canvas > .nx-gen-coming-rule,
-.nx-gen-coming-canvas > .nx-gen-sample-list,
-.nx-gen-coming-canvas > .nx-gen-poster-grid { position: relative; z-index: 1; }
-.nx-gen-coming-canvas > .nx-gen-coming-vignette { z-index: 1; pointer-events: none; }
-.nx-gen-coming-canvas > .nx-gen-watermark { z-index: 0; }
-.nx-gen-coming-canvas > .nx-gen-coming-qr { z-index: 2; }
+/* Sit the backdrop behind the content with a negative z-index rather than
+   positioning the content above it. Positioning the children made the header a
+   containing block, and `.nx-gen-coming-head img.below` is absolute at top:25%
+   -- it then measured 25% of the header instead of the frame and rode up over
+   the heading. A negative z-index paints above the canvas's own background but
+   below every in-flow child, which needs no changes to the children at all.
+   isolate forces the stacking context so the layer cannot escape behind the
+   card. */
+.nx-gen-coming-canvas { isolation: isolate; }
+.nx-gen-coming-canvas > .nx-gen-coming-backdrop { z-index: -1; }
+
+/* Text size in the Coming Soon preview. The renderer scales the item font and
+   the row pitch together, and caps the pitch so the list still fits the frame;
+   mirroring both here keeps the preview honest about how much taller the rows
+   get. min() applies the same ceiling the backend does. */
+.nx-gen-coming-canvas { --gen-font-scale: 1; }
+.nx-gen-sample-list > div {
+  min-height: calc(20px * min(var(--gen-font-scale), 1.6));
+  font-size: calc(12px * min(var(--gen-font-scale), 1.6));
+}
+.nx-gen-sample-list b { font-size: calc(12px * min(var(--gen-font-scale), 1.6)); }
+.nx-gen-poster-grid span { font-size: calc(12px * min(var(--gen-font-scale), 1.6)); }
+
+/* "Generate both" previews the grid and the list together, stacked, because
+   that option produces two videos. */
+.nx-gen-stage-stack { display: grid; gap: 12px; }
+.nx-gen-stage-stack > figure { margin: 0; display: grid; gap: 6px; }
+.nx-gen-stage-stack > figure > figcaption {
+  color: var(--nx-section-accent, var(--text-muted));
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+/* Per-role colours in the Coming Soon preview, matching what the renderer draws:
+   titles inherit the Text colour, dates the Accent, and "Available Now!" its own
+   green unless overridden. */
+.nx-gen-coming-canvas { --gen-title: var(--gen-primary); --gen-date: var(--gen-accent); --gen-available: #28a745; }
+.nx-gen-sample-list > div > span { color: var(--gen-title); }
+.nx-gen-sample-list b { color: var(--gen-date); }
+.nx-gen-sample-list b.is-available,
+.nx-gen-poster-grid span.is-available { color: var(--gen-available); }
+.nx-gen-poster-grid span { color: var(--gen-date); }
+.nx-gen-role-colors { grid-template-columns: repeat(3, minmax(0, 1fr)); }

@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import shutil
+import tempfile
 import logging
 import sys
 import math
@@ -973,7 +974,8 @@ class DynamicPrerollGenerator:
                            video_preset: str = 'fast',
                            video_crf: int = 20,
                            audio_bitrate: str = '192k',
-                           background_image: str = None) -> Optional[str]:
+                           background_image: str = None,
+                           background_video: str = None) -> Optional[str]:
         """Fallback: Run FFmpeg with simple vignette (no colored orbs).
         Supports optional custom logo (faded, centered, behind text) and
         custom audio with auto fade in/out.
@@ -1001,7 +1003,11 @@ class DynamicPrerollGenerator:
         # A themed backdrop already carries its own vignette from the Pillow
         # render; applying FFmpeg's on top darkens the corners twice and eats
         # the effect's detail at the edges.
-        if background_image and os.path.isfile(str(background_image)):
+        if background_video and os.path.isfile(str(background_video)):
+            # A recorded backdrop can arrive at a different resolution than the
+            # layout works in, so normalise it before the text is drawn on top.
+            vignette_filter = f"scale={width}:{height},setsar=1,{filter_str}"
+        elif background_image and os.path.isfile(str(background_image)):
             vignette_filter = filter_str
         else:
             vignette_filter = f"vignette=PI/3.5:0.6,{filter_str}"
@@ -1018,7 +1024,11 @@ class DynamicPrerollGenerator:
             self.ffmpeg_path,
             '-y',
         ]
-        if background_image and os.path.isfile(str(background_image)):
+        if background_video and os.path.isfile(str(background_video)):
+            # The animated backdrop recorded in the browser. Looped in case it
+            # is shorter than the clip, and trimmed to length either way.
+            cmd.extend(['-stream_loop', '-1', '-t', str(duration), '-i', str(background_video)])
+        elif background_image and os.path.isfile(str(background_image)):
             # A themed backdrop still, looped for the clip's length.
             cmd.extend(['-loop', '1', '-t', str(duration), '-r', str(frame_rate), '-i', str(background_image)])
         else:
@@ -1050,15 +1060,19 @@ class DynamicPrerollGenerator:
         
         # Apply vignette + text to background
         filter_parts.append(f"[0:v]{vignette_filter}[vout]")
-        
+
         if has_logo:
             if logo_mode == 'right':
-                # Right mode: logo to the right of header, higher opacity
-                logo_w = int(width * 0.25)
+                # Right mode: the logo sits in the right quarter and the heading
+                # is centred in the left two thirds (see the drawtext x below),
+                # so the two occupy separate bands. The old fixed (W/2)+200 put
+                # a 25%-wide logo at x=1160 while the 80px heading ran to about
+                # x=1295, overlapping it -- and worse for longer translations.
+                logo_w = int(width * 0.20)
                 logo_opacity = 0.85
                 logo_y_pos = 50  # Same height as header text
-                logo_x_expr = '(W/2)+200'  # Right of center
-                _verbose_log(f"Logo RIGHT mode: width={logo_w}, opacity={logo_opacity}")
+                logo_x_expr = f'{int(width * 0.60)}'
+                _verbose_log(f"Logo RIGHT mode: width={logo_w}, opacity={logo_opacity}, x={int(width * 0.60)}")
             elif logo_mode in ('below', 'replace'):
                 # Below mode: logo below "COMING SOON TO" header, higher opacity
                 logo_w = int(width * 0.25)
@@ -2160,6 +2174,11 @@ class DynamicPrerollGenerator:
         audio_bitrate: str = '192k',
         theme: str = None,
         qr_data: str = None,
+        backdrop_video: str = None,
+        font_scale: float = 1.0,
+        title_color: str = None,
+        date_color: str = None,
+        available_color: str = None,
     ) -> Optional[str]:
         """Generate a Coming Soon List video.
         
@@ -2236,6 +2255,11 @@ class DynamicPrerollGenerator:
                 video_crf=video_crf,
                 audio_bitrate=audio_bitrate,
                 background_image=str(backdrop_image) if backdrop_image else None,
+                background_video=backdrop_video,
+                font_scale=font_scale,
+                title_color=title_color,
+                date_color=date_color,
+                available_color=available_color,
             )
         else:
             rendered = self._generate_list_text_layout(
@@ -2253,6 +2277,11 @@ class DynamicPrerollGenerator:
                 video_crf=video_crf,
                 audio_bitrate=audio_bitrate,
                 background_image=str(backdrop_image) if backdrop_image else None,
+                background_video=backdrop_video,
+                font_scale=font_scale,
+                title_color=title_color,
+                date_color=date_color,
+                available_color=available_color,
             )
 
         if rendered and qr_data:
@@ -2289,6 +2318,11 @@ class DynamicPrerollGenerator:
         video_crf: int = 20,
         audio_bitrate: str = '192k',
         background_image: str = None,
+        background_video: str = None,
+        font_scale: float = 1.0,
+        title_color: str = None,
+        date_color: str = None,
+        available_color: str = None,
     ) -> Optional[str]:
         """Generate text-only list layout (no posters)"""
         output_path = self.output_dir / output_filename
@@ -2306,8 +2340,16 @@ class DynamicPrerollGenerator:
         header_y = 80
         subtitle_y = 175
         list_start_y = 270
-        
-        # Available height for items: 1080 - 270 (header area) - 50 (bottom margin) = 760
+        # A below/replace logo is drawn at y=175 and a wide mark reaches roughly
+        # y=315, which landed on top of the first title. Start the list clear of
+        # it; available_height is derived from this, so the rows re-fit
+        # themselves rather than running off the bottom.
+        _below_logo = (logo_mode in ('below', 'replace')
+                       and custom_logo_path and os.path.isfile(custom_logo_path))
+        if _below_logo:
+            list_start_y = 350
+
+        # Available height for items, after the header area and a bottom margin.
         available_height = height - list_start_y - 50
         num_items = len(items)
         
@@ -2324,17 +2366,34 @@ class DynamicPrerollGenerator:
         else:
             line_height = 55
             fontsize = 30
-        
+
+        # Scale the item text, and the row pitch with it, so a larger font does
+        # not overlap the next title. If the scaled rows would run past the
+        # bottom of the frame, the pitch is capped and the text follows it down
+        # -- better a slightly smaller font than a list that overflows.
+        scale = max(0.85, min(1.6, float(font_scale or 1.0)))
+        if scale != 1.0:
+            fontsize = int(round(fontsize * scale))
+            line_height = int(round(line_height * scale))
+            max_line_height = int(available_height // max(1, num_items))
+            if line_height > max_line_height:
+                line_height = max_line_height
+                fontsize = min(fontsize, max(18, int(max_line_height * 0.55)))
+
         # Build filter string
         filter_parts = []
         
         # Header: "Coming Soon to [Server Name]" or "COMING SOON TO" + logo
         has_replace_logo = logo_mode in ('right', 'below', 'replace') and custom_logo_path and os.path.isfile(custom_logo_path)
         if has_replace_logo:
-            # Right/Below mode: single-line "COMING SOON TO" header, logo positioned separately
+            # Right/Below mode: single-line "COMING SOON TO" header, logo positioned separately.
+            # Right mode centres the heading inside the left band so the logo,
+            # which occupies the right quarter, has clear space beside it.
+            header_x = "(w*0.78-text_w)/2" if logo_mode == 'right' else "(w-text_w)/2"
+            header_size = 70 if logo_mode == 'right' else 80
             filter_parts.append(
-                f"drawtext=text='{coming_soon_to_text}':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
-                f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
+                f"drawtext=text='{coming_soon_to_text}':fontsize={header_size}:fontcolor={accent_color}{bold_font_param}:"
+                f"x={header_x}:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
             )
         else:
             filter_parts.append(
@@ -2375,18 +2434,22 @@ class DynamicPrerollGenerator:
             date_fontsize = int(fontsize * 0.85)  # Slightly smaller for date
             
             # Use green color for "Available Now!" items
-            date_color = '0x28a745' if item.get('available_now', False) else f'{accent_color}@0.9'
+            # Each role falls back to the colour it always used, so an
+            # untouched list renders exactly as before.
+            _avail = available_color or '0x28a745'
+            _date = f"{date_color}" if date_color else f'{accent_color}@0.9'
+            date_color_used = _avail if item.get('available_now', False) else _date
             
             # Title (left-aligned with padding)
             filter_parts.append(
-                f"drawtext=text='{title}':fontsize={fontsize}:fontcolor={text_color}{font_param}:"
+                f"drawtext=text='{title}':fontsize={fontsize}:fontcolor={title_color or text_color}{font_param}:"
                 f"x=200:y={item_y}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
                 f"(t-{fade_delay})/0.4,1))'"
             )
             
             # Date (right-aligned)
             filter_parts.append(
-                f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={date_color}{font_param}:"
+                f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={date_color_used}{font_param}:"
                 f"x=w-text_w-200:y={item_y+5}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
                 f"(t-{fade_delay})/0.4,1))'"
             )
@@ -2417,6 +2480,7 @@ class DynamicPrerollGenerator:
             video_crf=video_crf,
             audio_bitrate=audio_bitrate,
             background_image=background_image,
+            background_video=background_video,
         )
     
     def _generate_list_grid_layout(
@@ -2442,6 +2506,11 @@ class DynamicPrerollGenerator:
         video_crf: int = 20,
         audio_bitrate: str = '192k',
         background_image: str = None,
+        background_video: str = None,
+        font_scale: float = 1.0,
+        title_color: str = None,
+        date_color: str = None,
+        available_color: str = None,
     ) -> Optional[str]:
         """
         Generate grid layout with poster images.
@@ -2610,7 +2679,9 @@ class DynamicPrerollGenerator:
                 self.ffmpeg_path,
                 '-y',
             ]
-            if background_image and os.path.isfile(str(background_image)):
+            if background_video and os.path.isfile(str(background_video)):
+                cmd.extend(['-stream_loop', '-1', '-t', str(duration), '-i', str(background_video)])
+            elif background_image and os.path.isfile(str(background_image)):
                 # Themed backdrop behind the posters, matching the preview.
                 cmd.extend(['-loop', '1', '-t', str(duration), '-r', str(frame_rate), '-i', str(background_image)])
             else:
@@ -2625,7 +2696,12 @@ class DynamicPrerollGenerator:
             filter_parts = []
             
             # Label base
-            filter_parts.append(f"[0:v]null[base]")
+            # A recorded backdrop may not match the layout resolution, so
+            # normalise it before posters are positioned on top.
+            if background_video and os.path.isfile(str(background_video)):
+                filter_parts.append(f"[0:v]scale={width}:{height},setsar=1[base]")
+            else:
+                filter_parts.append(f"[0:v]null[base]")
             
             current_label = "[base]"
             for i, poster_path in enumerate(poster_paths):
@@ -2668,14 +2744,16 @@ class DynamicPrerollGenerator:
                 date_str = self._escape_text(date_str)
                 
                 # Use green color for "Available Now!" items
-                grid_date_color = '0x28a745' if item.get('available_now', False) else f'{accent_color}@0.9'
+                _g_avail = available_color or '0x28a745'
+                _g_date = f"{date_color}" if date_color else f'{accent_color}@0.9'
+                grid_date_color = _g_avail if item.get('available_now', False) else _g_date
                 
                 # Center text under poster - only release date
                 text_center_x = x + poster_width // 2
                 date_y = y + poster_height + 8
                 
                 # Release date only (centered, accent color) - scale font based on poster size
-                date_fontsize = max(18, min(28, poster_width // 10))
+                date_fontsize = max(14, min(40, int((poster_width // 10) * max(0.85, min(1.6, float(font_scale or 1.0))))))
                 text_filters.append(
                     f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={grid_date_color}{font_param}:"
                     f"x={text_center_x}-(text_w/2):y={date_y}:shadowcolor=black@0.4:shadowx=1:shadowy=1"

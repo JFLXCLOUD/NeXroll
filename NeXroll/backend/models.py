@@ -361,6 +361,10 @@ class Setting(Base):
     nexup_coming_soon_list_render_quality = Column(String, default='balanced')  # draft, balanced, high, or master
     nexup_coming_soon_list_theme = Column(String, nullable=True)  # Named palette from DynamicPrerollGenerator.COLOR_THEMES; null keeps the manual colours
     nexup_coming_soon_list_qr_data = Column(String, nullable=True)  # Optional link encoded as a QR in the corner
+    nexup_coming_soon_list_font_scale = Column(Float, default=1.0)  # Item text scale, 0.85 to 1.60; row pitch follows it
+    nexup_coming_soon_list_title_color = Column(String, nullable=True)  # Title text; null inherits the Text colour
+    nexup_coming_soon_list_date_color = Column(String, nullable=True)  # Release dates; null inherits the Accent colour
+    nexup_coming_soon_list_available_color = Column(String, nullable=True)  # "Available Now!"; null keeps the default green
     nexup_coming_soon_available_days = Column(Integer, default=1)  # Days to show "Available Now!" after download before auto-removing
     nexup_coming_soon_max_available_now = Column(Integer, default=0)  # Max "Available Now!" items to show (0 = no limit)
     nexup_trailer_retention_days = Column(Integer, default=7)  # Days to retain downloaded trailers before auto-deleting (0 = keep forever)
