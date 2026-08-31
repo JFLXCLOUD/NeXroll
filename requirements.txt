@@ -30,7 +30,11 @@ pytz>=2025.1
 
 # NeX-Up Feature (Radarr Integration)
 httpx>=0.28.1
-yt-dlp>=2025.3.21
+# Floor raised deliberately: the Windows installer bundles whatever yt-dlp is
+# in the build venv, so a stale one ships and cannot be upgraded in place by
+# the user. 2026.03.17 failed YouTube SABR delivery with a 403 partway through
+# the transfer; 2026.8.19 downloads the same trailers cleanly.
+yt-dlp>=2026.8.19
 psutil>=7.0.0
 # YouTube PO-token provider plugin (defeats "Sign in to confirm you're not a bot").
 # This is the yt-dlp side; the token-generating server (Node) is provided
