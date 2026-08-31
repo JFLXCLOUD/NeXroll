@@ -3653,9 +3653,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
         if (potentialConflicts.length > 0) {
           const conflictNames = potentialConflicts.map(c => c.schedule.name).join(', ');
-          alert(`Schedule created, but it conflicts with: ${conflictNames}\n\nThe schedules share priority ${scheduleData.priority || 5} during an overlapping window. NeXroll's fixed tie-break order will select one.\n\nTo make the intended winner explicit, give the schedules different priorities.`);
+          showAlert(`"${scheduleData.name}" created, but it overlaps ${conflictNames} at the same priority. Give them different priorities to control which wins.`, 'warning');
         } else {
-          alert('Schedule created successfully!');
+          showAlert(`"${scheduleData.name}" created. The form is ready for another.`, 'success');
         }
 
         localStorage.removeItem('nx_schedule_draft');
@@ -3678,7 +3678,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       })
       .catch(error => {
         console.error('Schedule creation error:', error);
-        alert('Failed to create schedule: ' + error.message);
+        showAlert('Could not create the schedule: ' + error.message, 'error');
       })
       .finally(() => {
         setIsCreatingSchedule(false);
@@ -18984,7 +18984,9 @@ const DashboardTiles = {
     );
     const schedulesForDay = date => {
       const dayTime = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-      return schedules.filter(schedule => isScheduleActiveOnDay(schedule, dayTime, toDayTime));
+      // A disabled schedule cannot run, so it does not belong on the calendar.
+      return schedules.filter(schedule => schedule.is_active !== false
+        && isScheduleActiveOnDay(schedule, dayTime, toDayTime));
     };
     const formatScheduleTime = schedule => {
       const date = parseNaiveDatetime(schedule.start_date);
