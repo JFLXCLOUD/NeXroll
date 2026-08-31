@@ -65,15 +65,15 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
   }
 
   const blockType = String(block.type).toLowerCase();
-  if (!['random', 'fixed', 'sequential', 'nexup_trailers', 'coming_soon_list', 'dynamic_preroll'].includes(blockType)) {
+  if (!['random', 'fixed', 'sequential', 'nexup_trailers', 'coming_soon_list', 'dynamic_preroll', 'separator'].includes(blockType)) {
     errors.push(`Invalid block type: ${block.type}`);
     return errors;
   }
 
   // Validate random block
-  if (blockType === 'random') {
+  if (blockType === 'random' || blockType === 'sequential') {
     if (!block.category_id) {
-      errors.push('Random block requires category_id');
+      errors.push('Category block requires a category');
     } else {
       // Check if category exists
       const categoryExists = categories.some((c) => c.id === block.category_id);
@@ -83,14 +83,14 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
     }
 
     if (block.count === undefined || block.count === null) {
-      errors.push('Random block requires count');
+      errors.push('Category block requires how many prerolls to play');
     } else {
       const count = parseInt(block.count);
       if (isNaN(count) || count < 1) {
-        errors.push('Random block count must be at least 1');
+        errors.push('Category block must play at least 1 preroll');
       }
       if (count > 10) {
-        errors.push('Random block count cannot exceed 10');
+        errors.push('Category block cannot play more than 10 prerolls');
       }
     }
   }
@@ -166,13 +166,26 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
     }
   }
 
-  // Validate dynamic_preroll block
-  if (blockType === 'dynamic_preroll') {
-    if (!block.template) {
-      errors.push('Dynamic preroll requires a template');
+  // Validate separator block. The scheduler reads `duration` and inserts a
+  // pause of that length.
+  if (blockType === 'separator') {
+    const duration = Number(block.duration ?? 3);
+    if (!Number.isFinite(duration) || duration < 1) {
+      errors.push('Pause must be at least 1 second');
+    } else if (duration > 60) {
+      errors.push('Pause cannot exceed 60 seconds');
     }
-    if (!block.theme) {
-      errors.push('Dynamic preroll requires a theme');
+  }
+
+  // Validate dynamic_preroll block.
+  // The builder points these at one already-generated video by filename, and
+  // that is what the scheduler resolves; template + theme is the older shape,
+  // still accepted for sequences saved before the picker existed. Requiring
+  // both unconditionally rejected every block the current UI can produce, so a
+  // sequence that previewed correctly could not be saved.
+  if (blockType === 'dynamic_preroll') {
+    if (!block.filename && !(block.template && block.theme)) {
+      errors.push('Generated preroll block needs a generated item selected');
     }
   }
 

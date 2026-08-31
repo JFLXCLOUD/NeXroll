@@ -12,7 +12,7 @@ import Sidebar from './components/Sidebar';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import NexUpApprovedPages from './components/NexUpApprovedPages';
-import { captureDynamicPrerollFrame, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
+import { captureDynamicPrerollFrame, drawThemeBackdropFrame, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
 import {
   buildBlendBothChanges,
@@ -1351,7 +1351,11 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     availableDays: 1, // Days to show "Available Now!" before auto-removal
     maxAvailableNow: 0, // Max "Available Now!" items to show (0 = no limit)
     theme: '', // Named palette shared with the dynamic templates; '' keeps the manual colours below
-    qrData: '' // Optional link rendered as a QR in the bottom-right corner
+    qrData: '', // Optional link rendered as a QR in the bottom-right corner
+    fontScale: 1, // Item text scale; the row pitch follows it so titles never collide
+    titleColor: null, // null inherits the Text colour
+    dateColor: null, // null inherits the Accent colour
+    availableColor: null // null keeps the default green
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
@@ -19192,12 +19196,13 @@ const DashboardTiles = {
       });
       setScheduleBuilderSelectedIndex(toIndex);
     };
-    const blockTitle = block => block?.label || ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'Upcoming trailers', dynamic_preroll: 'Generated preroll', separator: 'Pause / separator', coming_soon_list: 'Coming Soon list' }[block?.type] || 'Sequence block');
+    const blockTitle = block => block?.label || ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'Upcoming trailers', dynamic_preroll: 'Generated preroll', separator: 'Pause / separator', coming_soon_list: 'Generated preroll' }[block?.type] || 'Sequence block');
     const blockDescription = block => {
       if (block?.type === 'random' || block?.type === 'sequential') return `${categories.find(category => String(category.id) === String(block.category_id))?.name || 'Choose category'} / ${block.type}`;
       if (block?.type === 'fixed') return `${block.preroll_ids?.length || 0} selected preroll${block.preroll_ids?.length === 1 ? '' : 's'}`;
       if (block?.type === 'nexup_trailers') return `${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}`;
       if (block?.type === 'dynamic_preroll') return generatedItems.find(item => item.filename === block.filename)?.name || 'Choose a generated item';
+      if (block?.type === 'coming_soon_list') return block.layout === 'list' ? 'Latest Coming Soon list' : 'Latest Coming Soon grid';
       if (block?.type === 'separator') return `${block.duration ?? 3}s blank gap`;
       return block?.type?.replaceAll('_', ' ') || 'Configure this block';
     };
@@ -19215,7 +19220,7 @@ const DashboardTiles = {
                 ['random', 'CAT', 'Category', 'Random or sequential preroll'],
                 ['fixed', 'FIX', 'Fixed preroll', 'One selected video'],
                 ['nexup_trailers', 'TRL', 'NeX-Up trailers', 'Upcoming or matched media'],
-                ['dynamic_preroll', 'GEN', 'Generated preroll', 'A video made in NeX-Up Generator']
+                ['dynamic_preroll', 'GEN', 'Generated preroll', 'Anything made in NeX-Up Generator']
               ].map(([type, icon, title, copy]) => (
                 <button type="button" key={type} className="nx-draft-block-choice" onClick={() => addBlock(type)}><i>{icon}</i><span><strong>{title}</strong><small>{copy}</small></span><Plus size={12} /></button>
               ))}
@@ -19266,8 +19271,15 @@ const DashboardTiles = {
               <label className="nx-draft-field"><span>Sequence name</span><input id="nx-approved-sequence-name" value={editingSequenceName} placeholder="Untitled Sequence" onChange={event => setEditingSequenceName(event.target.value)} /></label>
               <label className="nx-draft-field"><span>Description</span><input value={editingSequenceDescription} placeholder="Describe this experience" onChange={event => setEditingSequenceDescription(event.target.value)} /></label>
               {selectedBlock && <>
-                <label className="nx-draft-field"><span>Block type</span><select value={selectedBlock.type} disabled><option value={selectedBlock.type}>{selectedBlock.type.replaceAll('_', ' ')}</option></select></label>
+                <label className="nx-draft-field"><span>Block type</span><select value={selectedBlock.type} disabled><option value={selectedBlock.type}>{['dynamic_preroll', 'coming_soon_list'].includes(selectedBlock.type) ? 'Generated preroll' : selectedBlock.type.replaceAll('_', ' ')}</option></select></label>
                 {(selectedBlock.type === 'random' || selectedBlock.type === 'sequential') && <label className="nx-draft-field"><span>Category</span><select value={selectedBlock.category_id || ''} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, category_id: Number(event.target.value) } : block))}><option value="">Choose category</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
+                {(selectedBlock.type === 'random' || selectedBlock.type === 'sequential') && <>
+                  <label className="nx-draft-field"><span>How many prerolls</span><input type="number" min="1" max="10" value={selectedBlock.count ?? 1} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Math.max(1, Math.min(10, Number(event.target.value) || 1)) } : block))} /></label>
+                  <label className="nx-draft-field"><span>Order</span><select value={selectedBlock.type} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, type: event.target.value } : block))}>
+                    <option value="random">Shuffled</option>
+                    <option value="sequential">In category order</option>
+                  </select><small>Shuffled spreads picks across runs so the same preroll does not repeat; in category order plays them as listed.</small></label>
+                </>}
                 {selectedBlock.type === 'fixed' && <>
                   <label className="nx-draft-field"><span>Search prerolls</span><input value={fixedBlockPrerollSearch} onChange={event => setFixedBlockPrerollSearch(event.target.value)} placeholder="Search by name..." /></label>
                   <div className="nx-draft-preroll-picker">
@@ -19294,19 +19306,44 @@ const DashboardTiles = {
                   <label className="nx-draft-field"><span>Source</span><select value={selectedBlock.source || 'both'} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, source: event.target.value } : block))}>
                     <option value="both">Movies &amp; TV</option><option value="movies">Movies only</option><option value="tv">TV only</option>
                   </select></label>
+                  <label className="nx-draft-field"><span>Order</span><select value={selectedBlock.mode || 'random'} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, mode: event.target.value } : block))}>
+                    <option value="random">Shuffled</option>
+                    <option value="sequential">Newest first</option>
+                  </select></label>
                   <label className="nx-draft-field"><span>Trailer count</span><input type="number" min="1" max="10" value={selectedBlock.count || 2} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Number(event.target.value) } : block))} /></label>
                 </>}
-                {selectedBlock.type === 'dynamic_preroll' && <>
-                  {generatedItems.length > 0 ? (
-                    <label className="nx-draft-field"><span>Generated item</span><select value={selectedBlock.filename || ''} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, filename: event.target.value } : block))}>
-                      <option value="">Choose a generated item</option>
-                      {generatedPrerolls.length > 0 && <optgroup label="Dynamic prerolls">{generatedPrerolls.map(item => <option key={item.filename} value={item.filename}>{item.name || item.template_id}</option>)}</optgroup>}
-                      {generatedComingSoonLists.length > 0 && <optgroup label="Coming Soon lists">{generatedComingSoonLists.map(item => <option key={item.filename} value={item.filename}>{item.name || `Coming Soon (${item.layout})`}</option>)}</optgroup>}
-                    </select></label>
-                  ) : (
-                    <p className="nx-draft-field-hint">You haven't generated anything yet. <button type="button" className="nx-draft-link" onClick={() => setActiveTab('nexup/generator')}>Open NeX-Up Generator →</button></p>
-                  )}
-                  <p className="nx-draft-field-hint">Plays this exact generated video during the sequence.</p>
+                {['dynamic_preroll', 'coming_soon_list'].includes(selectedBlock.type) && <>
+                  <label className="nx-draft-field"><span>Generated item</span><select
+                    value={selectedBlock.type === 'coming_soon_list' ? `latest:${selectedBlock.layout || 'grid'}` : (selectedBlock.filename ? `file:${selectedBlock.filename}` : '')}
+                    onChange={event => {
+                      const [kind, rest] = event.target.value.split(':');
+                      setSequenceBlocks(blocks => blocks.map((block, index) => {
+                        if (index !== selectedIndex) return block;
+                        // One picker, two underlying shapes: "latest" tracks
+                        // whatever the generator last produced for that layout,
+                        // while a named file pins one exact video. Only the
+                        // field the scheduler reads for that shape is kept.
+                        if (kind === 'latest') {
+                          const { filename, ...rest_block } = block;
+                          return { ...rest_block, type: 'coming_soon_list', layout: rest, label: 'Generated preroll' };
+                        }
+                        const { layout, ...rest_block } = block;
+                        return { ...rest_block, type: 'dynamic_preroll', filename: rest || null, label: 'Generated preroll' };
+                      }));
+                    }}
+                  >
+                    <option value="">Choose a generated item</option>
+                    <optgroup label="Always the latest">
+                      <option value="latest:grid">Latest Coming Soon poster grid</option>
+                      <option value="latest:list">Latest Coming Soon text list</option>
+                    </optgroup>
+                    {generatedPrerolls.length > 0 && <optgroup label="Dynamic prerolls">{generatedPrerolls.map(item => <option key={item.filename} value={`file:${item.filename}`}>{item.name || item.template_id}</option>)}</optgroup>}
+                    {generatedComingSoonLists.length > 0 && <optgroup label="Coming Soon lists">{generatedComingSoonLists.map(item => <option key={item.filename} value={`file:${item.filename}`}>{item.name || `Coming Soon (${item.layout})`}</option>)}</optgroup>}
+                  </select></label>
+                  <p className="nx-draft-field-hint">{selectedBlock.type === 'coming_soon_list'
+                    ? 'Plays whichever Coming Soon video was generated most recently, so it stays current as titles change.'
+                    : 'Plays this exact generated video every time.'}</p>
+                  {generatedItems.length === 0 && <p className="nx-draft-field-hint">Nothing generated yet. <button type="button" className="nx-draft-link" onClick={() => setActiveTab('nexup/generator')}>Open NeX-Up Generator →</button></p>}
                 </>}
                 {selectedBlock.type === 'separator' && <>
                   <label className="nx-draft-field"><span>Pause duration (seconds)</span><input type="number" min="1" max="60" value={selectedBlock.duration ?? 3} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, duration: Math.max(1, Number(event.target.value) || 1) } : block))} /></label>
@@ -22662,7 +22699,11 @@ const DashboardTiles = {
           availableDays: data.coming_soon_available_days || 1,
           maxAvailableNow: data.coming_soon_max_available_now ?? 0,
           theme: data.coming_soon_list_theme || '',
-          qrData: data.coming_soon_list_qr_data || ''
+          qrData: data.coming_soon_list_qr_data || '',
+          fontScale: data.coming_soon_list_font_scale || 1,
+          titleColor: data.coming_soon_list_title_color || null,
+          dateColor: data.coming_soon_list_date_color || null,
+          availableColor: data.coming_soon_list_available_color || null
         }));
         // Mark settings as loaded to enable auto-save
         setTimeout(() => { comingSoonListSettingsLoadedRef.current = true; }, 100);
@@ -22696,6 +22737,11 @@ const DashboardTiles = {
       if (settings.maxAvailableNow !== undefined) params.append('coming_soon_max_available_now', settings.maxAvailableNow.toString());
       if (settings.theme !== undefined) params.append('coming_soon_list_theme', settings.theme);
       if (settings.qrData !== undefined) params.append('coming_soon_list_qr_data', settings.qrData);
+      if (settings.fontScale !== undefined) params.append('coming_soon_list_font_scale', String(settings.fontScale));
+      // '' clears the override server-side and restores the inherited colour.
+      if (settings.titleColor !== undefined) params.append('coming_soon_list_title_color', settings.titleColor || '');
+      if (settings.dateColor !== undefined) params.append('coming_soon_list_date_color', settings.dateColor || '');
+      if (settings.availableColor !== undefined) params.append('coming_soon_list_available_color', settings.availableColor || '');
       
       const response = await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
       if (!response.ok) throw new Error('Coming Soon defaults could not be saved.');
@@ -23940,6 +23986,28 @@ const DashboardTiles = {
       const requestedLayout = typeof layoutOverride === 'string' ? layoutOverride : comingSoonListSettings.layout;
       const layouts = requestedLayout === 'both' ? ['grid', 'list'] : [requestedLayout];
       const results = [];
+      // Record the themed backdrop once and reuse it for both layouts, so a
+      // "both" render does not pay for the capture twice. Only themed lists
+      // have one; hand-picked colours render on a flat wash as before.
+      let backdropRecording = null;
+      const backdropTheme = comingSoonListSettings.theme ? colorThemes?.[comingSoonListSettings.theme] : null;
+      if (backdropTheme) {
+        try {
+          backdropRecording = await recordDynamicPrerollAnimation({
+            settings: {
+              resolution: comingSoonListSettings.resolution || '1080',
+              frameRate: comingSoonListSettings.frameRate || 30,
+              duration: comingSoonListSettings.duration || 10,
+              renderQuality: comingSoonListSettings.renderQuality || 'balanced',
+            },
+            theme: backdropTheme,
+            drawFrame: drawThemeBackdropFrame,
+          });
+        } catch (err) {
+          // Not fatal: the backend bakes a still when nothing is sent.
+          console.warn('Backdrop capture failed, falling back to a still:', err);
+        }
+      }
       for (const layout of layouts) {
         const params = new URLSearchParams({
           layout,
@@ -23961,7 +24029,11 @@ const DashboardTiles = {
         }
         params.append('language', comingSoonListSettings.language || 'en');
 
-        const res = await fetch(apiUrl(`/nexup/preroll/generate-coming-soon-list?${params}`), { method: 'POST' });
+        const res = await fetch(apiUrl(`/nexup/preroll/generate-coming-soon-list?${params}`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backdrop_video: backdropRecording?.videoData || null }),
+        });
         if (!res.ok) {
           // A 500 may return plain text instead of JSON. Preserve the backend's
           // actual error so a failed grid/list batch remains diagnosable.
