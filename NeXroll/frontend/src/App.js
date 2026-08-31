@@ -814,6 +814,8 @@ function App() {
   const [schedules, setSchedules] = useState([]);
   const [categories, setCategories] = useState([]);
   const [holidayPresets, setHolidayPresets] = useState([]);
+  const [formHolidays, setFormHolidays] = useState([]);
+  const [formHolidaysLoading, setFormHolidaysLoading] = useState(false);
   const [files, setFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
   // Hash-based routing: the current page lives in the URL hash (#/settings/storage)
@@ -2456,15 +2458,35 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  // The schedule form's holiday pickers need the same lists the Holiday Browser
-  // uses, but without opening it. Load them when a holiday schedule is being
-  // built, and refresh the holiday list whenever the chosen country changes.
+  // The schedule form's holiday pickers need the same data the Holiday Browser
+  // uses, but the browser shows one chosen year while a schedule needs the next
+  // occurrence. Easter 2026 has already passed, so listing only this year would
+  // offer a date in the past. Fetch this year and next, then keep the soonest
+  // still-upcoming date for each holiday name.
   useEffect(() => {
     if (scheduleForm.type !== 'holiday') return;
     if (holidayCountries.length === 0) loadHolidayCountries();
-    if (scheduleForm.holiday_country) {
-      loadHolidays(scheduleForm.holiday_country, new Date().getFullYear());
-    }
+    const country = scheduleForm.holiday_country;
+    if (!country) { setFormHolidays([]); return; }
+    let cancelled = false;
+    const year = new Date().getFullYear();
+    setFormHolidaysLoading(true);
+    Promise.all([year, year + 1].map(y =>
+      fetch(apiUrl(`/holiday-api/holidays/${country}/${y}`)).then(safeJson).catch(() => null)
+    )).then(results => {
+      if (cancelled) return;
+      const today = new Date().toISOString().slice(0, 10);
+      const soonest = new Map();
+      results.filter(Boolean).forEach(data => {
+        (Array.isArray(data) ? data : data.holidays || []).forEach(holiday => {
+          if (!holiday?.name || !holiday?.date || holiday.date < today) return;
+          const existing = soonest.get(holiday.name);
+          if (!existing || holiday.date < existing.date) soonest.set(holiday.name, holiday);
+        });
+      });
+      setFormHolidays([...soonest.values()].sort((a, b) => a.date.localeCompare(b.date)));
+    }).finally(() => { if (!cancelled) setFormHolidaysLoading(false); });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduleForm.type, scheduleForm.holiday_country]);
 
@@ -18838,11 +18860,25 @@ const DashboardTiles = {
                       <option value="">Choose a country</option>
                       {holidayCountries.map(country => <option key={country.countryCode || country} value={country.countryCode || country}>{country.name || country}</option>)}
                     </select></label>
-                    <label><span>Holiday</span><select value={scheduleForm.holiday_name || ''} onChange={event => setScheduleForm({ ...scheduleForm, holiday_name: event.target.value })} disabled={!scheduleForm.holiday_country || holidaysLoading}>
-                      <option value="">{!scheduleForm.holiday_country ? 'Choose a country first' : holidaysLoading ? 'Loading…' : 'Choose a holiday'}</option>
-                      {holidays.map(holiday => <option key={`${holiday.date}-${holiday.name}`} value={holiday.name}>{holiday.name}{holiday.date ? ` — ${holiday.date}` : ''}</option>)}
+                    <label><span>Holiday</span><select value={scheduleForm.holiday_name || ''} onChange={event => {
+                      const picked = event.target.value;
+                      const match = formHolidays.find(h => h.name === picked);
+                      // The backend derives these dates anyway; filling them in
+                      // here means the form shows the real occurrence instead of
+                      // demanding a date the user has to invent.
+                      setScheduleForm(form => ({
+                        ...form,
+                        holiday_name: picked,
+                        start_date: match?.date ? `${match.date}T00:00` : form.start_date,
+                        end_date: match?.date ? `${match.date}T23:59` : form.end_date,
+                      }));
+                    }} disabled={!scheduleForm.holiday_country || formHolidaysLoading}>
+                      <option value="">{!scheduleForm.holiday_country ? 'Choose a country first' : formHolidaysLoading ? 'Loading…' : 'Choose a holiday'}</option>
+                      {formHolidays.map(holiday => <option key={`${holiday.date}-${holiday.name}`} value={holiday.name}>{holiday.name} — {holiday.date}</option>)}
                     </select>
-                    <small>Only holidays this country's calendar actually publishes are listed, so a schedule can't be saved against a name that will never resolve. Easter, for instance, is not a US public holiday.</small></label>
+                    <small>{scheduleForm.holiday_name
+                      ? `Runs on ${(formHolidays.find(h => h.name === scheduleForm.holiday_name) || {}).date || 'its next occurrence'}, and moves itself each year.`
+                      : "Only holidays this country's calendar actually publishes are listed, so a schedule can't be saved against a name that will never resolve. Easter, for instance, is not a US public holiday."}</small></label>
                   </div>
                 )}
               </div>

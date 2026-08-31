@@ -1436,20 +1436,15 @@ class Scheduler:
         ).all()
         changed = 0
         for schedule in linked:
-            # Preserve dates explicitly selected for a future year.
-            if schedule.start_date and schedule.start_date.year > now.year:
-                continue
-            resolved = self._get_holiday_date(schedule.holiday_name, schedule.holiday_country, now.year)
+            # Resolve to the NEXT occurrence, not this year's. Pinning to the
+            # current year meant a holiday already past resolved backwards into
+            # the past: the schedule then sat on a date behind us, never showed
+            # on the calendar for its real next date, and never fired.
+            resolved = self._get_next_holiday_date(schedule.holiday_name, schedule.holiday_country)
             if resolved is None:
                 continue
-            if (
-                schedule.start_date
-                and schedule.start_date.year == now.year
-                and schedule.start_date.month == resolved.month
-                and schedule.start_date.day == resolved.day
-            ):
+            if schedule.start_date and schedule.start_date.date() == resolved:
                 continue
-
             schedule.start_date = datetime.datetime.combine(resolved, datetime.time.min)
             schedule.end_date = datetime.datetime.combine(resolved, datetime.time(23, 59, 59))
             changed += 1
@@ -3458,6 +3453,17 @@ class Scheduler:
             return [s for s in schedules if self._is_schedule_active(s, now)]
         finally:
             db.close()
+
+    def _get_next_holiday_date(self, holiday_name: str, country_code: str) -> Optional[datetime.date]:
+        """The next upcoming date for a holiday, rolling into next year once
+        this year's has passed."""
+        try:
+            from backend.holiday_api import HolidayAPI
+            found = HolidayAPI.get_next_occurrence(str(holiday_name), str(country_code or "").upper())
+            return found[0] if found else None
+        except Exception as e:
+            _scheduler_verbose(f"Next-occurrence lookup failed for {holiday_name}: {e}")
+            return None
 
     def _get_holiday_date(self, holiday_name: str, country_code: str, year: int) -> Optional[datetime.date]:
         """

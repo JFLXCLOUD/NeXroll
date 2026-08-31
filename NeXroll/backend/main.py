@@ -10896,6 +10896,32 @@ def _validate_schedule_references(schedule: ScheduleCreate, db: Session):
     return category
 
 
+def _resolve_holiday_window(holiday_name, country_code):
+    """Next upcoming occurrence of a holiday as (start, end) datetimes.
+
+    Holiday schedules carry a name and a country; the date is derived, not
+    typed. Creating one used to keep whatever start date the form demanded, and
+    the scheduler's daily refresh only ever resolved the *current* year - so a
+    holiday already past resolved backwards into the past and the schedule
+    neither showed on the calendar for its next occurrence nor fired. Resolving
+    to the next occurrence fixes both.
+    """
+    if not holiday_name or not country_code:
+        return None
+    try:
+        from backend.holiday_api import HolidayAPI
+        found = HolidayAPI.get_next_occurrence(str(holiday_name), str(country_code).upper())
+    except Exception:
+        return None
+    if not found:
+        return None
+    holiday_date = found[0]
+    return (
+        datetime.datetime.combine(holiday_date, datetime.time.min),
+        datetime.datetime.combine(holiday_date, datetime.time(23, 59, 59)),
+    )
+
+
 @app.post("/schedules")
 def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     _validate_schedule_references(schedule, db)
@@ -10934,6 +10960,22 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
             end_date = datetime.datetime.fromisoformat(ed)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+
+    # A holiday schedule's dates are derived from the calendar, not typed: the
+    # form demands a start date, but whatever is entered is meaningless next to
+    # the holiday's real occurrence. Resolve it here so the schedule lands on
+    # the right day immediately rather than waiting for the daily refresh.
+    if schedule.type == "holiday" and schedule.holiday_name and schedule.holiday_country:
+        window = _resolve_holiday_window(schedule.holiday_name, schedule.holiday_country)
+        if window:
+            start_date, end_date = window
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"'{schedule.holiday_name}' is not published for "
+                        f"{str(schedule.holiday_country).upper()}, so this schedule could never run. "
+                        "Pick a holiday from the list for that country."),
+            )
 
     if start_date is None:
         raise HTTPException(status_code=400, detail="Schedule start_date is required")
@@ -11099,6 +11141,19 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
 
     if start_date is None:
         raise HTTPException(status_code=400, detail="Schedule start_date is required")
+    # Same as creation: a holiday schedule's dates come from the calendar.
+    if schedule.type == "holiday" and schedule.holiday_name and schedule.holiday_country:
+        window = _resolve_holiday_window(schedule.holiday_name, schedule.holiday_country)
+        if window:
+            start_date, end_date = window
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"'{schedule.holiday_name}' is not published for "
+                        f"{str(schedule.holiday_country).upper()}, so this schedule could never run. "
+                        "Pick a holiday from the list for that country."),
+            )
+
     if end_date and schedule.type not in ("yearly", "holiday") and end_date < start_date:
         raise HTTPException(status_code=400, detail="Schedule end_date cannot be before start_date")
 
