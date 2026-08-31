@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.2.0-beta.4] - 08-31-2026 (beta)
+
+> Holiday schedules now land on the holiday's real next date instead of whatever
+> was typed, the schedule wizard no longer saves halfway through, and the
+> calendar shows conflicts and overlap behaviour rather than drawing clashing
+> schedules silently. No configuration change; new settings migrate on first
+> start.
+
+### Fixed
+
+- **A holiday schedule never ran on its holiday.** Creating one demanded a start date and kept whatever was entered, because nothing resolved the holiday on save. The daily refresh meant to correct that only ever looked at the current year — so a holiday already past resolved *backwards* to a date behind us, and the schedule neither appeared on the calendar for its next occurrence nor fired. Dates are now derived from the next upcoming occurrence when the schedule is saved, and roll into next year once this year's has gone.
+- **Choosing a holiday was guesswork.** Both fields were free text, matched by exact name against what the holiday calendar publishes for that country, so a name that country does not publish silently never resolved. Easter is not a US public holiday, for instance, so "Easter" plus "US" could never match. Country and holiday are now pickers listing what will actually resolve, showing the date each will run, and a name a country does not publish is refused with an explanation.
+- **The schedule wizard created the schedule when you clicked Continue.** Moving from the content step to behaviour submitted the form: the Continue and Create buttons share one slot, so the button being clicked was turned into a submit button mid-click and the browser submitted as the click finished.
+- **Creating a schedule gave no clear confirmation.** It now names the schedule and confirms the form has been cleared, behind an OK button.
+- **Disabled schedules stayed on the calendar** as though they would still run. Conflict detection already excluded them; the calendar now does too.
+- **The "COMING SOON" heading could not be recoloured** once a theme was selected, because the colour pickers hide in that mode and the heading follows the accent colour. It has its own picker now, alongside titles, dates, and "Available Now!".
+
+### Added
+
+- **Conflicts are visible on the calendar.** A banner counts open conflicts in the next 30 days, names the schedules involved, and links to the Conflicts page. Conflicts you have ignored stay ignored.
+- **Overlap behaviour is visible too** — whether a schedule is Exclusive or Blends, shown on the day and week views and in month cell tooltips. Two schedules on the same day previously gave no hint which would win.
+- **Match a preroll's length to its soundtrack.** Both generators read an uploaded track's real length and offer to set the duration to match, so a track plays in full instead of being cut off.
+
 ## [2.2.0-beta.3] - 08-30-2026 (beta)
 
 > Trailer downloads work again on the Windows installer, which was shipping a
