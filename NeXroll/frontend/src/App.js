@@ -18944,9 +18944,9 @@ const DashboardTiles = {
                 <button type="button" className="nx-draft-btn" disabled={scheduleCreateStep === 1} onClick={() => setScheduleCreateStep(step => Math.max(1, step - 1))}>Back</button>
               </div>
               {scheduleCreateStep < 4 ? (
-                <button type="button" className="nx-draft-btn schedule" onClick={() => setScheduleCreateStep(step => step === 2 ? 3 : Math.min(4, step + 1))}>{scheduleCreateStep === 1 ? 'Continue to timing' : scheduleCreateStep === 2 ? 'Continue to content' : 'Continue to behavior'}</button>
+                <button key="wizard-continue" type="button" className="nx-draft-btn schedule" onClick={() => setScheduleCreateStep(step => step === 2 ? 3 : Math.min(4, step + 1))}>{scheduleCreateStep === 1 ? 'Continue to timing' : scheduleCreateStep === 2 ? 'Continue to content' : 'Continue to behavior'}</button>
               ) : (
-                <button type="submit" className="nx-draft-btn schedule" disabled={isCreatingSchedule}><Check size={13} /> {isCreatingSchedule ? (editingSchedule ? 'Saving...' : 'Creating...') : (editingSchedule ? 'Save changes' : 'Create schedule')}</button>
+                <button key="wizard-submit" type="submit" className="nx-draft-btn schedule" disabled={isCreatingSchedule}><Check size={13} /> {isCreatingSchedule ? (editingSchedule ? 'Saving...' : 'Creating...') : (editingSchedule ? 'Save changes' : 'Create schedule')}</button>
               )}
             </footer>
           </section>
