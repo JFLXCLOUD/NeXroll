@@ -2131,6 +2131,31 @@ class DynamicPrerollGenerator:
             except Exception:
                 pass
 
+    def probe_media_duration(self, media_path: str) -> Optional[float]:
+        """Length of an audio or video file in seconds, or None if unreadable.
+
+        Used to offer "match the preroll length to the soundtrack" so a track
+        plays whole instead of being cut off by a fixed duration.
+        """
+        if not media_path or not os.path.isfile(media_path):
+            return None
+        probe = (self.ffmpeg_path or '').replace('ffmpeg.exe', 'ffprobe.exe').replace('ffmpeg.EXE', 'ffprobe.exe')
+        if probe == self.ffmpeg_path:
+            probe = str(Path(self.ffmpeg_path).with_name('ffprobe' + Path(self.ffmpeg_path).suffix))
+        if not os.path.isfile(probe):
+            return None
+        try:
+            result = subprocess.run(
+                [probe, '-v', 'error', '-show_entries', 'format=duration',
+                 '-of', 'default=noprint_wrappers=1:nokey=1', media_path],
+                capture_output=True, text=True, timeout=30,
+                startupinfo=STARTUPINFO, creationflags=CREATE_NO_WINDOW
+            )
+            value = float(result.stdout.strip())
+            return value if value > 0 else None
+        except Exception:
+            return None
+
     def _probe_dimensions(self, video_path: str):
         """Return (width, height) for a rendered file, or None if ffprobe can't."""
         probe = (self.ffmpeg_path or '').replace('ffmpeg.exe', 'ffprobe.exe').replace('ffmpeg.EXE', 'ffprobe.exe')
@@ -2179,6 +2204,7 @@ class DynamicPrerollGenerator:
         title_color: str = None,
         date_color: str = None,
         available_color: str = None,
+        heading_color: str = None,
     ) -> Optional[str]:
         """Generate a Coming Soon List video.
         
@@ -2260,6 +2286,7 @@ class DynamicPrerollGenerator:
                 title_color=title_color,
                 date_color=date_color,
                 available_color=available_color,
+                heading_color=heading_color,
             )
         else:
             rendered = self._generate_list_text_layout(
@@ -2282,6 +2309,7 @@ class DynamicPrerollGenerator:
                 title_color=title_color,
                 date_color=date_color,
                 available_color=available_color,
+                heading_color=heading_color,
             )
 
         if rendered and qr_data:
@@ -2323,6 +2351,7 @@ class DynamicPrerollGenerator:
         title_color: str = None,
         date_color: str = None,
         available_color: str = None,
+        heading_color: str = None,
     ) -> Optional[str]:
         """Generate text-only list layout (no posters)"""
         output_path = self.output_dir / output_filename
@@ -2383,6 +2412,11 @@ class DynamicPrerollGenerator:
         # Build filter string
         filter_parts = []
         
+        # The heading colour is separable from Accent: with a theme selected the
+        # manual Accent picker is hidden, which left no way to recolour
+        # "COMING SOON" at all.
+        head_color = heading_color or accent_color
+
         # Header: "Coming Soon to [Server Name]" or "COMING SOON TO" + logo
         has_replace_logo = logo_mode in ('right', 'below', 'replace') and custom_logo_path and os.path.isfile(custom_logo_path)
         if has_replace_logo:
@@ -2392,12 +2426,12 @@ class DynamicPrerollGenerator:
             header_x = "(w*0.78-text_w)/2" if logo_mode == 'right' else "(w-text_w)/2"
             header_size = 70 if logo_mode == 'right' else 80
             filter_parts.append(
-                f"drawtext=text='{coming_soon_to_text}':fontsize={header_size}:fontcolor={accent_color}{bold_font_param}:"
+                f"drawtext=text='{coming_soon_to_text}':fontsize={header_size}:fontcolor={head_color}{bold_font_param}:"
                 f"x={header_x}:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
             )
         else:
             filter_parts.append(
-                f"drawtext=text='{coming_soon_text}':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
+                f"drawtext=text='{coming_soon_text}':fontsize=80:fontcolor={head_color}{bold_font_param}:"
                 f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
             )
             filter_parts.append(
@@ -2407,7 +2441,7 @@ class DynamicPrerollGenerator:
             # Divider line (only in watermark/normal mode)
             line_y = subtitle_y + 60
             filter_parts.append(
-                f"drawbox=x={width//4}:y={line_y}:w={width//2}:h=3:c={accent_color}@0.6:t=fill"
+                f"drawbox=x={width//4}:y={line_y}:w={width//2}:h=3:c={head_color}@0.6:t=fill"
             )
         
         # Item list with staggered fade-in
@@ -2511,6 +2545,7 @@ class DynamicPrerollGenerator:
         title_color: str = None,
         date_color: str = None,
         available_color: str = None,
+        heading_color: str = None,
     ) -> Optional[str]:
         """
         Generate grid layout with poster images.
@@ -2759,6 +2794,9 @@ class DynamicPrerollGenerator:
                     f"x={text_center_x}-(text_w/2):y={date_y}:shadowcolor=black@0.4:shadowx=1:shadowy=1"
                 )
             
+            # Same heading override as the list layout.
+            head_color = heading_color or accent_color
+
             # Add header text - optimized for 2-row layout with start_y=170
             # Only show "to {server_name}" when logo_mode is watermark (or no logo available)
             has_replace_logo = logo_mode in ('right', 'below', 'replace') and custom_logo_path and os.path.isfile(custom_logo_path)
@@ -2766,18 +2804,18 @@ class DynamicPrerollGenerator:
                 if logo_mode == 'right':
                     # Right mode: "COMING SOON TO" shifted left, logo placed to its right
                     header_filter = (
-                        f"drawtext=text='{coming_soon_to_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                        f"drawtext=text='{coming_soon_to_text}':fontsize=55:fontcolor={head_color}{bold_font_param}:"
                         f"x=(w-text_w)/2-80:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2"
                     )
                 else:
                     # Below mode: "COMING SOON TO" centered, logo placed below
                     header_filter = (
-                        f"drawtext=text='{coming_soon_to_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                        f"drawtext=text='{coming_soon_to_text}':fontsize=55:fontcolor={head_color}{bold_font_param}:"
                         f"x=(w-text_w)/2:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2"
                     )
             else:
                 header_filter = (
-                    f"drawtext=text='{coming_soon_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                    f"drawtext=text='{coming_soon_text}':fontsize=55:fontcolor={head_color}{bold_font_param}:"
                     f"x=(w-text_w)/2:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
                     f"drawtext=text='{to_text} {escaped_server}':fontsize=30:fontcolor={text_color}@0.9{font_param}:"
                     f"x=(w-text_w)/2:y=115"

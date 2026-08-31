@@ -10175,3 +10175,9 @@ body.light .nx-draft-cal-event { color: #157a55; }
 .nx-gen-poster-grid span.is-available { color: var(--gen-available); }
 .nx-gen-poster-grid span { color: var(--gen-date); }
 .nx-gen-role-colors { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* The heading colour is its own role: with a theme selected the manual Accent
+   picker is hidden, which left "COMING SOON" unchangeable. */
+.nx-gen-coming-canvas { --gen-heading: var(--gen-accent); }
+.nx-gen-coming-head > div span { color: var(--gen-heading); }
+.nx-gen-coming-rule { background: var(--gen-heading); }

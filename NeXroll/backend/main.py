@@ -305,6 +305,7 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_title_color", "nexup_coming_soon_list_title_color TEXT"),
                 ("nexup_coming_soon_list_date_color", "nexup_coming_soon_list_date_color TEXT"),
                 ("nexup_coming_soon_list_available_color", "nexup_coming_soon_list_available_color TEXT"),
+                ("nexup_coming_soon_list_heading_color", "nexup_coming_soon_list_heading_color TEXT"),
                 ("nexup_coming_soon_available_days", "nexup_coming_soon_available_days INTEGER DEFAULT 1"),
                 ("nexup_coming_soon_max_available_now", "nexup_coming_soon_max_available_now INTEGER DEFAULT 0"),
                 ("nexup_trailer_retention_days", "nexup_trailer_retention_days INTEGER DEFAULT 7"),
@@ -18490,6 +18491,8 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_title_color": getattr(setting, 'nexup_coming_soon_list_title_color', None),
         "coming_soon_list_date_color": getattr(setting, 'nexup_coming_soon_list_date_color', None),
         "coming_soon_list_available_color": getattr(setting, 'nexup_coming_soon_list_available_color', None),
+        "coming_soon_list_heading_color": getattr(setting, 'nexup_coming_soon_list_heading_color', None),
+        "coming_soon_list_custom_audio_duration": _audio_duration_seconds(getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None)),
         "dynamic_preroll_language": getattr(setting, 'nexup_dynamic_preroll_language', 'en'),
         "dynamic_preroll_resolution": getattr(setting, 'nexup_dynamic_preroll_resolution', '1080'),
         "dynamic_preroll_frame_rate": getattr(setting, 'nexup_dynamic_preroll_frame_rate', 30),
@@ -18548,6 +18551,7 @@ def update_nexup_settings(
     coming_soon_list_title_color: Optional[str] = None,
     coming_soon_list_date_color: Optional[str] = None,
     coming_soon_list_available_color: Optional[str] = None,
+    coming_soon_list_heading_color: Optional[str] = None,
     dynamic_preroll_template: Optional[str] = None,
     dynamic_preroll_server_name: Optional[str] = None,
     dynamic_preroll_duration: Optional[int] = None,
@@ -18729,6 +18733,8 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_date_color = coming_soon_list_date_color.strip() or None
     if coming_soon_list_available_color is not None:
         setting.nexup_coming_soon_list_available_color = coming_soon_list_available_color.strip() or None
+    if coming_soon_list_heading_color is not None:
+        setting.nexup_coming_soon_list_heading_color = coming_soon_list_heading_color.strip() or None
     if dynamic_preroll_template is not None:
         setting.nexup_dynamic_preroll_template = dynamic_preroll_template.strip()[:80] or 'coming_soon'
     if dynamic_preroll_server_name is not None:
@@ -19726,6 +19732,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 title_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_title_color', None)),
                 date_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_date_color', None)),
                 available_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_available_color', None)),
+                heading_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_heading_color', None)),
             )
             
             if output_path:
@@ -22574,6 +22581,18 @@ def get_coming_soon_logo(db: Session = Depends(get_db)):
     return FileResponse(logo_path)
 
 
+def _audio_duration_seconds(path):
+    """Length of an uploaded soundtrack, rounded to a whole second, or None."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        from backend.dynamic_preroll import DynamicPrerollGenerator
+        seconds = DynamicPrerollGenerator().probe_media_duration(path)
+        return int(round(seconds)) if seconds else None
+    except Exception:
+        return None
+
+
 def _csl_role_color(value):
     """#RRGGBB from the picker to FFmpeg's 0xRRGGBB, or None to inherit."""
     text = str(value or '').strip()
@@ -22860,6 +22879,7 @@ async def generate_coming_soon_list(
             title_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_title_color', None)),
             date_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_date_color', None)),
             available_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_available_color', None)),
+            heading_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_heading_color', None)),
         )
         
         if _backdrop_tmp:
@@ -23313,6 +23333,7 @@ def get_preroll_settings(db: Session = Depends(get_db)):
         "preroll_path": preroll_path,
         "custom_logo_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', '') or '') or None,
         "custom_audio_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', '') or '') or None,
+        "custom_audio_duration": _audio_duration_seconds(getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', None)),
         "custom_headline": getattr(setting, 'nexup_dynamic_preroll_custom_headline', None) or "COMING SOON",
         "custom_subtext": getattr(setting, 'nexup_dynamic_preroll_custom_subtext', None) or "",
         "qr_data": getattr(setting, 'nexup_dynamic_preroll_qr_data', None) or "",
