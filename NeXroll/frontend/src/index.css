@@ -10181,3 +10181,43 @@ body.light .nx-draft-cal-event { color: #157a55; }
 .nx-gen-coming-canvas { --gen-heading: var(--gen-accent); }
 .nx-gen-coming-head > div span { color: var(--gen-heading); }
 .nx-gen-coming-rule { background: var(--gen-heading); }
+
+/* Calendar: surface conflicts, and how a schedule behaves when it overlaps
+   another. Without these the calendar drew overlapping schedules with no hint
+   that they clash or which one would win. */
+.nx-draft-calendar-conflicts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--warning-color, #e0a030) 45%, var(--border-color));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warning-color, #e0a030) 9%, var(--card-bg));
+}
+.nx-draft-calendar-conflicts > svg { flex: none; color: var(--warning-color, #e0a030); }
+.nx-draft-calendar-conflicts > div { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.nx-draft-calendar-conflicts strong { color: var(--text-color); font-size: 13px; }
+.nx-draft-calendar-conflicts span { color: var(--text-muted); font-size: 12px; }
+.nx-draft-overlap-tag {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.nx-draft-overlap-tag.is-exclusive { background: color-mix(in srgb, var(--danger-color, #e05555) 18%, transparent); color: var(--danger-color, #e05555); }
+.nx-draft-overlap-tag.is-blend { background: color-mix(in srgb, var(--accent-color, #00d4ff) 18%, transparent); color: var(--accent-color, #00d4ff); }
+.nx-draft-overlap-dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  margin-left: 5px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.nx-draft-overlap-dot.is-exclusive { background: var(--danger-color, #e05555); }
+.nx-draft-overlap-dot.is-blend { background: var(--accent-color, #00d4ff); }

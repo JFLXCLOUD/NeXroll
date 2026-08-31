@@ -3655,7 +3655,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           const conflictNames = potentialConflicts.map(c => c.schedule.name).join(', ');
           showAlert(`"${scheduleData.name}" created, but it overlaps ${conflictNames} at the same priority. Give them different priorities to control which wins.`, 'warning');
         } else {
-          showAlert(`"${scheduleData.name}" created. The form is ready for another.`, 'success');
+          setAlertDialog({ open: true, title: 'Schedule created', type: 'success', message: `"${scheduleData.name}" is saved and will run on its schedule. The form has been cleared for the next one.` });
         }
 
         localStorage.removeItem('nx_schedule_draft');
@@ -19049,6 +19049,11 @@ const DashboardTiles = {
             <button type="button" key={schedule.id} className="nx-draft-day-event" onClick={() => handleEditSchedule(schedule)}>
               <time>{formatScheduleTime(schedule)}</time>
               <span><strong>{schedule.name}</strong><small>{schedule.type || 'schedule'} / Priority {schedule.priority ?? 5}</small></span>
+              {schedule.exclusive
+                ? <em className="nx-draft-overlap-tag is-exclusive" title="Wins outright when it overlaps another schedule">Exclusive</em>
+                : schedule.blend_enabled
+                  ? <em className="nx-draft-overlap-tag is-blend">Blends</em>
+                  : null}
               <ChevronRight size={13} />
             </button>
           )) : (
@@ -19079,7 +19084,7 @@ const DashboardTiles = {
               <div key={`${hour}-${dayIndex}`} className="nx-draft-cal-cell">
                 {matchingSchedules.slice(0, 1).map(schedule => (
                   <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} className={`nx-draft-cal-event${schedule.type === 'yearly' || schedule.type === 'holiday' ? ' violet' : ''}`}>
-                    <strong>{schedule.name}</strong><span>{formatScheduleTime(schedule)}</span>
+                    <strong>{schedule.name}{schedule.exclusive ? <i className="nx-draft-overlap-dot is-exclusive" title="Exclusive" /> : schedule.blend_enabled ? <i className="nx-draft-overlap-dot is-blend" title="Blends" /> : null}</strong><span>{formatScheduleTime(schedule)}</span>
                   </button>
                 ))}
                 {matchingSchedules.length > 1 && <span className="nx-draft-cal-more">+{matchingSchedules.length - 1}</span>}
@@ -19102,7 +19107,7 @@ const DashboardTiles = {
               <button type="button" className="nx-draft-month-date" onClick={() => { syncCalendarDate(day); setCalendarMode('day'); }} aria-label={`Open ${day.toLocaleDateString()}`}>{day.getDate()}</button>
               <div className="nx-draft-month-events">
                 {daySchedulesForView.slice(0, 2).map(schedule => (
-                  <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} title={schedule.name}>{schedule.name}</button>
+                  <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} title={`${schedule.name}${schedule.exclusive ? ' — exclusive, wins any overlap' : schedule.blend_enabled ? ' — blends with overlapping schedules' : ''}`}>{schedule.name}</button>
                 ))}
                 {daySchedulesForView.length > 2 && <span>+{daySchedulesForView.length - 2} more</span>}
               </div>
@@ -19163,6 +19168,24 @@ const DashboardTiles = {
             ))}
           </div>
         </div>
+        {(() => {
+          // The calendar draws overlapping schedules without saying they
+          // overlap, so a clash only surfaced on the Conflicts page. Surface the
+          // count here and link straight to it.
+          const openConflicts = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id));
+          if (openConflicts.length === 0) return null;
+          const names = [...new Set(openConflicts.flatMap(conflict => [conflict.scheduleA?.name, conflict.scheduleB?.name].filter(Boolean)))];
+          return (
+            <div className="nx-draft-calendar-conflicts">
+              <AlertTriangle size={16} />
+              <div>
+                <strong>{openConflicts.length} schedule {openConflicts.length === 1 ? 'conflict' : 'conflicts'} in the next 30 days</strong>
+                <span>{names.slice(0, 3).join(', ')}{names.length > 3 ? ` and ${names.length - 3} more` : ''} overlap. Whichever wins is decided by priority.</span>
+              </div>
+              <button type="button" className="nx-draft-btn" onClick={() => { setActiveTab('schedules/conflicts'); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}>Review conflicts</button>
+            </div>
+          );
+        })()}
         <section className="nx-draft-panel nx-draft-calendar-panel">
           {calendarMode === 'day' && renderDayView()}
           {calendarMode === 'week' && renderWeekView()}
