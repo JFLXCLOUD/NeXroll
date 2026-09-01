@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.2.0-beta.5] - 09-01-2026 (beta)
+
+> Backups were missing every setting you had, so restoring one on a new machine
+> came back with nothing connected. The first-run wizard could send you away
+> from itself with no way back. Community Prerolls gains multi-select and bulk
+> download. Docker installs get a Path Mappings step and trailer-storage
+> guidance during setup, and the help button now opens the wiki page for
+> whatever you are looking at. New settings migrate on first start.
+
+### Fixed
+
+- **Database backups contained no settings at all.** Every connection, credential, path mapping, generator default and dashboard preference was absent, so a backup restored on a new machine came back with no media server, no Radarr or Sonarr, and every preference at its default — while the UI card promised it exported "settings". All of it is in the backup now.
+- **Restoring destroyed five settings on every run, including on the same machine.** The restore clears the category and sequence references before deleting those tables and never put them back, silently losing your NeX-Up category, TV category, filler category, filler sequence and active category. They are restored and their ids remapped, so they follow the rows even though the numbers change.
+- **System backups omitted generated prerolls and Coming Soon lists.** NeX-Up storage sits beside the prerolls folder rather than inside it, so the "comprehensive" backup never touched it — yet library entries point straight at those files. Restoring elsewhere produced entries with nothing behind them. Generated output and brand assets are included now; downloaded trailers are deliberately left out because NeX-Up re-fetches them and they are usually most of the folder.
+- **The system ZIP carried a second, reduced copy of the database export** that claimed to be the current format while omitting preroll duration and hashes, category playback mode, schedule priority and blend flags, holiday date ranges, and genre rules entirely.
+- **Signing in with Plex from the setup wizard left the wizard for good.** The button completed onboarding and dropped you on the Connect page, and nothing could bring the wizard back short of a factory reset. Plex sign-in now runs inside the wizard, and Settings, System has a Run Setup Wizard button that reopens it without resetting anything. A factory reset returns you to it reliably too.
+- **Unticking "Require login after setup" did nothing.** Registering the first user enables authentication server-side, and the wizard only ever sent the choice when it was ticked, so login was always required afterwards. The wizard also signs the new admin in, rather than finishing onto a login screen for the password just typed.
+- **Every trailer preview on the Upcoming page played the same clip.** The match compared two fields that are both empty on the Movies tab, which is true for the first row in the list, so that one was always returned. Season number is taken into account for TV as well.
+- **The Show/Hide filter for NeX-Up trailers ignored freshly downloaded ones**, because it matched on category alone and a new trailer has none yet. It matches on path too.
+- **Duration and file size on the community preview panel always read "Unknown".** The index carries neither; both are resolved on demand now.
+- **The Preview button on library thumbnails did nothing** when the preview panel was open — it only moved the panel's focus, which clicking the row already did. It always opens the full player.
+- **The Upcoming schedules tile spilled past its own edge.** A dashboard rule cancelled the list's scrolling while leaving its height capped, so every row past the cap painted outside the card.
+- **Installing the PO-token provider could fail with an npm ENOENT.** A provider left running by an earlier NeXroll held its own folder open, so the cleanup before the copy quietly failed and the new files landed one directory deeper than expected. The installer stops a provider it did not start, refuses to copy onto a folder that survived removal, and repairs the nested layout left by a previous attempt.
+- **The provider dependency offered "Install" when it was already installed**, because the UI checked a field the backend never returned.
+- **The audio "match length to the soundtrack" option never appeared** after uploading a track — the control needs the track's length, which only arrived on a full settings reload.
+- **Settings, System did not match the rest of the app** — nine different text sizes, fifty hardcoded colours that ignored your theme, and inner panels painted the same colour as the card behind them. The Theme tile also named the light or dark base rather than the theme you had chosen, so six of the eight themes displayed identically.
+
+### Added
+
+- **Multi-select and bulk download on Community Prerolls**, with a batch category, live progress, and a five-second gap between downloads. The server-side limiter now waits its turn rather than rejecting, and paces globally rather than per client, so two browsers cannot double the request rate the community server sees.
+- **Poster views for NeX-Up**, on both Upcoming releases and Your Trailers, alongside the existing list and calendar. Missing artwork is backfilled from Radarr and Sonarr.
+- **A Path Mappings step in first-run setup for Docker installs.** It explains why a container needs the translation, offers the container's real mount points as one-click choices, and translates a path so you can see the answer your media server will be given.
+- **Trailer storage in first-run setup**, on Windows and Docker alike, with a check reporting whether your media server will actually be able to open files there.
+- **Autoplay preview in the Preroll Library**, matching the community panel.
+- **The help button opens the page you are on.** Schedules opens the scheduling guide, Connect the connection guide, and sub-pages deep-link to the right section.
+
+### Changed
+
+- Radarr, Sonarr and media-server credentials are masked as they are typed in the setup wizard.
+- Database backups now also carry ignored paths and community templates. User accounts and API keys remain excluded by design.
+- The wiki gains Dashboard, Preroll Library, Connect and Backup and Restore pages, and NeX-Up and Troubleshooting cover the 2.2.0 features.
+
 ## [2.2.0-beta.4] - 08-31-2026 (beta)
 
 > Holiday schedules now land on the holiday's real next date instead of whatever
