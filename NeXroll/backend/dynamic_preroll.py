@@ -141,6 +141,9 @@ else:
     CREATE_NO_WINDOW = 0
 
 
+COMMUNITY_PROBE_UA = "NeXRoll/probe (+https://github.com/JFLXCLOUD/NeXroll)"
+
+
 class DynamicPrerollGenerator:
     """Generates dynamic preroll videos using FFmpeg with cinematic effects"""
     
@@ -2137,7 +2140,12 @@ class DynamicPrerollGenerator:
         Used to offer "match the preroll length to the soundtrack" so a track
         plays whole instead of being cut off by a fixed duration.
         """
-        if not media_path or not os.path.isfile(media_path):
+        # Accepts a local path or an http(s) URL: ffprobe reads a remote
+        # container header over range requests without fetching the whole file.
+        if not media_path:
+            return None
+        is_remote = str(media_path).lower().startswith(('http://', 'https://'))
+        if not is_remote and not os.path.isfile(media_path):
             return None
         probe = (self.ffmpeg_path or '').replace('ffmpeg.exe', 'ffprobe.exe').replace('ffmpeg.EXE', 'ffprobe.exe')
         if probe == self.ffmpeg_path:
@@ -2146,9 +2154,11 @@ class DynamicPrerollGenerator:
             return None
         try:
             result = subprocess.run(
-                [probe, '-v', 'error', '-show_entries', 'format=duration',
-                 '-of', 'default=noprint_wrappers=1:nokey=1', media_path],
-                capture_output=True, text=True, timeout=30,
+                [probe, '-v', 'error']
+                + (['-user_agent', COMMUNITY_PROBE_UA] if is_remote else [])
+                + ['-show_entries', 'format=duration',
+                   '-of', 'default=noprint_wrappers=1:nokey=1', str(media_path)],
+                capture_output=True, text=True, timeout=45 if is_remote else 30,
                 startupinfo=STARTUPINFO, creationflags=CREATE_NO_WINDOW
             )
             value = float(result.stdout.strip())

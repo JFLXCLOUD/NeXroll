@@ -2107,6 +2107,30 @@ app = FastAPI(title="NeXroll Backend", version=app_version)
 community_search_rate_limit = {}  # {ip: last_search_time}
 COMMUNITY_SEARCH_COOLDOWN = 5  # seconds between searches per IP
 
+# Downloads get their own gate. Two things make it different from the search
+# limiter above: it is global rather than per-IP, because every download in this
+# process leaves for the same upstream server -- two browsers pointed at one
+# NeXroll would otherwise double the request rate Typical Nerds sees -- and it
+# makes callers wait their turn instead of rejecting them, which is what lets a
+# bulk selection download straight through at a polite pace.
+COMMUNITY_DOWNLOAD_MIN_INTERVAL = 5.0  # seconds between downloads
+_community_download_gate = threading.Lock()
+_community_download_last = 0.0
+
+
+def _await_community_download_slot() -> float:
+    """Block until at least COMMUNITY_DOWNLOAD_MIN_INTERVAL has passed since the
+    last community download started. Returns how long the caller waited."""
+    global _community_download_last
+    with _community_download_gate:
+        waited = 0.0
+        remaining = COMMUNITY_DOWNLOAD_MIN_INTERVAL - (time.monotonic() - _community_download_last)
+        if remaining > 0:
+            time.sleep(remaining)
+            waited = remaining
+        _community_download_last = time.monotonic()
+        return waited
+
 # Community preroll server defaults
 DEFAULT_COMMUNITY_BASE_URL = "https://prerolls.uk"
 COMMUNITY_SERVERS_JSON_URL = "https://prerolls.uk/servers.json"
@@ -25963,6 +25987,9 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                                 "modified_time": _mt,   # unix ts for sorting (0 if unknown)
                                 "modified_iso": _miso,  # ISO string for display
                                 "is_ai": folder_category.casefold() == "ai",
+                                # Caddy's JSON listing carries the byte size, so
+                                # this is free - no extra request per file.
+                                "size_bytes": (item.get('size') if isinstance(item.get('size'), int) else None),
                             }
 
                             prerolls.append(preroll_entry)
@@ -26804,7 +26831,7 @@ def download_community_preroll(
     Download a preroll from the community library and import into local storage.
     
     Downloads the file into PREROLLS_DIR and creates a Preroll database entry.
-    Rate-limited to one download every 10 seconds per IP.
+    Paced to one download every 5 seconds across the whole install.
     """
     import urllib.request
     import urllib.parse
@@ -26818,19 +26845,12 @@ def download_community_preroll(
             detail="Fair Use Policy must be accepted before downloading community prerolls"
         )
     
-    # Rate limit downloads: 1 per 10 seconds per IP
-    client_ip = raw_request.client.host if raw_request.client else "unknown"
-    rate_key = f"download_{client_ip}"
-    now_ts = _time.time()
-    if rate_key in community_search_rate_limit:
-        elapsed = now_ts - community_search_rate_limit[rate_key]
-        if elapsed < 10:
-            remaining = int(10 - elapsed)
-            raise HTTPException(
-                status_code=429,
-                detail=f"Please wait {remaining} seconds before downloading another preroll."
-            )
-    community_search_rate_limit[rate_key] = now_ts
+    # Space downloads out for the community server's sake. This waits rather than
+    # returning 429: a bulk selection is a legitimate request, it just has to be
+    # paced. The client paces itself too, so in practice this rarely sleeps.
+    waited = _await_community_download_slot()
+    if waited:
+        _file_log(f"[DOWNLOAD] Waited {waited:.1f}s for the community download slot")
     
     if not (request.preroll_id or request.url):
         raise HTTPException(status_code=422, detail="Either preroll_id or url is required")
@@ -27069,6 +27089,58 @@ def download_community_preroll(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"Download import failed: {str(e)}")
+
+# Duration is not in any directory listing, so it can only come from the file
+# itself. Probed on demand for the one item being inspected rather than during
+# indexing, which would mean a partial download of every file on the server.
+_community_meta_cache: dict = {}
+_COMMUNITY_META_MAX = 500
+
+
+@app.get("/community-prerolls/metadata")
+def get_community_preroll_metadata(preroll_id: str, db: Session = Depends(get_db)):
+    """Duration and byte size for one community preroll.
+
+    ffprobe reads only the container header over HTTP range requests, so this
+    costs a fraction of the file rather than the whole thing. Results are cached
+    for the process lifetime; the files never change under a given URL.
+    """
+    key = str(preroll_id or "")
+    if not key:
+        raise HTTPException(status_code=422, detail="preroll_id is required")
+    if key in _community_meta_cache:
+        return _community_meta_cache[key]
+
+    path = key if key.startswith('/') else '/' + key
+    base_url = (_get_community_base_url(db) or "").rstrip('/')
+    if not base_url:
+        raise HTTPException(status_code=503, detail="No community server is configured")
+    source_url = f"{base_url}{path}"
+
+    result = {"preroll_id": key, "duration": None, "size_bytes": None}
+
+    # Size first: a HEAD is cheap and works even when ffprobe cannot.
+    try:
+        head = requests.head(source_url, headers=_community_headers(), timeout=15, allow_redirects=True)
+        length = head.headers.get('Content-Length')
+        if length and str(length).isdigit():
+            result["size_bytes"] = int(length)
+    except Exception as e:
+        _file_log(f"[COMMUNITY-META] HEAD failed for {key}: {e}")
+
+    try:
+        from backend.dynamic_preroll import DynamicPrerollGenerator
+        seconds = DynamicPrerollGenerator().probe_media_duration(source_url)
+        if seconds:
+            result["duration"] = round(float(seconds), 1)
+    except Exception as e:
+        _file_log(f"[COMMUNITY-META] probe failed for {key}: {e}")
+
+    if len(_community_meta_cache) >= _COMMUNITY_META_MAX:
+        _community_meta_cache.clear()
+    _community_meta_cache[key] = result
+    return result
+
 
 @app.get("/community-prerolls/preview")
 def preview_community_preroll(request: Request, preroll_id: str, db: Session = Depends(get_db)):

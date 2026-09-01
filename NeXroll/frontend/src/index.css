@@ -6515,6 +6515,7 @@ body.light .nx-hybrid-filter-chip.is-active { color: #5145cc; }
 .nx-hybrid-inspector { display: none; position: sticky; top: 60px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 13px; background: linear-gradient(180deg, color-mix(in srgb, var(--card-bg) 94%, white 6%), var(--card-bg)); box-shadow: 0 10px 30px var(--shadow); }
 .nx-hybrid-layout.preview-open .nx-hybrid-inspector { display: block; }
 .nx-hybrid-inspector-preview { position: relative; aspect-ratio: 16/9; overflow: hidden; background: #0d0f12; }
+.nx-hybrid-inspector-video { display: block; width: 100%; height: 100%; object-fit: contain; background: #0d0f12; }
 .nx-hybrid-play-big { position: absolute; z-index: 3; inset: 50% auto auto 50%; width: 43px; height: 43px; transform: translate(-50%,-50%); display: grid; place-items: center; border: 1px solid rgba(255,255,255,.25); border-radius: 50%; background: rgba(12,13,15,.72); color: #fff; box-shadow: 0 8px 25px rgba(0,0,0,.35); cursor: pointer; }
 .nx-hybrid-inspector-body { padding: 15px; }
 .nx-hybrid-inspector-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
@@ -7075,6 +7076,54 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 .nx-community-results-title { margin: 0; color: var(--text-color); font-size: 15px; }
 .nx-community-results-title span { color: var(--text-muted); font-weight: 550; }
 .nx-community-results-heading .nx-comm-inspector-toggle { min-height: 30px; height: 30px; }
+
+/* Bulk selection: checkbox column, select-all, and the paced queue's progress bar */
+.nx-comm-results-tools { display: flex; align-items: center; gap: 12px; }
+.nx-comm-selectall {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
+  cursor: pointer; user-select: none;
+}
+.nx-comm-selectall input { cursor: pointer; accent-color: var(--accent-color); }
+.nx-comm-selectall:has(input:disabled) { opacity: 0.5; cursor: default; }
+.nx-comm-selectall:has(input:disabled) input { cursor: default; }
+
+.nx-comm-row-check { flex: 0 0 auto; display: inline-flex; align-items: center; cursor: pointer; }
+.nx-comm-row-check input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent-color); }
+.nx-comm-row-check input:disabled { cursor: default; opacity: 0.4; }
+.nx-comm-row.is-checked { background: color-mix(in srgb, var(--accent-color) 8%, transparent); }
+
+.nx-comm-bulkbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 0.6rem 0.75rem; margin-bottom: 0.6rem;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 35%, var(--border-color));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+}
+.nx-comm-bulk-status { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 220px; }
+.nx-comm-bulk-status strong { font-size: 0.88rem; color: var(--text-color); }
+.nx-comm-bulk-status span {
+  font-size: 0.78rem; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nx-comm-bulk-track {
+  flex: 1 1 140px; height: 6px; border-radius: 999px;
+  background: var(--hover-bg); overflow: hidden;
+}
+.nx-comm-bulk-fill {
+  height: 100%; border-radius: 999px;
+  background: var(--accent-color);
+  transition: width 0.3s ease;
+}
+.nx-comm-bulk-failed {
+  margin: 0 0 0.6rem; padding: 0.5rem 0.75rem 0.5rem 1.6rem;
+  border: 1px solid color-mix(in srgb, var(--danger-color, #ef4444) 35%, var(--border-color));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger-color, #ef4444) 8%, transparent);
+  font-size: 0.8rem; color: var(--text-secondary);
+}
+.nx-comm-bulk-failed strong { color: var(--text-color); }
+@media (prefers-reduced-motion: reduce) { .nx-comm-bulk-fill { transition: none; } }
 .nx-community-browser .nx-comm-row { cursor: default; }
 .nx-community-browser.has-inspector .nx-comm-row { cursor: pointer; }
 .nx-community-browser .nx-comm-row.is-selected { background: color-mix(in srgb, var(--nx-section-accent) 9%, var(--raised-bg)); box-shadow: inset 3px 0 var(--nx-section-accent); }

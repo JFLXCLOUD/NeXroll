@@ -127,6 +127,12 @@ const isNexUpGeneratedPreroll = (preroll) => {
 };
 const isNexUpTrailerPreroll = (preroll) => {
   if (!preroll) return false;
+  // Match on the path as well as the category. A trailer picked up by the
+  // folder scanner before NeX-Up categorises it has no category yet, so a
+  // category-only test let freshly downloaded trailers through the filter.
+  // Trailers live under the NeX-Up storage folder in movies/ or tv/.
+  const path = String(preroll.path || '').toLowerCase().replace(/\\/g, '/');
+  if (/\/nexup\/(movies|tv)\//.test(path)) return true;
   return prerollCategoryNames(preroll).some(n => NEXUP_TRAILER_CATEGORIES.includes(n));
 };
 
@@ -289,6 +295,26 @@ const apiUrl = (path) => {
 // download fine. communityPreviewFallback retries once through the backend --
 // the same path downloads take -- so the proxy cost is only paid when the
 // direct load actually fails.
+const formatBytes = bytes => {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let n = value, unit = 0;
+  while (n >= 1024 && unit < units.length - 1) { n /= 1024; unit += 1; }
+  return `${n < 10 && unit > 0 ? n.toFixed(1) : Math.round(n)} ${units[unit]}`;
+};
+// Duration is never in the directory listing and size only appears in indexes
+// built after size capture was added, so both fall back to the probe result.
+const formatCommunityDuration = (item, meta) => {
+  const seconds = Number(meta?.duration ?? item?.duration);
+  if (!Number.isFinite(seconds) || seconds <= 0) return meta === undefined ? 'Checking…' : 'Unknown';
+  return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s` : `${seconds.toFixed(1)}s`;
+};
+const formatCommunitySize = (item, meta) => (
+  formatBytes(item?.size_bytes) || formatBytes(meta?.size_bytes)
+  || (typeof item?.file_size === 'string' && item.file_size !== 'Unknown' ? item.file_size : null)
+  || (meta === undefined ? 'Checking…' : 'Unknown')
+);
 const communityDirectSrc = (item) => item?.url || item?.download_url || '';
 const communityProxySrc = (item) => {
   const id = item?.id ? String(item.id) : '';
@@ -1047,6 +1073,15 @@ function App() {
     try { return localStorage.getItem('communityInspectorOpen') === '1'; } catch (_) { return false; }
   });
   const [communityInspectorPreroll, setCommunityInspectorPreroll] = useState(null);
+  // Bulk selection + download queue. The queue paces itself so a large selection
+  // never bursts at the community server; the backend enforces the same spacing.
+  const [communitySelectedIds, setCommunitySelectedIds] = useState([]);
+  const [communityBulkCategory, setCommunityBulkCategory] = useState('');
+  const [communityBulk, setCommunityBulk] = useState(null);
+  const communityBulkCancelRef = useRef(false);
+  // Probed duration/size for whichever community item is being inspected.
+  // undefined = still checking, null = the probe could not determine it.
+  const [communityItemMeta, setCommunityItemMeta] = useState(undefined);
   const [communityTop5Prerolls, setCommunityTop5Prerolls] = useState([]);
   const [communityRandomPreroll, setCommunityRandomPreroll] = useState(null);
   const [communityIsLoadingRandom, setCommunityIsLoadingRandom] = useState(false);
@@ -1090,11 +1125,34 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem('communityInspectorOpen', communityInspectorOpen ? '1' : '0'); } catch (_) {}
   }, [communityInspectorOpen]);
+
+  // The community index carries neither duration nor (on older indexes) size, so
+  // the inspector asks the backend to probe whichever item it is showing. The
+  // backend caches per URL, so re-selecting an item costs one round trip at most.
+  const communityInspectedId = (
+    communityInspectorPreroll || communitySearchResults[0] || communityRandomPreroll || {}
+  ).id || '';
+  useEffect(() => {
+    if (!communityInspectorOpen || !communityInspectedId || String(communityInspectedId).startsWith('_')) {
+      setCommunityItemMeta(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setCommunityItemMeta(undefined);
+    fetch(apiUrl(`community-prerolls/metadata?preroll_id=${encodeURIComponent(communityInspectedId)}`))
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => { if (!cancelled) setCommunityItemMeta(data || null); })
+      .catch(() => { if (!cancelled) setCommunityItemMeta(null); });
+    return () => { cancelled = true; };
+  }, [communityInspectorOpen, communityInspectedId]);
   
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
     try { return localStorage.getItem('prerollView') || 'list'; } catch { return 'list'; }
   });
+  // Prerolls whose inspector video would not load (missing file, unsupported
+  // codec); those fall back to the thumbnail so the panel is never blank.
+  const [libraryInspectorVideoFailed, setLibraryInspectorVideoFailed] = useState({});
   const [libraryInspectorOpen, setLibraryInspectorOpen] = useState(() => {
     try { return localStorage.getItem('libraryInspectorOpen') === '1'; } catch { return false; }
   });
@@ -6372,11 +6430,11 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     visiblePrerolls[0] ||
     null;
 
+  // The Preview button always opens the full modal. It used to only move the
+  // inspector's focus when the panel was open, which read as a dead button --
+  // the row click already does that, so the button had nothing left to do.
   const handleLibraryPreview = (preroll) => {
-    if (libraryInspectorOpen) {
-      setLibraryInspectorPrerollId(preroll.id);
-      return;
-    }
+    if (libraryInspectorOpen) setLibraryInspectorPrerollId(preroll.id);
     setPreviewingPreroll(preroll);
   };
 
@@ -11135,8 +11193,29 @@ const DashboardTiles = {
             {libraryInspectorPreroll ? (
               <>
                 <div className="nx-hybrid-inspector-preview">
-                  {artwork(libraryInspectorPreroll)}
-                  <button type="button" className="nx-hybrid-play-big" onClick={() => setPreviewingPreroll(libraryInspectorPreroll)} aria-label="Preview video"><Play size={18} /></button>
+                  {libraryInspectorVideoFailed[libraryInspectorPreroll.id] ? (
+                    <>
+                      {artwork(libraryInspectorPreroll)}
+                      <button type="button" className="nx-hybrid-play-big" onClick={() => setPreviewingPreroll(libraryInspectorPreroll)} aria-label="Preview video"><Play size={18} /></button>
+                    </>
+                  ) : (
+                    <video
+                      // Keyed on the preroll so switching rows reloads the element
+                      // rather than leaving the previous clip's frame on screen.
+                      key={libraryInspectorPreroll.id}
+                      className="nx-hybrid-inspector-video"
+                      // Selecting a row is the gesture that authorises playback,
+                      // and muted autoplay is what browsers allow without one.
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      controls
+                      preload="metadata"
+                      src={apiUrl(`prerolls/${libraryInspectorPreroll.id}/video`)}
+                      onError={() => setLibraryInspectorVideoFailed(prev => ({ ...prev, [libraryInspectorPreroll.id]: true }))}
+                    />
+                  )}
                 </div>
                 <div className="nx-hybrid-inspector-body">
                   <div className="nx-hybrid-inspector-heading"><div><h2>{libraryInspectorPreroll.display_name || libraryInspectorPreroll.filename}</h2><p>{libraryInspectorPreroll.filename}</p></div><button type="button" onClick={() => setLibraryInspectorOpen(false)} aria-label="Close preview panel"><X size={14} /></button></div>
@@ -34428,6 +34507,100 @@ const DashboardTiles = {
       });
     };
 
+    // ---- Bulk selection + paced download queue ----
+    // Typical Nerds asked that NeXroll not burst requests at their server, so the
+    // queue leaves a fixed gap between downloads and runs strictly one at a time.
+    const COMMUNITY_BULK_GAP_SECONDS = 5;
+    const communitySelectable = communitySearchResults.filter(p => p && p.id && !isPrerollAlreadyDownloaded(p));
+    const communityAllSelected = communitySelectable.length > 0
+      && communitySelectable.every(p => communitySelectedIds.includes(p.id));
+    const communitySelectedCount = communitySelectedIds.length;
+    const bulkRunning = !!(communityBulk && !communityBulk.finished);
+
+    const toggleCommunitySelection = (id) => {
+      if (bulkRunning) return;
+      setCommunitySelectedIds(prev => (
+        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      ));
+    };
+    const toggleCommunitySelectAll = () => {
+      if (bulkRunning) return;
+      setCommunitySelectedIds(prev => {
+        if (communityAllSelected) {
+          const onPage = communitySelectable.map(p => p.id);
+          return prev.filter(id => !onPage.includes(id));
+        }
+        const merged = [...prev];
+        communitySelectable.forEach(p => { if (!merged.includes(p.id)) merged.push(p.id); });
+        return merged;
+      });
+    };
+
+    const runCommunityBulkDownload = async () => {
+      // Resolve the selection against the current page plus anything selected on
+      // an earlier page but still in view; ids not in the results are dropped.
+      const byId = new Map(communitySearchResults.map(p => [p.id, p]));
+      const queue = communitySelectedIds
+        .map(id => byId.get(id))
+        .filter(p => p && !isPrerollAlreadyDownloaded(p));
+      if (!queue.length) return;
+
+      communityBulkCancelRef.current = false;
+      setCommunityBulk({ total: queue.length, done: 0, current: null, waiting: 0, failed: [], finished: false });
+
+      for (let i = 0; i < queue.length; i++) {
+        if (communityBulkCancelRef.current) break;
+        const preroll = queue[i];
+        const title = cleanDisplayText(preroll.title);
+        setCommunityBulk(prev => (prev ? { ...prev, current: title, waiting: 0 } : prev));
+        setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'downloading' }));
+        try {
+          const response = await fetch(apiUrl('community-prerolls/download'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              preroll_id: preroll.id,
+              title: String(preroll.title || '').replace(/^\d+\s*-\s*/, '').trim() || 'community_preroll',
+              url: preroll.url || preroll.download_url,
+              category_id: communityBulkCategory || null,
+              add_to_category: !!communityBulkCategory,
+              tags: '',
+              description: `Community Preroll ID: ${preroll.id}`
+            })
+          });
+          if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `Download failed (${response.status})`);
+          }
+          await response.json();
+          setCommunitySelectedIds(prev => prev.filter(id => id !== preroll.id));
+        } catch (error) {
+          setCommunityBulk(prev => (prev
+            ? { ...prev, failed: [...prev.failed, { title, message: error.message }] }
+            : prev));
+        } finally {
+          setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: false }));
+        }
+        setCommunityBulk(prev => (prev ? { ...prev, done: i + 1 } : prev));
+
+        // Pace the queue. Counting down a second at a time keeps the wait visible
+        // and lets Cancel take effect without waiting out the full gap.
+        if (i < queue.length - 1 && !communityBulkCancelRef.current) {
+          for (let s = COMMUNITY_BULK_GAP_SECONDS; s > 0 && !communityBulkCancelRef.current; s--) {
+            setCommunityBulk(prev => (prev ? { ...prev, waiting: s } : prev));
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          setCommunityBulk(prev => (prev ? { ...prev, waiting: 0 } : prev));
+        }
+      }
+
+      await loadDownloadedCommunityIds();
+      if (typeof fetchData === 'function') await fetchData();
+      setCommunityBulk(prev => (prev
+        ? { ...prev, current: null, waiting: 0, finished: true, cancelled: communityBulkCancelRef.current }
+        : prev));
+    };
+
     // Handle preroll download and import
     const handleDownload = async (preroll) => {
       const selectedCategory = getCommunityCategorySelection(communitySelectedCategories, preroll.id);
@@ -35089,18 +35262,95 @@ const DashboardTiles = {
                 <h3 className="nx-community-results-title">
                   Results <span>({communityTotalResults})</span>
                 </h3>
-                <button
-                  type="button"
-                  className={`nx-comm-inspector-toggle${communityInspectorOpen ? ' active' : ''}`}
-                  aria-pressed={communityInspectorOpen}
-                  onClick={toggleCommunityInspector}
-                  title={communityInspectorOpen ? 'Hide preview panel' : 'Show preview panel'}
-                >
-                  <Eye size={14} />
-                  <span>Preview panel</span>
-                  <span>{communityInspectorOpen ? 'On' : 'Off'}</span>
-                </button>
+                <div className="nx-comm-results-tools">
+                  <label className="nx-comm-selectall" title={communitySelectable.length ? 'Select every result on this page' : 'Everything on this page is already downloaded'}>
+                    <input
+                      type="checkbox"
+                      checked={communityAllSelected}
+                      disabled={bulkRunning || communitySelectable.length === 0}
+                      onChange={toggleCommunitySelectAll}
+                    />
+                    <span>Select all</span>
+                  </label>
+                  <button
+                    type="button"
+                    className={`nx-comm-inspector-toggle${communityInspectorOpen ? ' active' : ''}`}
+                    aria-pressed={communityInspectorOpen}
+                    onClick={toggleCommunityInspector}
+                    title={communityInspectorOpen ? 'Hide preview panel' : 'Show preview panel'}
+                  >
+                    <Eye size={14} />
+                    <span>Preview panel</span>
+                    <span>{communityInspectorOpen ? 'On' : 'Off'}</span>
+                  </button>
+                </div>
               </div>
+
+              {(communitySelectedCount > 0 || communityBulk) && (
+                <div className="nx-comm-bulkbar">
+                  {communityBulk ? (
+                    <>
+                      <div className="nx-comm-bulk-status">
+                        <strong>
+                          {communityBulk.finished
+                            ? (communityBulk.cancelled ? 'Bulk download stopped' : 'Bulk download finished')
+                            : `Downloading ${communityBulk.done + 1} of ${communityBulk.total}`}
+                        </strong>
+                        <span>
+                          {communityBulk.finished
+                            ? `${communityBulk.done - communityBulk.failed.length} added${communityBulk.failed.length ? `, ${communityBulk.failed.length} failed` : ''}`
+                            : communityBulk.waiting
+                              ? `Pausing ${communityBulk.waiting}s between downloads to go easy on the community server`
+                              : (communityBulk.current || 'Starting…')}
+                        </span>
+                      </div>
+                      <div className="nx-comm-bulk-track" aria-hidden="true">
+                        <div className="nx-comm-bulk-fill" style={{ width: `${Math.round((communityBulk.done / Math.max(1, communityBulk.total)) * 100)}%` }} />
+                      </div>
+                      {communityBulk.finished ? (
+                        <button type="button" className="button button-secondary" onClick={() => setCommunityBulk(null)}>Done</button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => { communityBulkCancelRef.current = true; }}
+                        >
+                          Stop
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="nx-comm-bulk-status">
+                        <strong>{communitySelectedCount} selected</strong>
+                        <span>Downloads run one at a time, {COMMUNITY_BULK_GAP_SECONDS}s apart</span>
+                      </div>
+                      <select
+                        className="nx-community-select"
+                        value={communityBulkCategory}
+                        onChange={(e) => setCommunityBulkCategory(e.target.value)}
+                        title="Category for every preroll in this batch"
+                      >
+                        <option value="">No category</option>
+                        {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
+                        ))}
+                      </select>
+                      <button type="button" className="button button-secondary" onClick={() => setCommunitySelectedIds([])}>Clear</button>
+                      <button type="button" className="button" onClick={runCommunityBulkDownload}>
+                        <Download size={14} /> Download {communitySelectedCount}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              {communityBulk && communityBulk.finished && communityBulk.failed.length > 0 && (
+                <ul className="nx-comm-bulk-failed">
+                  {communityBulk.failed.map((f, i) => (
+                    <li key={i}><strong>{f.title}</strong> — {f.message}</li>
+                  ))}
+                </ul>
+              )}
 
             <div className="nx-comm-results">
               {communitySearchResults.map(preroll => {
@@ -35111,9 +35361,18 @@ const DashboardTiles = {
                 return (
                 <div
                   key={preroll.id}
-                  className={`nx-comm-row${communityInspectorOpen && communityInspectorItem?.id === preroll.id ? ' is-selected' : ''}`}
+                  className={`nx-comm-row${communityInspectorOpen && communityInspectorItem?.id === preroll.id ? ' is-selected' : ''}${communitySelectedIds.includes(preroll.id) ? ' is-checked' : ''}`}
                   onClick={() => communityInspectorOpen && setCommunityInspectorPreroll(preroll)}
                 >
+                  <label className="nx-comm-row-check" onClick={(event) => event.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={communitySelectedIds.includes(preroll.id)}
+                      disabled={downloaded || bulkRunning}
+                      onChange={() => toggleCommunitySelection(preroll.id)}
+                      aria-label={`Select ${cleanDisplayText(preroll.title)}`}
+                    />
+                  </label>
                   <div className="nx-comm-row-icon"><Film size={20} /></div>
 
                   <div className="nx-comm-row-body">
@@ -35226,8 +35485,8 @@ const DashboardTiles = {
                       <dl>
                         <div><dt>Creator</dt><dd>{cleanDisplayText(communityInspectorItem.creator) || 'Unknown'}</dd></div>
                         <div><dt>Category</dt><dd>{cleanDisplayText(communityInspectorItem.category) || 'Uncategorized'}</dd></div>
-                        <div><dt>Duration</dt><dd>{communityInspectorItem.duration ? `${communityInspectorItem.duration}s` : 'Unknown'}</dd></div>
-                        <div><dt>File size</dt><dd>{communityInspectorItem.file_size || 'Unknown'}</dd></div>
+                        <div><dt>Duration</dt><dd>{formatCommunityDuration(communityInspectorItem, communityItemMeta)}</dd></div>
+                        <div><dt>File size</dt><dd>{formatCommunitySize(communityInspectorItem, communityItemMeta)}</dd></div>
                       </dl>
                       {communityInspectorItem.is_ai && <span className="nx-comm-ai-badge"><Sparkles size={11} /> AI-generated</span>}
                     </div>
