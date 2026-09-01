@@ -82,6 +82,52 @@ const DEFAULT_HIDDEN = DEFAULT_ORDER.filter(key => !FOCUS_ESSENTIAL_KEYS.include
 const DASH_KEYS = DEFAULT_ORDER.slice();
 const NEXROLL_WIKI_URL = 'https://github.com/JFLXCLOUD/NeXroll/wiki';
 
+// Help button target per page. Longest matching prefix wins, so a sub-page
+// inherits its section's page unless it names a better one. Keys are activeTab
+// values; values are wiki page names (and optional #anchor).
+const WIKI_PAGES = {
+  'dashboard':            'Dashboard',
+  'library':              'Preroll-Library',
+  'library/add':          'Preroll-Library#adding-prerolls',
+  'library/categories':   'Preroll-Library#categories',
+  'library/scaling':      'Preroll-Library#video-scaling',
+  'library/trash':        'Preroll-Library#trash',
+  'schedules':            'Scheduling',
+  'schedules/create':     'Scheduling#creating-a-schedule',
+  'schedules/calendar':   'Scheduling#calendar-view',
+  'schedules/conflicts':  'Scheduling#schedule-conflict-detection',
+  'schedules/builder':    'Sequences',
+  'schedules/library':    'Sequences#using-saved-sequences',
+  'nexup':                'NeX-Up',
+  'nexup/upcoming':       'NeX-Up#upcoming-releases',
+  'nexup/trailers':       'NeX-Up#managing-your-trailers',
+  'nexup/generator':      'NeX-Up#generator-studio',
+  'nexup/settings':       'NeX-Up#nex-up-settings',
+  'connect':              'Connect',
+  'community-prerolls':   'Community-Prerolls',
+  'settings':             'Configuration',
+  'settings/paths':       'Path-Mappings',
+  'settings/backup':      'Backup-and-Restore',
+  'settings/storage':     'Configuration#data-storage-locations',
+  'settings/users':       'Configuration#authentication',
+  'settings/apikeys':     'Configuration#api-keys',
+  'settings/logs':        'Configuration#logging',
+  'settings/system':      'Troubleshooting#system-page',
+};
+
+const wikiPageForTab = (tab) => {
+  const key = String(tab || '');
+  if (WIKI_PAGES[key]) return WIKI_PAGES[key];
+  // Fall back to the section, so an unlisted sub-page still lands somewhere useful.
+  const section = key.split('/')[0];
+  return WIKI_PAGES[section] || null;
+};
+
+const wikiUrlForTab = (tab) => {
+  const page = wikiPageForTab(tab);
+  return page ? `${NEXROLL_WIKI_URL}/${page}` : NEXROLL_WIKI_URL;
+};
+
 // ---- Themes ---------------------------------------------------------------
 // Appearance used to be a single boolean, which the styling leans on heavily:
 // ~94 `body.dark` rules, ~65 `body.light` rules, and ~84 inline `darkMode ? x : y`
@@ -21991,6 +22037,23 @@ const DashboardTiles = {
     }
   };
 
+  // Re-arm the first-run wizard. Nothing is reset -- it reopens over the current
+  // configuration -- so this is a safe way back in after finishing or skipping.
+  const handleRerunOnboarding = async () => {
+    const ok = await showConfirm(
+      'Reopen the first-run setup wizard? Your current settings are kept — the wizard simply walks you through them again.',
+      { title: 'Run setup wizard', confirmText: 'Open wizard', type: 'info' }
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(apiUrl('onboarding/restart'), { method: 'POST', credentials: 'include' });
+      if (!res.ok) throw new Error('Request failed');
+      setNeedsOnboarding(true);
+    } catch {
+      showAlert('Could not reopen the setup wizard.', 'error');
+    }
+  };
+
   const handleShowSystemPaths = async () => {
     try {
       const res = await fetch(apiUrl('system/paths'));
@@ -24645,11 +24708,13 @@ const DashboardTiles = {
       if (kind === 'dynamic-logo') {
         setDynamicPrerollSettings(previous => ({ ...previous, customLogoFilename: data.filename || file.name }));
       } else if (kind === 'dynamic-audio') {
-        setDynamicPrerollSettings(previous => ({ ...previous, customAudioFilename: data.filename || file.name, audioMode: 'custom' }));
+        // data.duration is what makes the "match length to the soundtrack"
+        // control appear; without it the control stays hidden until a reload.
+        setDynamicPrerollSettings(previous => ({ ...previous, customAudioFilename: data.filename || file.name, customAudioDuration: data.duration || null, audioMode: 'custom' }));
       } else if (kind === 'coming-logo') {
         setComingSoonListSettings(previous => ({ ...previous, customLogoFilename: data.filename || file.name }));
       } else {
-        setComingSoonListSettings(previous => ({ ...previous, customAudioFilename: data.filename || file.name, includeAudio: true }));
+        setComingSoonListSettings(previous => ({ ...previous, customAudioFilename: data.filename || file.name, customAudioDuration: data.duration || null, includeAudio: true }));
       }
       showAlert(`${file.name} uploaded.`, 'success');
     } catch (error) {
@@ -24671,11 +24736,11 @@ const DashboardTiles = {
       if (kind === 'dynamic-logo') {
         setDynamicPrerollSettings(previous => ({ ...previous, customLogoFilename: null }));
       } else if (kind === 'dynamic-audio') {
-        setDynamicPrerollSettings(previous => ({ ...previous, customAudioFilename: null, audioMode: 'default' }));
+        setDynamicPrerollSettings(previous => ({ ...previous, customAudioFilename: null, customAudioDuration: null, audioMode: 'default' }));
       } else if (kind === 'coming-logo') {
         setComingSoonListSettings(previous => ({ ...previous, customLogoFilename: null }));
       } else {
-        setComingSoonListSettings(previous => ({ ...previous, customAudioFilename: null, includeAudio: false }));
+        setComingSoonListSettings(previous => ({ ...previous, customAudioFilename: null, customAudioDuration: null, includeAudio: false }));
       }
       showAlert('Custom asset removed.', 'success');
     } catch (error) {
@@ -29570,12 +29635,16 @@ const DashboardTiles = {
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
             Comprehensive backup including:
           </p>
-          <ul style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 1rem 1rem', paddingLeft: '0.5rem', flex: 1 }}>
+          <ul style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 0.5rem 1rem', paddingLeft: '0.5rem' }}>
             <li>Database (nexroll.db + JSON export)</li>
-            <li>All preroll video files</li>
-            <li>All thumbnails</li>
-            <li>Settings & Configuration</li>
+            <li>All preroll video files and thumbnails</li>
+            <li>Generated prerolls, Coming Soon lists, and brand assets</li>
+            <li>Settings & configuration</li>
           </ul>
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0 0 1rem' }}>
+            Downloaded movie and TV trailers are left out - NeX-Up re-downloads those, and
+            they are usually the bulk of the folder.
+          </p>
           <button 
             onClick={handleBackupFiles} 
             className="button"
@@ -31169,39 +31238,29 @@ const DashboardTiles = {
         </h2>
         <div style={{ 
           display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(var(--nx-sys-track), 1fr))', 
           gap: '1rem',
           marginBottom: '1rem'
         }}>
           {/* Version Card */}
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--accent-color)' }}>
+          <div className="nx-sys-tile">
+            <div className="nx-sys-tile-head">
               <Package size={18} />
               <span style={{ fontWeight: 'bold' }}>Version</span>
             </div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>
+            <div className="nx-sys-value">
               {systemVersion?.api_version || 'unknown'}
             </div>
             {systemVersion?.registry_version && systemVersion?.registry_version !== systemVersion?.api_version && (
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              <div className="nx-sys-note">
                 Registry: {systemVersion.registry_version}
               </div>
             )}
           </div>
 
           {/* Scheduler Status Card */}
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: schedulerStatus.running ? '#28a745' : '#dc3545' }}>
+          <div className="nx-sys-tile">
+            <div className="nx-sys-tile-head" style={{ color: schedulerStatus.running ? 'var(--success-color)' : 'var(--error-color)' }}>
               <Clock size={18} />
               <span style={{ fontWeight: 'bold' }}>Scheduler</span>
             </div>
@@ -31210,30 +31269,26 @@ const DashboardTiles = {
                 width: '10px', 
                 height: '10px', 
                 borderRadius: '50%', 
-                backgroundColor: schedulerStatus.running ? '#28a745' : '#dc3545',
+                backgroundColor: schedulerStatus.running ? 'var(--success-color)' : 'var(--error-color)',
                 display: 'inline-block'
               }}></span>
-              <span style={{ fontSize: '1.1rem', fontWeight: '500' }}>
+              <span className="nx-sys-value">
                 {schedulerStatus.running ? 'Running' : 'Stopped'}
               </span>
             </div>
           </div>
 
           {/* Theme Card */}
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--accent-color)' }}>
+          <div className="nx-sys-tile">
+            <div className="nx-sys-tile-head">
               <Palette size={18} />
               <span style={{ fontWeight: 'bold' }}>Theme</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
+            <div className="nx-sys-value nx-sys-value-inline">
               {darkMode ? <Moon size={18} /> : <Sun size={18} />}
-              <span>{darkMode ? 'Dark Mode' : 'Light Mode'}</span>
+              <span>{THEMES[resolveTheme(theme)].label}</span>
             </div>
+            <div className="nx-sys-note is-fine">{darkMode ? 'Dark' : 'Light'} base</div>
           </div>
         </div>
 
@@ -31274,6 +31329,9 @@ const DashboardTiles = {
           <button onClick={handleShowSystemPaths} className="button">
             <FolderOpen size={14} style={{marginRight: '0.35rem'}} /> Show Resolved Paths
           </button>
+          <button onClick={handleRerunOnboarding} className="button button-secondary">
+            <Rocket size={14} style={{marginRight: '0.35rem'}} /> Run Setup Wizard
+          </button>
         </div>
       </div>
 
@@ -31284,63 +31342,33 @@ const DashboardTiles = {
         </h2>
         <div style={{ 
           display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(var(--nx-sys-track-stat), 1fr))', 
           gap: '0.75rem'
         }}>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            textAlign: 'center'
-          }}>
+          <div className="nx-sys-tile is-stat">
             <Film size={24} style={{ color: 'var(--accent-color)', marginBottom: '0.5rem' }} />
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{prerolls.length}</div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Prerolls</div>
+            <div className="nx-sys-value">{prerolls.length}</div>
+            <div className="nx-sys-note">Prerolls</div>
           </div>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            textAlign: 'center'
-          }}>
-            <Folder size={24} style={{ color: '#ffc230', marginBottom: '0.5rem' }} />
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{categories.length}</div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Categories</div>
+          <div className="nx-sys-tile is-stat">
+            <Folder size={24} style={{ color: 'var(--warning-color)', marginBottom: '0.5rem' }} />
+            <div className="nx-sys-value">{categories.length}</div>
+            <div className="nx-sys-note">Categories</div>
           </div>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            textAlign: 'center'
-          }}>
-            <Calendar size={24} style={{ color: '#17a2b8', marginBottom: '0.5rem' }} />
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{schedules.length}</div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Schedules</div>
+          <div className="nx-sys-tile is-stat">
+            <Calendar size={24} style={{ color: 'var(--accent-color)', marginBottom: '0.5rem' }} />
+            <div className="nx-sys-value">{schedules.length}</div>
+            <div className="nx-sys-note">Schedules</div>
           </div>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            textAlign: 'center'
-          }}>
-            <PartyPopper size={24} style={{ color: '#e83e8c', marginBottom: '0.5rem' }} />
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{holidayPresets.length}</div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Holiday Presets</div>
+          <div className="nx-sys-tile is-stat">
+            <PartyPopper size={24} style={{ color: 'var(--accent-color)', marginBottom: '0.5rem' }} />
+            <div className="nx-sys-value">{holidayPresets.length}</div>
+            <div className="nx-sys-note">Holiday Presets</div>
           </div>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            textAlign: 'center'
-          }}>
-            <Users2 size={24} style={{ color: '#6f42c1', marginBottom: '0.5rem' }} />
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{communityIndexStatus?.total_prerolls || 0}</div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Community Prerolls</div>
+          <div className="nx-sys-tile is-stat">
+            <Users2 size={24} style={{ color: 'var(--button-bg)', marginBottom: '0.5rem' }} />
+            <div className="nx-sys-value">{communityIndexStatus?.total_prerolls || 0}</div>
+            <div className="nx-sys-note">Community Prerolls</div>
           </div>
         </div>
       </div>
@@ -31352,149 +31380,109 @@ const DashboardTiles = {
         </h2>
         <div style={{ display: 'grid', gap: '0.75rem' }}>
           {/* Python Status */}
-          <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '0.5rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="nx-sys-row">
+            <div className="nx-sys-row-main">
               <div style={{
                 width: '32px',
                 height: '32px',
                 borderRadius: '6px',
-                backgroundColor: 'rgba(40, 167, 69, 0.15)',
+                backgroundColor: 'var(--success-soft)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <CheckCircle size={18} style={{ color: '#28a745' }} />
+                <CheckCircle size={18} style={{ color: 'var(--success-color)' }} />
               </div>
               <div>
-                <div style={{ fontWeight: '500' }}>Python</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <div className="nx-sys-row-name">Python</div>
+                <div className="nx-sys-note">
                   {systemDependencies?.dependencies?.python?.version ? `Python ${systemDependencies.dependencies.python.version}` : 'Running'}
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            <div className="nx-sys-note is-fine">
               NeXroll backend runtime
             </div>
           </div>
 
           {/* FFmpeg Status */}
-          <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '0.5rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="nx-sys-row">
+            <div className="nx-sys-row-main">
               <div style={{
                 width: '32px',
                 height: '32px',
                 borderRadius: '6px',
-                backgroundColor: ffmpegInfo?.ffmpeg_present ? 'rgba(40, 167, 69, 0.15)' : 'rgba(220, 53, 69, 0.15)',
+                backgroundColor: ffmpegInfo?.ffmpeg_present ? 'var(--success-soft)' : 'var(--error-soft)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
                 {ffmpegInfo?.ffmpeg_present ? 
-                  <CheckCircle size={18} style={{ color: '#28a745' }} /> : 
-                  <XCircle size={18} style={{ color: '#dc3545' }} />
+                  <CheckCircle size={18} style={{ color: 'var(--success-color)' }} /> : 
+                  <XCircle size={18} style={{ color: 'var(--error-color)' }} />
                 }
               </div>
               <div>
-                <div style={{ fontWeight: '500' }}>FFmpeg</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <div className="nx-sys-row-name">FFmpeg</div>
+                <div className="nx-sys-note">
                   {ffmpegInfo ? (ffmpegInfo.ffmpeg_present ? ffmpegInfo.ffmpeg_version : 'Not installed') : 'Detecting...'}
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            <div className="nx-sys-note is-fine">
               Video processing & preroll generation
             </div>
           </div>
 
           {/* FFprobe Status */}
-          <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '0.5rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="nx-sys-row">
+            <div className="nx-sys-row-main">
               <div style={{
                 width: '32px',
                 height: '32px',
                 borderRadius: '6px',
-                backgroundColor: ffmpegInfo?.ffprobe_present ? 'rgba(40, 167, 69, 0.15)' : 'rgba(220, 53, 69, 0.15)',
+                backgroundColor: ffmpegInfo?.ffprobe_present ? 'var(--success-soft)' : 'var(--error-soft)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
                 {ffmpegInfo?.ffprobe_present ? 
-                  <CheckCircle size={18} style={{ color: '#28a745' }} /> : 
-                  <XCircle size={18} style={{ color: '#dc3545' }} />
+                  <CheckCircle size={18} style={{ color: 'var(--success-color)' }} /> : 
+                  <XCircle size={18} style={{ color: 'var(--error-color)' }} />
                 }
               </div>
               <div>
-                <div style={{ fontWeight: '500' }}>FFprobe</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <div className="nx-sys-row-name">FFprobe</div>
+                <div className="nx-sys-note">
                   {ffmpegInfo ? (ffmpegInfo.ffprobe_present ? ffmpegInfo.ffprobe_version : 'Not installed') : 'Detecting...'}
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            <div className="nx-sys-note is-fine">
               Video analysis & metadata extraction
             </div>
           </div>
 
           {/* yt-dlp Status */}
-          <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '0.5rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="nx-sys-row">
+            <div className="nx-sys-row-main">
               <div style={{
                 width: '32px',
                 height: '32px',
                 borderRadius: '6px',
-                backgroundColor: systemDependencies?.dependencies?.yt_dlp?.available ? 'rgba(40, 167, 69, 0.15)' : 'rgba(220, 53, 69, 0.15)',
+                backgroundColor: systemDependencies?.dependencies?.yt_dlp?.available ? 'var(--success-soft)' : 'var(--error-soft)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
                 {systemDependencies?.dependencies?.yt_dlp?.available ? 
-                  <CheckCircle size={18} style={{ color: '#28a745' }} /> : 
-                  <XCircle size={18} style={{ color: '#dc3545' }} />
+                  <CheckCircle size={18} style={{ color: 'var(--success-color)' }} /> : 
+                  <XCircle size={18} style={{ color: 'var(--error-color)' }} />
                 }
               </div>
               <div>
-                <div style={{ fontWeight: '500' }}>yt-dlp</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <div className="nx-sys-row-name">yt-dlp</div>
+                <div className="nx-sys-note">
                   {systemDependencies?.dependencies?.yt_dlp?.available 
                     ? systemDependencies.dependencies.yt_dlp.version 
                     : (systemDependencies ? 'Not available' : 'Detecting...')}
@@ -31502,7 +31490,7 @@ const DashboardTiles = {
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              <div className="nx-sys-note is-fine">
                 YouTube & trailer downloads (NeX-Up)
               </div>
               {/* Update action — Docker and frozen Windows builds have yt-dlp
@@ -31532,35 +31520,25 @@ const DashboardTiles = {
           </div>
 
           {/* Deno Status */}
-          <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '0.5rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="nx-sys-row">
+            <div className="nx-sys-row-main">
               <div style={{
                 width: '32px',
                 height: '32px',
                 borderRadius: '6px',
-                backgroundColor: systemDependencies?.dependencies?.deno?.available ? 'rgba(40, 167, 69, 0.15)' : 'rgba(255, 193, 7, 0.15)',
+                backgroundColor: systemDependencies?.dependencies?.deno?.available ? 'var(--success-soft)' : 'var(--warning-soft)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
                 {systemDependencies?.dependencies?.deno?.available ? 
-                  <CheckCircle size={18} style={{ color: '#28a745' }} /> : 
-                  <AlertTriangle size={18} style={{ color: '#ffc107' }} />
+                  <CheckCircle size={18} style={{ color: 'var(--success-color)' }} /> : 
+                  <AlertTriangle size={18} style={{ color: 'var(--warning-color)' }} />
                 }
               </div>
               <div>
-                <div style={{ fontWeight: '500' }}>Deno</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <div className="nx-sys-row-name">Deno</div>
+                <div className="nx-sys-note">
                   {systemDependencies?.dependencies?.deno?.available
                     ? (systemDependencies.dependencies.deno.version
                         + (systemDependencies.dependencies.deno.on_path === false ? ' — installed but not on PATH (restart NeXroll)' : ''))
@@ -31569,7 +31547,7 @@ const DashboardTiles = {
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              <div className="nx-sys-note is-fine">
                 JavaScript runtime for YouTube extraction
               </div>
               {/* Install action — only when this NeXroll can actually install it
@@ -31597,35 +31575,25 @@ const DashboardTiles = {
 
           {/* YouTube PO-Token Provider Status — the modern fix for YouTube's
               "Sign in to confirm you're not a bot" wall on trailer downloads. */}
-          <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '0.5rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="nx-sys-row">
+            <div className="nx-sys-row-main">
               <div style={{
                 width: '32px',
                 height: '32px',
                 borderRadius: '6px',
-                backgroundColor: systemDependencies?.dependencies?.potoken?.available ? 'rgba(40, 167, 69, 0.15)' : 'rgba(255, 193, 7, 0.15)',
+                backgroundColor: systemDependencies?.dependencies?.potoken?.available ? 'var(--success-soft)' : 'var(--warning-soft)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
                 {systemDependencies?.dependencies?.potoken?.available ?
-                  <CheckCircle size={18} style={{ color: '#28a745' }} /> :
-                  <AlertTriangle size={18} style={{ color: '#ffc107' }} />
+                  <CheckCircle size={18} style={{ color: 'var(--success-color)' }} /> :
+                  <AlertTriangle size={18} style={{ color: 'var(--warning-color)' }} />
                 }
               </div>
               <div>
-                <div style={{ fontWeight: '500' }}>YouTube PO-Token Provider</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <div className="nx-sys-row-name">YouTube PO-Token Provider</div>
+                <div className="nx-sys-note">
                   {systemDependencies?.dependencies?.potoken?.available
                     ? `Active${systemDependencies.dependencies.potoken.version ? ' (bgutil ' + systemDependencies.dependencies.potoken.version + ')' : ''} — cookieless YouTube downloads enabled`
                     : (systemDependencies
@@ -31637,7 +31605,7 @@ const DashboardTiles = {
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              <div className="nx-sys-note is-fine">
                 Mints Proof-of-Origin tokens for yt-dlp
               </div>
               {systemDependencies?.system?.is_docker ? (
@@ -31663,23 +31631,14 @@ const DashboardTiles = {
 
           {/* System Info */}
           {systemDependencies?.system && (
-            <div style={{
-              padding: '0.75rem 1rem',
-              backgroundColor: 'var(--card-bg)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '1rem',
-              flexWrap: 'wrap'
-            }}>
+            <div className="nx-sys-row is-wrap">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Globe size={16} style={{ color: 'var(--text-secondary)' }} />
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                <span className="nx-sys-note">
                   {systemDependencies.system.platform} {systemDependencies.system.architecture}
                 </span>
               </div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              <div className="nx-sys-note">
                 {systemDependencies.system.hostname}
               </div>
             </div>
@@ -31701,7 +31660,7 @@ const DashboardTiles = {
             {dependenciesLoading && (
               <div style={{
                 padding: '0.75rem 1rem',
-                backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                backgroundColor: 'var(--neutral-soft)',
                 border: '1px solid rgba(23, 162, 184, 0.3)',
                 borderRadius: '8px',
                 display: 'flex',
@@ -31709,7 +31668,7 @@ const DashboardTiles = {
                 gap: '0.5rem',
                 width: '100%'
               }}>
-                <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                <Loader2 size={16} className="spin" style={{ color: 'var(--accent-color)' }} />
                 <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
                   Scanning system for installed dependencies...
                 </span>
@@ -31729,7 +31688,7 @@ const DashboardTiles = {
         {updateInfo && showUpdateBanner && (
           <div style={{
             padding: '1rem',
-            backgroundColor: 'rgba(40, 167, 69, 0.15)',
+            backgroundColor: 'var(--success-soft)',
             border: '1px solid rgba(40, 167, 69, 0.4)',
             borderRadius: '8px',
             marginBottom: '1rem',
@@ -31739,14 +31698,14 @@ const DashboardTiles = {
             flexWrap: 'wrap',
             gap: '0.75rem'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <Bell size={20} style={{ color: '#28a745' }} />
+            <div className="nx-sys-row-main">
+              <Bell size={20} style={{ color: 'var(--success-color)' }} />
               <div>
                 <div style={{ fontWeight: '600', color: 'var(--text-color)' }}>
                   Update Available: v{updateInfo.version}
                 </div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  {updateInfo.prerelease && <span style={{ color: '#ffc107', marginRight: '0.5rem' }}>(Pre-release)</span>}
+                <div className="nx-sys-note">
+                  {updateInfo.prerelease && <span style={{ color: 'var(--warning-color)', marginRight: '0.5rem' }}>(Pre-release)</span>}
                   Current: v{systemVersion?.api_version || 'unknown'}
                 </div>
               </div>
@@ -31757,7 +31716,7 @@ const DashboardTiles = {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="button"
-                style={{ textDecoration: 'none', backgroundColor: '#28a745' }}
+                style={{ textDecoration: 'none', backgroundColor: 'var(--success-color)' }}
               >
                 <Download size={14} style={{ marginRight: '0.35rem' }} /> Download Update
               </a>
@@ -31774,18 +31733,13 @@ const DashboardTiles = {
         {/* Update Settings Grid */}
         <div style={{ 
           display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(var(--nx-sys-track), 1fr))', 
           gap: '1rem',
           marginBottom: '1rem'
         }}>
           {/* Check Interval */}
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--accent-color)' }}>
+          <div className="nx-sys-tile">
+            <div className="nx-sys-tile-head">
               <Clock size={18} />
               <span style={{ fontWeight: 'bold' }}>Check Interval</span>
             </div>
@@ -31826,13 +31780,8 @@ const DashboardTiles = {
           </div>
 
           {/* Pre-release Channel */}
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--accent-color)' }}>
+          <div className="nx-sys-tile">
+            <div className="nx-sys-tile-head">
               <Sparkles size={18} />
               <span style={{ fontWeight: 'bold' }}>Pre-release Channel</span>
             </div>
@@ -31855,7 +31804,7 @@ const DashboardTiles = {
                 }}
                 style={{ width: '18px', height: '18px', cursor: 'pointer' }}
               />
-              <span style={{ fontSize: '0.9rem' }}>Include beta/pre-release versions</span>
+              <span className="nx-sys-note">Include beta/pre-release versions</span>
             </label>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
               Get early access to new features (may be unstable)
@@ -31871,7 +31820,7 @@ const DashboardTiles = {
           flexWrap: 'wrap',
           gap: '0.75rem'
         }}>
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+          <div className="nx-sys-note">
             {updateSettings.last_check ? (
               <>Last checked: {new Date(updateSettings.last_check).toLocaleString()}</>
             ) : (
@@ -31924,9 +31873,9 @@ const DashboardTiles = {
             padding: '0.5rem 0.75rem',
             borderRadius: '6px',
             fontSize: '0.85rem',
-            backgroundColor: updateCheckProgress.phase === 'error' ? 'rgba(220, 53, 69, 0.1)' : 'rgba(40, 167, 69, 0.1)',
-            color: updateCheckProgress.phase === 'error' ? '#dc3545' : '#28a745',
-            border: `1px solid ${updateCheckProgress.phase === 'error' ? 'rgba(220, 53, 69, 0.3)' : 'rgba(40, 167, 69, 0.3)'}`
+            backgroundColor: updateCheckProgress.phase === 'error' ? 'var(--error-soft)' : 'var(--success-soft)',
+            color: updateCheckProgress.phase === 'error' ? 'var(--error-color)' : 'var(--success-color)',
+            border: `1px solid ${updateCheckProgress.phase === 'error' ? 'color-mix(in srgb, var(--error-color) 38%, transparent)' : 'color-mix(in srgb, var(--success-color) 38%, transparent)'}`
           }}>
             {updateCheckProgress.status}
           </div>
@@ -31939,15 +31888,9 @@ const DashboardTiles = {
         <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
           Found a bug or have a feature request? Please submit it to our GitHub Issues page.
         </p>
-        <div style={{ 
-          padding: '1rem', 
-          backgroundColor: 'var(--card-bg)', 
-          border: '1px solid var(--border-color)', 
-          borderRadius: '8px',
-          marginBottom: '1rem'
-        }}>
+        <div className="nx-sys-tile nx-sys-panel">
           <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}><FileText size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> Before Reporting</h3>
-          <ol style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', paddingLeft: '1.5rem', margin: 0 }}>
+          <ol className="nx-sys-steps">
             <li>Download diagnostics using the button above (<Wrench size={12} style={{verticalAlign: 'middle'}} /> Download Diagnostics)</li>
             <li>Check existing issues to avoid duplicates</li>
             <li>Include your NeXroll version: <strong>{systemVersion?.api_version || 'unknown'}</strong></li>
@@ -31961,7 +31904,7 @@ const DashboardTiles = {
             target="_blank" 
             rel="noopener noreferrer"
             className="button"
-            style={{ textDecoration: 'none', backgroundColor: '#dc3545' }}
+            style={{ textDecoration: 'none', backgroundColor: 'var(--error-color)' }}
           >
             <Bug size={14} style={{marginRight: '0.35rem'}} /> Report a Bug
           </a>
@@ -31970,7 +31913,7 @@ const DashboardTiles = {
             target="_blank" 
             rel="noopener noreferrer"
             className="button"
-            style={{ textDecoration: 'none', backgroundColor: '#28a745' }}
+            style={{ textDecoration: 'none', backgroundColor: 'var(--success-color)' }}
           >
             <Lightbulb size={14} style={{marginRight: '0.35rem'}} /> Request a Feature
           </a>
@@ -31987,8 +31930,8 @@ const DashboardTiles = {
       </div>
 
       {/* Danger Zone — Factory Reset */}
-      <div className="card" style={{ border: '1px solid rgba(239,68,68,0.4)' }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444' }}>
+      <div className="card" style={{ border: '1px solid color-mix(in srgb, var(--error-color) 42%, transparent)' }}>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--error-color)' }}>
           <AlertTriangle size={20} /> Danger Zone
         </h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1rem' }}>
@@ -32000,7 +31943,7 @@ const DashboardTiles = {
         </p>
         <button
           className="button"
-          style={{ backgroundColor: '#dc2626', borderColor: '#dc2626' }}
+          style={{ backgroundColor: 'var(--error-color)', borderColor: 'var(--error-color)' }}
           onClick={() => setFactoryReset({ open: true, wipeTrailers: false, wipePrerolls: false, wipeProvider: false, confirm: '', busy: false })}
         >
           <Trash2 size={14} style={{ marginRight: '0.35rem' }} /> Factory Reset…
@@ -32021,7 +31964,7 @@ const DashboardTiles = {
           style={{ maxWidth: '520px', width: '100%', maxHeight: '90vh', overflowY: 'auto', border: '1px solid rgba(239,68,68,0.5)', margin: 0 }}
           onClick={e => e.stopPropagation()}
         >
-          <h3 id="factory-reset-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444', marginTop: 0 }}>
+          <h3 id="factory-reset-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--error-color)', marginTop: 0 }}>
             <AlertTriangle size={18} /> Factory Reset
           </h3>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 0.5rem' }}>
@@ -32056,7 +31999,7 @@ const DashboardTiles = {
             <button className="button button-secondary" disabled={factoryReset.busy} onClick={() => setFactoryReset(prev => ({ ...prev, open: false }))}>Cancel</button>
             <button
               className="button"
-              style={{ backgroundColor: '#dc2626', borderColor: '#dc2626', opacity: (factoryReset.confirm.trim().toUpperCase() === 'RESET' && !factoryReset.busy) ? 1 : 0.5 }}
+              style={{ backgroundColor: 'var(--error-color)', borderColor: 'var(--error-color)', opacity: (factoryReset.confirm.trim().toUpperCase() === 'RESET' && !factoryReset.busy) ? 1 : 0.5 }}
               disabled={factoryReset.confirm.trim().toUpperCase() !== 'RESET' || factoryReset.busy}
               onClick={handleFactoryReset}
             >
@@ -35642,7 +35585,6 @@ const DashboardTiles = {
         apiUrl={apiUrl}
         darkMode={darkMode}
         onFinish={() => { setNeedsOnboarding(false); checkAuthStatus(); }}
-        onDeepLink={(tab) => { setNeedsOnboarding(false); setActiveTab(tab); checkAuthStatus(); }}
       />
     );
   }
@@ -36259,16 +36201,26 @@ const DashboardTiles = {
             {darkMode ? <Sun size={15} /> : <Moon size={15} />}
           </button>
 
-          <a
-                href={NEXROLL_WIKI_URL}
+          {(() => {
+            // Help follows the page you are on: Schedules opens the scheduling
+            // guide, Connect opens the connection guide, and so on.
+            const page = wikiPageForTab(activeTab);
+            const label = page
+              ? `Help for this page (${page.split('#')[0].replace(/-/g, ' ')})`
+              : 'Open the NeXroll wiki';
+            return (
+              <a
+                href={wikiUrlForTab(activeTab)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="nx-iconbtn nx-focus-help"
-                aria-label="Open the NeXroll wiki"
-                title="Open the NeXroll wiki"
+                aria-label={label}
+                title={label}
               >
                 <HelpCircle size={15} />
-          </a>
+              </a>
+            );
+          })()}
           {/* Account cluster: exactly one user marker (the initials avatar) plus
               a Log out button, on every page. The dashboard used to be excluded
               from this block, which left signed-in users with no way to sign

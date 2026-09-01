@@ -6032,10 +6032,21 @@ body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 
   box-shadow: 0 6px 22px color-mix(in srgb, var(--shadow) 55%, transparent);
 }
 .nx-dash-page .nx-dash-grid > .nx-tile > .card::before { display: none; }
-.nx-dash-page .nx-focus-tile > div:last-child {
+/* Let a tile's last block size to its content. It must not apply to a scroll
+   container: .nx-upcoming-list is the last child of the Upcoming schedules
+   tile, and forcing overflow:visible on it left the list capped at its
+   max-height while the rows past that cap painted outside the card. */
+.nx-dash-page .nx-focus-tile > div:last-child:not(.nx-upcoming-list) {
   flex: 0 1 auto;
   min-height: auto;
   overflow: visible;
+}
+/* min-height:0 is what actually lets a flex item shrink below its content and
+   scroll; without it the list would push the card open again. */
+.nx-dash-page .nx-focus-tile > .nx-upcoming-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .nx-dash-page.density-compact { gap: 0.75rem; }
 .nx-dash-page.density-compact .nx-dash-grid { gap: 8px; }
@@ -8873,6 +8884,73 @@ body.light :is(.nx-nexup-sync-card,.nx-nexup-connection-card,.nx-nexup-upcoming 
 .nx-ap-command select { min-height: 33px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--input-bg); color: var(--text-color); font-size: 12px; }
 .nx-ap-upcoming .nx-ap-command { margin-bottom: 10px; }
 .nx-ap-upcoming-list { overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--raised-bg); }
+
+/* Poster views for Upcoming releases and downloaded trailers. The grid tracks a
+   2:3 poster, so a row reflows rather than cropping the art. */
+.nx-ap-poster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+}
+.nx-ap-poster-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--raised-bg);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.nx-ap-poster-card:hover { border-color: color-mix(in srgb, var(--accent-color) 55%, var(--border-color)); transform: translateY(-2px); }
+.nx-ap-poster-card.selected { border-color: var(--accent-color); box-shadow: 0 0 0 1px var(--accent-color) inset; }
+.nx-ap-poster-card.excluded, .nx-ap-poster-card.disabled { opacity: 0.55; }
+
+.nx-ap-poster-art { position: relative; aspect-ratio: 2 / 3; background: #0d0f12; overflow: hidden; }
+.nx-ap-poster-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.nx-ap-poster-fallback {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 7px; width: 100%; height: 100%; padding: 12px;
+  color: var(--text-muted, var(--text-secondary));
+  background: var(--hover-bg);
+  text-align: center;
+}
+.nx-ap-poster-fallback span { font-size: 11px; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+
+.nx-ap-poster-state {
+  position: absolute; top: 7px; left: 7px;
+  padding: 2px 7px; border-radius: 999px;
+  background: rgba(12, 13, 15, 0.78); color: #fff;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+  backdrop-filter: blur(3px);
+}
+.nx-ap-poster-state.is-ready { background: rgba(34, 197, 94, 0.9); }
+.nx-ap-poster-state.is-missing { background: rgba(245, 158, 11, 0.9); }
+.nx-ap-poster-state.is-unavailable { background: rgba(12, 13, 15, 0.8); }
+
+.nx-ap-poster-play {
+  position: absolute; inset: 50% auto auto 50%;
+  width: 38px; height: 38px; transform: translate(-50%, -50%);
+  display: grid; place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 50%;
+  background: rgba(12, 13, 15, 0.68); color: #fff;
+  opacity: 0; cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.nx-ap-poster-card:hover .nx-ap-poster-play,
+.nx-ap-poster-play:focus-visible { opacity: 1; }
+
+.nx-ap-poster-meta { display: flex; flex-direction: column; gap: 2px; padding: 9px 10px 0; min-width: 0; }
+.nx-ap-poster-meta strong { font-size: 12.5px; color: var(--text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-ap-poster-meta span { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-ap-poster-actions { display: flex; align-items: center; gap: 6px; padding: 9px 10px 10px; margin-top: auto; }
+.nx-ap-poster-actions .nx-ap-btn { flex: 1 1 auto; justify-content: center; }
+.nx-ap-poster-actions .nx-ap-btn.square { flex: 0 0 auto; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-ap-poster-card, .nx-ap-poster-play { transition: none; }
+  .nx-ap-poster-card:hover { transform: none; }
+  .nx-ap-poster-play { opacity: 1; }
+}
+
 .nx-ap-upcoming-list > article { min-height: 66px; display: grid; grid-template-columns: 90px minmax(180px,1fr) 110px 96px 75px 118px; align-items: center; gap: 9px; padding: 8px 10px; border-bottom: 1px solid var(--border-color); }
 .nx-ap-upcoming-list > article:last-child { border-bottom: 0; }
 .nx-ap-upcoming-list > article.excluded { opacity: .55; }
@@ -9649,7 +9727,9 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 11px;
-  align-items: start;
+  /* stretch, not start: Information and Updates share row 1, and letting the
+     shorter card stop early left their bottom edges ragged against each other. */
+  align-items: stretch;
 }
 .nx-settings-system > div > .card:nth-child(1) { grid-column: 1; grid-row: 1; }
 .nx-settings-system > div > .card:nth-child(2) { display: none; }
@@ -9658,6 +9738,81 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
 .nx-settings-system > div > .card:nth-child(n+5) { grid-column: 1 / -1; }
 .nx-settings-system > div > .card:nth-child(3) > div { gap: 7px !important; }
 .nx-settings-system > div > .card:nth-child(3) > div > div { min-height: 54px; padding: 8px 10px !important; }
+
+/* System page tiles. The page was built from inline styles with nine different
+   font sizes, three grid track widths, and fifty hardcoded colour literals, so
+   it read a size larger than the rest of Settings and kept Bootstrap greens and
+   reds whichever theme was selected. These classes give it the same type scale
+   and tokens as the other Settings routes, and one track width so the
+   Information and Updates columns line their tiles up with each other. */
+.nx-settings-system {
+  --nx-sys-track: 176px;       /* Information / Updates tiles */
+  --nx-sys-track-stat: 124px;  /* Library Statistics squares */
+}
+.nx-settings-system .nx-sys-tile,
+.nx-settings-system .nx-sys-row {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--raised-bg, var(--hover-bg));
+}
+.nx-settings-system .nx-sys-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 74px;
+  padding: 9px 12px;
+}
+.nx-settings-system .nx-sys-tile.is-stat { align-items: center; justify-content: center; text-align: center; gap: 2px; }
+.nx-settings-system .nx-sys-tile.is-stat > svg { margin-bottom: 2px !important; width: 17px; height: 17px; }
+
+.nx-settings-system .nx-sys-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+  color: var(--accent-color);
+  font-size: 12px;
+  font-weight: 600;
+}
+.nx-settings-system .nx-sys-tile-head > svg { width: 14px; height: 14px; }
+.nx-settings-system .nx-sys-tile-head span { font-weight: 600 !important; }
+
+.nx-settings-system .nx-sys-value {
+  color: var(--text-color);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.nx-settings-system .nx-sys-value-inline { display: flex; align-items: center; gap: 6px; }
+.nx-settings-system .nx-sys-value-inline > svg { width: 15px; height: 15px; }
+.nx-settings-system .nx-sys-note { color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
+.nx-settings-system .nx-sys-note.is-fine { font-size: 10.5px; color: var(--text-muted); }
+
+.nx-settings-system .nx-sys-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 11px;
+}
+.nx-settings-system .nx-sys-row-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.nx-settings-system .nx-sys-row.is-wrap { justify-content: flex-start; gap: 14px; }
+
+/* Full-width explanatory panel (Report Issues) shares the tile surface but is a
+   block of prose, not a stat, so it opts out of the tile's min-height. */
+.nx-settings-system .nx-sys-tile.nx-sys-panel { min-height: 0; gap: 0; padding: 11px 13px; margin-bottom: 11px; }
+.nx-settings-system .nx-sys-panel h3 { margin: 0 0 7px; font-size: 12px; font-weight: 600; color: var(--text-color); }
+.nx-settings-system .nx-sys-panel h3 svg { width: 13px; height: 13px; }
+.nx-settings-system .nx-sys-steps { margin: 0; padding-left: 17px; color: var(--text-secondary); font-size: 11px; line-height: 1.7; }
+.nx-settings-system .nx-sys-steps strong { color: var(--text-color); }
+.nx-settings-system > div > .card > p { font-size: 11px !important; color: var(--text-secondary) !important; }
+.nx-settings-system .nx-sys-row-name { color: var(--text-color); font-size: 12px; font-weight: 600; }
+
+/* Both row-1 cards share a body rhythm so their tiles sit on the same lines. */
+.nx-settings-system > div > .card > div[style*="grid"] { gap: 9px !important; margin-bottom: 11px !important; }
+.nx-settings-system > div > .card > div[style*="grid"]:last-child { margin-bottom: 0 !important; }
 
 body.light .nx-content-settings .nx-route-summary > div,
 body.light .nx-settings .card,

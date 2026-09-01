@@ -265,6 +265,10 @@ class Setting(Base):
     # Existing (v1.x) databases are marked complete during migration so upgraders
     # are never forced through the wizard.
     onboarding_complete = Column(Boolean, default=False)
+    # Set when the user asks to run the wizard again from Settings. Kept separate
+    # from onboarding_complete because a re-run happens on a configured install,
+    # where the "no prior configuration" test for a first run no longer holds.
+    onboarding_restart_requested = Column(Boolean, default=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
     override_expires_at = Column(DateTime, nullable=True)
     path_mappings = Column(Text, nullable=True)  # JSON list of {"local": "...", "plex": "..."} path prefix mappings

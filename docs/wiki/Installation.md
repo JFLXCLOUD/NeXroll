@@ -152,7 +152,7 @@ NeXroll is available in Unraid Community Applications.
 4. Configure paths and ports
 5. Click **Apply**
 
-See [Docker Setup](Docker#unraid) for Unraid-specific configuration.
+See [Docker Setup](Docker#unraid-installation) for Unraid-specific configuration.
 
 ---
 

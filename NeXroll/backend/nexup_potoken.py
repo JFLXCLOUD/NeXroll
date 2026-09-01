@@ -321,6 +321,51 @@ class POTokenManager:
                     self._log(f"[potoken] error stopping provider: {e}")
             self._proc = None
 
+    def stop_any(self, server_dir: Optional[str] = None) -> int:
+        """Stop the provider even when this process did not start it.
+
+        stop() only knows about a child it spawned, so a server left running by
+        an earlier NeXroll (or adopted from one) survives a restart and keeps the
+        provider directory open. On Windows that alone is enough to make a
+        reinstall fail: the old files can be neither removed nor renamed. Match
+        node processes by the script path they were launched with, so nothing
+        unrelated is ever touched.
+
+        Returns the number of processes stopped.
+        """
+        self.stop()
+        target = os.path.normcase(os.path.abspath(str(server_dir or self.server_dir() or "")))
+        if not target:
+            return 0
+        try:
+            import psutil
+        except Exception:
+            return 0
+
+        stopped = []
+        for proc in psutil.process_iter(["name", "cmdline"]):
+            try:
+                if not (proc.info.get("name") or "").lower().startswith("node"):
+                    continue
+                args = [a for a in (proc.info.get("cmdline") or [])[1:] if isinstance(a, str)]
+                if not any(os.path.normcase(os.path.abspath(a)).startswith(target) for a in args):
+                    continue
+                proc.terminate()
+                stopped.append(proc)
+            except Exception:
+                continue
+
+        if stopped:
+            _gone, alive = psutil.wait_procs(stopped, timeout=6)
+            for proc in alive:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            self._log(f"[potoken] stopped {len(stopped)} orphaned provider process(es)")
+        self._adopted = False
+        return len(stopped)
+
     def ensure_running(self) -> Dict[str, Any]:
         """Start the provider if it isn't healthy (cheap to call repeatedly)."""
         if self.is_healthy():
@@ -348,6 +393,10 @@ class POTokenManager:
             # Usable means yt-dlp will actually get tokens: plugin importable AND
             # a healthy server to talk to.
             "usable": bool(is_plugin_installed() and healthy),
+            # Whether the dependency is present, as distinct from whether the
+            # server happens to be running right now. The UI offers "Install"
+            # against this, so a configured install must never report False.
+            "installed": bool(is_plugin_installed() and bool(sdir)),
             "log_path": self.log_path,
             # When the provider isn't healthy, surface the server's own log tail so
             # the crash reason (e.g. canvas/VC++ load failure) is visible directly.

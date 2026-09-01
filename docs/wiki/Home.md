@@ -8,19 +8,42 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
-## What's New in v2.0.4
+## What's New in v2.2.0
 
-NeXroll v2 is a top-to-bottom modernization of the app. The v2.0.1-v2.0.4 maintenance releases also improve scheduler reliability, diagnostics, thumbnails, and Jellyfin/Emby sequence playback.
+### Scheduling
 
-### v2.0.4 maintenance highlights
+- **Holiday schedules land on the actual holiday.** Dates are derived from the next upcoming occurrence when you save, and roll into next year once this year's has passed. Country and holiday are now pickers showing what will really resolve, instead of free text matched by exact name.
+- **Conflicts and overlap on the calendar.** A banner counts open conflicts in the next 30 days and links to the Conflicts page, and each schedule shows whether it is Exclusive or Blends.
+- Disabled schedules no longer appear on the calendar as though they will run.
 
-- **More reliable schedules** — schedule evaluation consistently uses the timezone selected in NeXroll, and holiday lookups retain last-known-good data during temporary API outages.
-- **Correct holiday dates** — known fixed-date holidays use their actual calendar date instead of an alternate observed date, with safer exact-name matching.
-- **Jellyfin/Emby sequence fixes** — manually applied sequences, including sequences with NeX-Up trailers, are now returned to the media-server plugins during the manual-apply window.
-- **Better diagnostics** — diagnostic bundles now include scheduler activity and the event log used for plugin, scheduling, and NeX-Up decisions.
-- **Thumbnail and log display fixes** — thumbnails work when prerolls live outside the data directory, and log timestamps render in the viewer's local time.
+### NeX-Up and the Generator Studio
 
-### v2 platform highlights
+- **Poster views** for Upcoming releases and Your Trailers, alongside list and calendar.
+- **Trailer storage in first-run setup**, on both Windows and Docker, with a check telling you whether your media server will actually be able to open files there.
+- **Animated theme backdrops** in rendered Coming Soon lists, not just in the preview.
+- **Text size and per-role colours** — heading, titles, dates, and "Available Now!" each have their own control.
+- **Match a preroll's length to its soundtrack**, so an uploaded track plays in full.
+- Sequence Builder gained controls for how many prerolls a category block plays and in what order; generated content is one block type instead of two.
+
+### Community Prerolls
+
+- **Multi-select and bulk download**, paced to stay polite to the community server.
+- Duration and file size are resolved on demand instead of always reading "Unknown".
+
+### Setup and recovery
+
+- **Path Mappings in first-run setup** for Docker installs, with your real container mounts offered as one-click choices.
+- **Sign in with Plex from inside the wizard**, rather than being sent away from it.
+- **Run Setup Wizard** from Settings → System to walk through setup again without resetting anything.
+- **Backups now include every setting** — connections, path mappings, NeX-Up and generator defaults, dashboard layout — so a restore on a new machine comes back configured. System backups also carry generated prerolls and brand assets.
+
+### Fixed
+
+- Trailer downloads on the Windows installer, which shipped a five-month-old yt-dlp that YouTube had moved past.
+- The schedule wizard creating the schedule when you clicked Continue.
+- The PO-token provider offering "Install" when it was already installed, and repairing itself if a previous install left it broken.
+
+## Platform highlights (v2)
 
 - **New "Arr-style" interface** — a collapsible sidebar with built-in search and per-section accent colors, a redesigned dashboard with quick-action tiles, and a **first-run onboarding wizard**. Every page is deep-linkable, so the URL always reflects where you are (refresh-safe, Back/Forward works).
 - **Community Prerolls** — search and **Browse** the Typical Nerds community library by category, platform, creator, and upload date, with **pagination**, and download prerolls in one click (optionally straight into a category).
@@ -140,11 +163,15 @@ Search for "NeXroll" in Community Applications
 - [Getting Started](https://github.com/JFLXCLOUD/NeXroll/wiki/Getting-Started)
 - [Docker Setup](https://github.com/JFLXCLOUD/NeXroll/wiki/Docker)
 - [Configuration](https://github.com/JFLXCLOUD/NeXroll/wiki/Configuration)
+- [Connect (Plex, Jellyfin, Emby)](https://github.com/JFLXCLOUD/NeXroll/wiki/Connect)
+- [Dashboard](https://github.com/JFLXCLOUD/NeXroll/wiki/Dashboard)
+- [Preroll Library](https://github.com/JFLXCLOUD/NeXroll/wiki/Preroll-Library)
 - [Scheduling Guide](https://github.com/JFLXCLOUD/NeXroll/wiki/Scheduling)
 - [NeX-Up (Trailers)](https://github.com/JFLXCLOUD/NeXroll/wiki/NeX-Up)
 - [Community Prerolls](https://github.com/JFLXCLOUD/NeXroll/wiki/Community-Prerolls)
 - [Sequences](https://github.com/JFLXCLOUD/NeXroll/wiki/Sequences)
 - [Path Mappings](https://github.com/JFLXCLOUD/NeXroll/wiki/Path-Mappings)
+- [Backup and Restore](https://github.com/JFLXCLOUD/NeXroll/wiki/Backup-and-Restore)
 - [API Documentation](https://github.com/JFLXCLOUD/NeXroll/wiki/API)
 - [Troubleshooting](https://github.com/JFLXCLOUD/NeXroll/wiki/Troubleshooting)
 - [Jellyfin Setup](https://github.com/JFLXCLOUD/NeXroll/wiki/Jellyfin)

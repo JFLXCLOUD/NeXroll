@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Download,
   Film, FolderOpen, Loader2, Play, Plus, RefreshCw, Search,
+  ImageOff, LayoutGrid, Rows3,
   Sparkles, ToggleLeft, ToggleRight, Trash2, Tv, Upload, Video, X
 } from 'lucide-react';
 import NeXUpGeneratorStudio from './NeXUpGeneratorStudio';
@@ -42,6 +43,21 @@ const formatDuration = trailer => {
 };
 
 const titleForTrailer = trailer => trailer?.title || trailer?.movie_title || trailer?.series_title || trailer?.filename || 'Untitled trailer';
+
+// Poster artwork comes from Radarr/Sonarr as a remote TMDB URL. A title can
+// legitimately have none, and a URL can fail to load, so both cases fall back to
+// a labelled placeholder rather than a broken image.
+function Poster({ url, title, children }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="nx-ap-poster-art">
+      {url && !failed
+        ? <img src={url} alt="" loading="lazy" onError={() => setFailed(true)} />
+        : <div className="nx-ap-poster-fallback"><ImageOff size={22} /><span>{title}</span></div>}
+      {children}
+    </div>
+  );
+}
 
 function Badge({ tone = '', children }) {
   return <span className={`nx-ap-badge${tone ? ` ${tone}` : ''}`}>{children}</span>;
@@ -157,7 +173,13 @@ function UpcomingPage(props) {
     onToggleExclude, onNavigate, movieTrailers, tvTrailers, onPlayTrailer,
   } = props;
   const [source, setSource] = useState(upcomingTab === 'shows' ? 'shows' : 'movies');
-  const [view, setView] = useState(upcomingTab === 'calendar' ? 'calendar' : 'list');
+  const [view, setView] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nexupUpcomingView');
+      if (saved === 'posters') return 'posters';
+    } catch (_) { /* storage unavailable; fall through to the tab */ }
+    return upcomingTab === 'calendar' ? 'calendar' : 'list';
+  });
   const [search, setSearch] = useState('');
   const [windowDays, setWindowDays] = useState('90');
   const [trailerState, setTrailerState] = useState('all');
@@ -185,15 +207,29 @@ function UpcomingPage(props) {
   };
   const selectView = next => {
     setView(next);
+    try { localStorage.setItem('nexupUpcomingView', next); } catch (_) { /* not fatal */ }
     if (next === 'calendar') setUpcomingTab('calendar'); else setUpcomingTab(source);
   };
   const today = new Date();
   const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7));
   const weekDays = Array.from({ length: 7 }, (_, index) => new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + index));
+  // Every comparison here has to reject undefined on both sides. The previous
+  // version OR'd all three id checks unguarded, so on the Movies tab
+  // `trailer.sonarr_series_id === item.sonarr_id` compared undefined to
+  // undefined, matched the first trailer in the collection, and every Preview
+  // played that same one. Season number matters too: a series can have a
+  // separate trailer per season.
+  const sameId = (a, b) => a != null && b != null && a === b;
   const playFor = item => {
-    const collection = source === 'movies' ? movieTrailers : tvTrailers;
-    const match = collection.find(trailer => trailer.id === item.trailer_db_id || trailer.radarr_movie_id === item.radarr_id || trailer.sonarr_series_id === item.sonarr_id);
-    if (match) onPlayTrailer({ type: source === 'movies' ? 'movie' : 'tv', trailer: match });
+    const isMovies = source === 'movies';
+    const collection = isMovies ? movieTrailers : tvTrailers;
+    const match = collection.find(trailer => {
+      if (sameId(trailer.id, item.trailer_db_id)) return true;
+      if (isMovies) return sameId(trailer.radarr_movie_id, item.radarr_id);
+      if (!sameId(trailer.sonarr_series_id, item.sonarr_id)) return false;
+      return item.season_number == null || trailer.season_number === item.season_number;
+    });
+    if (match) onPlayTrailer({ type: isMovies ? 'movie' : 'tv', trailer: match });
   };
   const downloadFor = item => source === 'movies'
     ? onDownloadMovie(item.radarr_id, item.title)
@@ -220,8 +256,40 @@ function UpcomingPage(props) {
   return (
     <div className="nx-ap-page nx-ap-upcoming" data-nexup-page="upcoming">
       <section className="nx-ap-panel">
-        <header className="nx-ap-panel-head"><div><strong>Release calendar</strong><span>{formatDate(weekDays[0])} - {formatDate(weekDays[6])}</span></div><div><div className="nx-ap-segmented"><button type="button" className={source === 'movies' ? 'active' : ''} onClick={() => selectSource('movies')}>Movies ({upcomingMovies.length})</button><button type="button" className={source === 'shows' ? 'active blue' : ''} onClick={() => selectSource('shows')}>TV shows ({upcomingShows.length})</button></div><div className="nx-ap-segmented"><button type="button" className={view === 'list' ? 'active' : ''} onClick={() => selectView('list')}>List</button><button type="button" className={view === 'calendar' ? 'active' : ''} onClick={() => selectView('calendar')}>Calendar</button></div></div></header>
-        {view === 'calendar' ? calendarGrid() : (
+        <header className="nx-ap-panel-head"><div><strong>Release calendar</strong><span>{formatDate(weekDays[0])} - {formatDate(weekDays[6])}</span></div><div><div className="nx-ap-segmented"><button type="button" className={source === 'movies' ? 'active' : ''} onClick={() => selectSource('movies')}>Movies ({upcomingMovies.length})</button><button type="button" className={source === 'shows' ? 'active blue' : ''} onClick={() => selectSource('shows')}>TV shows ({upcomingShows.length})</button></div><div className="nx-ap-segmented"><button type="button" className={view === 'list' ? 'active' : ''} onClick={() => selectView('list')}>List</button><button type="button" className={view === 'posters' ? 'active' : ''} onClick={() => selectView('posters')}>Posters</button><button type="button" className={view === 'calendar' ? 'active' : ''} onClick={() => selectView('calendar')}>Calendar</button></div></div></header>
+        {view === 'calendar' ? calendarGrid() : view === 'posters' ? (
+          <div className="nx-ap-panel-body" data-upcoming-view="posters">
+            <div className="nx-ap-command"><label><Search size={13} /><input aria-label="Search upcoming" value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search upcoming ${source === 'movies' ? 'movies' : 'shows'}...`} /></label><select aria-label="Release window" value={windowDays} onChange={event => setWindowDays(event.target.value)}><option value="30">Next 30 days</option><option value="90">Next 90 days</option><option value="365">This year</option><option value="all">All dates</option></select><select aria-label="Trailer state" value={trailerState} onChange={event => setTrailerState(event.target.value)}><option value="all">All trailer states</option><option value="ready">Ready</option><option value="missing">Missing</option><option value="unavailable">Unavailable</option></select><select aria-label="List state" value={listState} onChange={event => setListState(event.target.value)}><option value="included">In list only</option><option value="excluded">Excluded only</option><option value="all">All items</option></select></div>
+            {!connected
+              ? <EmptyState icon={source === 'movies' ? Video : Tv} title={`${source === 'movies' ? 'Radarr' : 'Sonarr'} is not connected`} copy="Connect this service before loading upcoming releases." action={() => onNavigate('nexup')} actionLabel="Go to Connections" />
+              : filtered.length === 0
+                ? <EmptyState icon={CalendarDays} title="No upcoming releases found" copy="Try another filter or refresh the connected service." />
+                : <div className="nx-ap-poster-grid">{filtered.map((item, index) => {
+                    const downloaded = Boolean(item.downloaded);
+                    const sourceId = source === 'movies' ? item.radarr_id : `${item.sonarr_id}-${item.season_number || 1}`;
+                    const isDownloading = downloadingId === sourceId || downloadingId === `tv_${sourceId}`;
+                    const state = downloaded ? 'Ready' : item.trailer_url || source === 'shows' ? 'Missing' : 'Unavailable';
+                    return (
+                      <article key={sourceId || index} className={`nx-ap-poster-card${item.excluded_from_list ? ' excluded' : ''}`}>
+                        <Poster url={item.poster_url} title={item.title || 'Untitled'}>
+                          <span className={`nx-ap-poster-state is-${state.toLowerCase()}`}>{state}</span>
+                          {downloaded && <button type="button" className="nx-ap-poster-play" onClick={() => playFor(item)} aria-label={`Preview ${item.title || 'trailer'}`}><Play size={17} /></button>}
+                        </Poster>
+                        <div className="nx-ap-poster-meta">
+                          <strong title={item.title || 'Untitled'}>{item.title || 'Untitled'}</strong>
+                          <span>{formatDate(item.release_date || item.air_date).replace(/, \d{4}$/, '')}{source === 'shows' ? ` / Season ${item.season_number || 1}` : ''}</span>
+                        </div>
+                        <div className="nx-ap-poster-actions">
+                          {downloaded
+                            ? <button type="button" className="nx-ap-btn" onClick={() => playFor(item)}>Preview</button>
+                            : <button type="button" className="nx-ap-btn" disabled={isDownloading || (!item.trailer_url && source === 'movies')} onClick={() => downloadFor(item)}>{isDownloading ? <Loader2 size={11} className="spin" /> : <Download size={11} />} Download</button>}
+                          {item.trailer_db_id && <button type="button" className={`nx-ap-btn square toggle${item.excluded_from_list ? '' : ' on'}`} title={item.excluded_from_list ? 'Include in list' : 'Exclude from list'} aria-pressed={!item.excluded_from_list} onClick={() => onToggleExclude(item, source === 'movies' ? 'movie' : 'show')}>{item.excluded_from_list ? <ToggleLeft size={15} /> : <ToggleRight size={15} />}</button>}
+                        </div>
+                      </article>
+                    );
+                  })}</div>}
+          </div>
+        ) : (
           <div className="nx-ap-panel-body" data-upcoming-view="list">
             <div className="nx-ap-week-strip">{weekDays.map(day => {
               const key = dateKey(day);
@@ -265,6 +333,13 @@ function TrailersPage(props) {
     if (sort === 'largest') return Number(b.size_bytes || b.file_size_mb || 0) - Number(a.size_bytes || a.file_size_mb || 0);
     return Number(b.created_at || b.downloaded_at || 0) - Number(a.created_at || a.downloaded_at || 0);
   }), [combined, kind, search, sort, usage]);
+  const [layout, setLayout] = useState(() => {
+    try { return localStorage.getItem('nexupTrailerLayout') === 'posters' ? 'posters' : 'table'; } catch (_) { return 'table'; }
+  });
+  const selectLayout = next => {
+    setLayout(next);
+    try { localStorage.setItem('nexupTrailerLayout', next); } catch (_) { /* not fatal */ }
+  };
   const [selectedKey, setSelectedKey] = useState(null);
   useEffect(() => {
     if (!filtered.length) setSelectedKey(null);
@@ -284,12 +359,33 @@ function TrailersPage(props) {
         { label: 'Used', value: usedCount, tone: 'good' },
         { label: 'Storage', value: `${Number(storage?.total_size_gb || storage?.used_gb || 0).toFixed(1)} GB`, tone: 'violet' },
       ]} />
-      <div className="nx-ap-command"><label><Search size={13} /><input aria-label="Search downloaded trailers" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search downloaded trailers..." /></label><select aria-label="Trailer type" value={kind} onChange={event => setKind(event.target.value)}><option value="all">Movies and TV</option><option value="movie">Movies</option><option value="tv">TV shows</option></select><select aria-label="Trailer usage" value={usage} onChange={event => setUsage(event.target.value)}><option value="all">All usage</option><option value="used">Used</option><option value="unused">Unused</option></select><select aria-label="Trailer sort" value={sort} onChange={event => setSort(event.target.value)}><option value="recent">Recently downloaded</option><option value="title">Title</option><option value="largest">Largest files</option></select><button type="button" className={`nx-ap-btn${previewOn ? ' active' : ''}`} onClick={() => setTrailerViewMode(previewOn ? 'list' : 'detailed')}>Preview {previewOn ? 'on' : 'off'}</button></div>
+      <div className="nx-ap-command"><label><Search size={13} /><input aria-label="Search downloaded trailers" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search downloaded trailers..." /></label><select aria-label="Trailer type" value={kind} onChange={event => setKind(event.target.value)}><option value="all">Movies and TV</option><option value="movie">Movies</option><option value="tv">TV shows</option></select><select aria-label="Trailer usage" value={usage} onChange={event => setUsage(event.target.value)}><option value="all">All usage</option><option value="used">Used</option><option value="unused">Unused</option></select><select aria-label="Trailer sort" value={sort} onChange={event => setSort(event.target.value)}><option value="recent">Recently downloaded</option><option value="title">Title</option><option value="largest">Largest files</option></select><div className="nx-ap-segmented"><button type="button" className={layout === 'table' ? 'active' : ''} onClick={() => selectLayout('table')} title="Table view"><Rows3 size={12} /> Table</button><button type="button" className={layout === 'posters' ? 'active' : ''} onClick={() => selectLayout('posters')} title="Poster view"><LayoutGrid size={12} /> Posters</button></div><button type="button" className={`nx-ap-btn${previewOn ? ' active' : ''}`} onClick={() => setTrailerViewMode(previewOn ? 'list' : 'detailed')}>Preview {previewOn ? 'on' : 'off'}</button></div>
       <div className={`nx-ap-trailer-layout${previewOn ? ' has-preview' : ''}`}>
         <section className="nx-ap-panel nx-ap-trailer-table">
           {combined.length === 0 ? <EmptyState icon={Film} title="No downloaded trailers" copy="Connect Radarr or Sonarr, then sync eligible trailers." action={settings.radarr_connected || settings.sonarr_connected ? onSync : () => onNavigate('nexup')} actionLabel={settings.radarr_connected || settings.sonarr_connected ? 'Sync trailers' : 'Go to Connections'} /> : <>
+            {layout === 'posters' ? <div className="nx-ap-poster-grid">{filtered.map(trailer => {
+              const key = `${trailer._kind}-${trailer.id}`;
+              const used = trailer.is_enabled !== false;
+              return (
+                <article key={key} className={`nx-ap-poster-card${selectedKey === key ? ' selected' : ''}${used ? '' : ' disabled'}`} onClick={() => setSelectedKey(key)}>
+                  <Poster url={trailer.poster_url} title={titleForTrailer(trailer)}>
+                    <span className={`nx-ap-poster-state is-${used ? 'ready' : 'unavailable'}`}>{used ? 'Used' : 'Unused'}</span>
+                    <button type="button" className="nx-ap-poster-play" onClick={event => { event.stopPropagation(); onPlayTrailer({ type: trailer._kind, trailer }); }} aria-label={`Play ${titleForTrailer(trailer)}`}><Play size={17} /></button>
+                  </Poster>
+                  <div className="nx-ap-poster-meta">
+                    <strong title={titleForTrailer(trailer)}>{titleForTrailer(trailer)}</strong>
+                    <span>{trailer._kind === 'movie' ? 'Radarr' : 'Sonarr'} / {formatDuration(trailer)} / {formatSize(trailer)}</span>
+                  </div>
+                  <div className="nx-ap-poster-actions">
+                    <button type="button" className={`nx-ap-btn square toggle${used ? ' on' : ''}`} onClick={event => { event.stopPropagation(); toggleSelected(trailer); }} title={used ? 'Disable trailer' : 'Enable trailer'} aria-pressed={used}>{used ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}</button>
+                    <button type="button" className="nx-ap-btn danger square" onClick={event => { event.stopPropagation(); deleteSelected(trailer); }} title={`Delete ${titleForTrailer(trailer)}`}><Trash2 size={12} /></button>
+                  </div>
+                </article>
+              );
+            })}</div> : <>
             <div className="nx-ap-trailer-head"><span>Trailer</span><span>Duration</span><span>Size</span><span>Usage</span><span>Deletes on</span><span /></div>
             {filtered.map(trailer => <article key={`${trailer._kind}-${trailer.id}`} className={`${selectedKey === `${trailer._kind}-${trailer.id}` ? 'selected' : ''}${trailer.is_enabled === false ? ' disabled' : ''}`} onClick={() => setSelectedKey(`${trailer._kind}-${trailer.id}`)}><div className="nx-ap-table-media"><button type="button" onClick={event => { event.stopPropagation(); onPlayTrailer({ type: trailer._kind, trailer }); }} aria-label={`Play ${titleForTrailer(trailer)}`}><Play size={12} /></button><div><strong>{titleForTrailer(trailer)}</strong><span>{trailer._kind === 'movie' ? 'Radarr' : 'Sonarr'} / {formatDate(trailer.downloaded_at || trailer.created_at || trailer.release_date)}</span></div></div><span>{formatDuration(trailer)}</span><span>{formatSize(trailer)}</span><Badge tone={trailer.is_enabled !== false ? 'live' : ''}>{trailer.is_enabled !== false ? 'Used' : 'Unused'}</Badge><span>{trailer.removal_date ? formatDate(trailer.removal_date) : 'Not scheduled'}</span><div className="nx-ap-row-actions"><button type="button" className="nx-ap-btn" onClick={event => { event.stopPropagation(); onPlayTrailer({ type: trailer._kind, trailer }); }}>Play</button><button type="button" className={`nx-ap-btn square toggle${trailer.is_enabled !== false ? ' on' : ''}`} onClick={event => { event.stopPropagation(); toggleSelected(trailer); }} title={trailer.is_enabled !== false ? 'Disable trailer' : 'Enable trailer'} aria-pressed={trailer.is_enabled !== false}>{trailer.is_enabled !== false ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}</button></div></article>)}
+            </>}
             <footer><span>Trailers are automatically removed when media enters your library or reaches its retention limit.</span><button type="button" className="nx-ap-btn" onClick={onManual}><Plus size={11} /> Add manual</button></footer>
           </>}
         </section>
@@ -371,13 +467,20 @@ function SettingsPage(props) {
   const update = (key, parser = value => value) => event => onUpdateSettings({ [key]: parser(event.target.value) });
   const select = (label, key, options, parser) => <div className="nx-ap-control-row"><div><strong>{label[0]}</strong><span>{label[1]}</span></div><select aria-label={label[0]} value={settings[key] ?? options[0][0]} onChange={update(key, parser)}>{options.map(([value, copy]) => <option key={value} value={value}>{copy}</option>)}</select></div>;
   const providerReady = Boolean(potoken?.status?.configured || potoken?.status?.healthy || youtubeSetup?.status?.authenticated);
+  // Whether the dependency is on disk, which is a separate question from whether
+  // the provider server is up. The status payload gained an explicit `installed`
+  // flag; the component parts are the fallback for an older backend.
+  const providerInstalled = Boolean(
+    potoken?.status?.installed
+    ?? (potoken?.status?.plugin_installed && potoken?.status?.provider_present)
+  );
   const usedGb = Number(storage?.total_size_gb || storage?.used_gb || 0);
   const maxGb = Number(settings.max_storage_gb || storage?.max_gb || 5);
   const percent = maxGb > 0 ? Math.min(100, (usedGb / maxGb) * 100) : 0;
   return (
     <div className="nx-ap-page nx-ap-settings" data-nexup-page="settings">
       <div className="nx-ap-settings-grid">
-          <section className="nx-ap-panel"><header className="nx-ap-panel-head"><div><strong>YouTube access</strong><span>Download provider and authentication health</span></div><Badge tone={providerReady ? 'live' : 'warn'}>{providerReady ? 'Ready' : 'Needs setup'}</Badge></header><div className="nx-ap-panel-body"><div className={`nx-ap-health-card${providerReady ? '' : ' warning'}`}><strong>{providerReady ? 'PO-token provider is configured' : 'YouTube access needs attention'}</strong><p>{providerReady ? 'Authenticated trailer downloads are available.' : 'Configure the provider or sign in before downloading protected trailers.'}</p><div><button type="button" className="nx-ap-btn" disabled={potoken.testing} onClick={onTestPotoken}>{potoken.testing ? <Loader2 size={11} className="spin" /> : <Check size={11} />} Test provider</button><button type="button" className="nx-ap-btn" onClick={onConfigureYoutube}>Reconfigure sign-in</button></div></div><div className="nx-ap-control-row"><div><strong>Provider dependency</strong><span>{potoken?.status?.installed ? 'Installed and available.' : 'Required for automatic downloads.'}</span></div>{potoken?.status?.installed ? <Badge tone="live">Installed</Badge> : <button type="button" className="nx-ap-btn" onClick={onInstallPotoken}>Install</button>}</div></div></section>
+          <section className="nx-ap-panel"><header className="nx-ap-panel-head"><div><strong>YouTube access</strong><span>Download provider and authentication health</span></div><Badge tone={providerReady ? 'live' : 'warn'}>{providerReady ? 'Ready' : 'Needs setup'}</Badge></header><div className="nx-ap-panel-body"><div className={`nx-ap-health-card${providerReady ? '' : ' warning'}`}><strong>{providerReady ? 'PO-token provider is configured' : 'YouTube access needs attention'}</strong><p>{providerReady ? 'Authenticated trailer downloads are available.' : 'Configure the provider or sign in before downloading protected trailers.'}</p><div><button type="button" className="nx-ap-btn" disabled={potoken.testing} onClick={onTestPotoken}>{potoken.testing ? <Loader2 size={11} className="spin" /> : <Check size={11} />} Test provider</button><button type="button" className="nx-ap-btn" onClick={onConfigureYoutube}>Reconfigure sign-in</button></div></div><div className="nx-ap-control-row"><div><strong>Provider dependency</strong><span>{providerInstalled ? 'Installed and available.' : 'Required for automatic downloads.'}</span></div>{providerInstalled ? <Badge tone="live">Installed</Badge> : <button type="button" className="nx-ap-btn" onClick={onInstallPotoken}>Install</button>}</div></div></section>
           <section className="nx-ap-panel"><header className="nx-ap-panel-head"><div><strong>Upcoming and retention</strong><span>Eligibility windows and cleanup limits</span></div></header><div className="nx-ap-panel-body">{select(['Upcoming window', 'How far ahead to include media.'], 'days_ahead', [[30, '30 days'], [60, '60 days'], [90, '90 days'], [180, '180 days']], Number)}{select(['Release date preference', 'Date source used for movie eligibility.'], 'release_date_preference', [['digital_first', 'Digital release first'], ['digital_only', 'Digital only'], ['theatrical', 'Theatrical']])}{select(['Maximum stored trailers', 'Oldest unused trailers are removed first.'], 'max_trailers', [[10, '10 trailers'], [25, '25 trailers'], [50, '50 trailers'], [0, 'No limit']], Number)}{select(['Delete trailers after', 'Counted from the release date, or the download if that is later. This deletes the trailer files.'], 'trailer_retention_days', [[7, '7 days'], [14, '14 days'], [30, '30 days'], [0, 'Never delete']], Number)}</div></section>
           <section className="nx-ap-panel"><header className="nx-ap-panel-head"><div><strong>Trailer storage</strong><span>Folder and current utilization</span></div><Badge tone="violet">{usedGb.toFixed(1)} GB</Badge></header><div className="nx-ap-panel-body"><label className="nx-ap-folder-field"><span>Storage folder</span><div><input readOnly value={settings.storage_path || ''} placeholder="Choose a storage folder" /><button type="button" className="nx-ap-btn" onClick={() => onOpenFolder('nexup-storage', settings.storage_path || '')}><FolderOpen size={11} /> Browse</button></div></label><div className="nx-ap-usage"><i><span style={{ width: `${percent}%` }} /></i><strong>{usedGb.toFixed(1)} / {maxGb.toFixed(0)} GB</strong></div></div></section>
           <section className="nx-ap-panel"><header className="nx-ap-panel-head"><div><strong>Rate limits and safety</strong><span>Reduce provider blocks and failed batches</span></div></header><div className="nx-ap-panel-body">{select(['Delay between downloads', 'Longer delays reduce YouTube blocking risk.'], 'download_delay', [[5, '5 seconds / Recommended'], [10, '10 seconds'], [30, '30 seconds']], Number)}{select(['Concurrent downloads', 'Parallel trailer download workers.'], 'max_concurrent', [[1, '1 at a time / Safest'], [2, '2 concurrent']], Number)}{select(['Batch warning', 'Confirm before large download batches.'], 'bulk_warning_threshold', [[5, 'Warn at 5+ trailers'], [10, 'Warn at 10+'], [0, 'Never warn']], Number)}</div></section>

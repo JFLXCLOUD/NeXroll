@@ -52,6 +52,27 @@ Go to the **Settings** tab to configure:
 | **Release Date to Use** | Which date a trailer follows: **Digital First** (default), **Digital Only** (skip movies with no digital date), **Physical First**, or **Theatrical**. Retention is measured from this date, so a trailer is never removed before the movie is out | Digital First |
 | **Include Unmonitored** | Include unmonitored content from Radarr/Sonarr | Disabled |
 
+
+## Upcoming Releases
+
+**NeX-Up → Upcoming** lists what Radarr and Sonarr say is coming, and lets you decide what gets a trailer.
+
+Three views, chosen with the toggle in the panel header:
+
+- **List** — a dense row per title with its release date, trailer state and controls.
+- **Posters** — the same set as artwork, which is faster to scan when you are picking by eye. Titles with no poster art fall back to a labelled placeholder.
+- **Calendar** — a month grid showing what lands on which day.
+
+Filter by search text, release window (30 days, 90 days, this year, all dates), trailer state (ready, missing, unavailable) and list state (included, excluded, all).
+
+Each entry offers:
+
+- **Download** — fetch that trailer now
+- **Preview** — play the trailer once it has been downloaded
+- **Include / exclude toggle** — keep a title out of Coming Soon lists without deleting its trailer
+
+Switching between **Movies** and **TV shows** changes which service is queried.
+
 ## Downloading Trailers
 
 ### Sync Upcoming Releases
@@ -129,6 +150,51 @@ The PO-token provider handles most cases. If you still hit blocks (age-restricte
 - **Use Incognito** when exporting cookies
 - **Re-export cookies** if they expire (typically every few weeks)
 
+
+## Generator Studio
+
+**NeX-Up → Generator** is one workspace for both generators — Coming Soon lists and dynamic prerolls. Pick a mode at the top; everything below is shared.
+
+The two generators are documented in detail in the sections that follow. What they have in common is described here.
+
+### Render settings
+
+| Setting | Options | Notes |
+|---------|---------|-------|
+| **Resolution** | 720p, 1080p, 4K | |
+| **Frame rate** | 24, 30, 60 fps | 24 for a cinematic feel, 60 for smooth motion |
+| **Encoding profile** | Draft, Balanced, High, Master | CRF 24 / 20 / 15 / 12 |
+
+Draft renders fastest and produces the smallest file. Master is archival quality and several times larger. All three settings apply to both generators, and to both the still and animated render paths.
+
+### Themes and typography
+
+A **visual theme** drives the background and the three base colours together — pick one, or choose *Custom colors* to set background, text and accent by hand.
+
+Coming Soon lists additionally expose **per-role colours** so each kind of text can be set independently: heading, titles, dates, and the "available now" marker. Each has an *Inherit* button to fall back to the theme.
+
+**Text size** scales titles and dates. Row spacing follows it, and the list is capped so it always fits the frame no matter how many items you show.
+
+### Logo and QR code
+
+Upload a logo (PNG, JPG or WebP; a transparent PNG works best) and choose its placement:
+
+- **Faded watermark** — low-opacity, behind the content
+- **Right of heading** — beside the title
+- **Below heading** — under the title, above the list
+
+Add a **QR code link** to render a scannable code in the bottom-right corner — useful for pointing viewers at a request form or a "what's on" page. Leave it blank for none.
+
+### Audio
+
+Choose the bundled cinematic track, upload your own, or render silent. Uploaded audio is trimmed to the render length with fades applied at both ends.
+
+If your track does not match the video length, **Match length to the soundtrack** appears once the file is uploaded. Turning it on sets the render duration to the track's length so it plays in full.
+
+### Render confidence
+
+Before rendering, the studio lists what it checked — FFmpeg present, template valid, assets readable, output writable — and blocks the render with a plain reason if something is missing, rather than failing part-way through.
+
 ## Coming Soon List Generator
 
 Generate dynamic video prerolls that showcase your upcoming movies and TV shows from Radarr and Sonarr. These videos automatically display titles, release dates, and poster art.
@@ -146,15 +212,20 @@ In the **Generator** tab, configure your Coming Soon List:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **Layout** | Grid or List mode | Grid |
+| **Layout** | Grid, List, or generate both | Grid |
 | **Content Source** | Movies only, Shows only, or Both | Both |
-| **Duration** | Video length (5-20 seconds) | 10 |
-| **Max Items** | How many titles to display (4-12) | 8 |
-| **Server Name** | Your server name displayed in the header | — |
-| **Background Color** | Background color | #141428 |
-| **Text Color** | Title and text color | #ffffff |
-| **Accent Color** | Accent/highlight color | #00d4ff |
-| **Audio** | Enable/disable background music | Off |
+| **Duration** | Video length in seconds | 10 |
+| **Max Items** | How many titles to display | 8 |
+| **Server Name** | Your server name, shown in the header | — |
+| **Visual theme** | Drives background, text and accent together | Custom colors |
+| **Background / Text / Accent** | Set by hand when no theme is chosen | #141428 / #ffffff / #00d4ff |
+| **Heading / Titles / Dates / Available now** | Per-role colour overrides, each with Inherit | Inherit |
+| **Text size** | Scales titles and dates; row spacing follows | 100% |
+| **QR code link** | Rendered bottom-right; blank for none | — |
+| **Logo** | Watermark, right of heading, or below heading | — |
+| **Audio** | Bundled track, your own upload, or silent | Off |
+
+Resolution, frame rate and encoding profile are shared with the dynamic generator — see [Render settings](#render-settings) above.
 
 ### Generating a Coming Soon List
 
@@ -322,6 +393,46 @@ These categories are used by:
 - Dashboard statistics
 - Filler Category configuration
 - Storage management
+
+
+## NeX-Up Settings
+
+**NeX-Up → Settings** holds everything the automation needs.
+
+### Trailer storage
+
+Where downloaded trailers are written. NeXroll suggests a folder inside your prerolls directory, and the suggestion is deliberate: that is the one location your media server is already able to open, because it is already mounted and already covered by whatever path mapping your prerolls use.
+
+If you choose somewhere else, NeXroll tells you whether the server will actually be able to reach it. A trailer stored where the server cannot open it is the most common way this feature appears broken — the download succeeds, the schedule applies, and nothing plays.
+
+This is also asked during first-run setup, on both Windows and Docker installs.
+
+> The library scanner deliberately skips this folder, so trailers are not indexed a second time as ordinary prerolls.
+
+Changing the path afterwards moves the existing trailers into the new location and updates their entries, so nothing is left behind in the old folder.
+
+### Retention
+
+Trailers are removed automatically once the film enters your library, or once the retention window passes — whichever comes first. Set the window in days, or set it to `0` to keep trailers until you delete them yourself.
+
+### Download behaviour
+
+| Setting | What it controls |
+|---------|------------------|
+| **Quality** | Maximum resolution to fetch |
+| **Days ahead** | How far into the future to look for releases |
+| **Max trailers** | Hard cap on how many are kept |
+| **Max storage** | Hard cap in GB |
+| **Delay between downloads** | How politely requests are paced |
+| **Max concurrent** | How many downloads run at once |
+| **Include unmonitored** | Whether unmonitored Radarr/Sonarr items are eligible |
+| **Release date preference** | Digital, physical or theatrical dates first |
+| **Trailers per playback** | How many trailers a schedule plays at once |
+| **Playback order** | Random or sequential |
+
+### Categories
+
+Choose which category downloaded movie trailers and TV trailers are filed under. NeXroll creates *NeX-Up Movie Trailers* and *NeX-Up TV Trailers* by default.
 
 ## Managing Your Trailers
 

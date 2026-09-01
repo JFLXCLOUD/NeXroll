@@ -147,7 +147,7 @@ from the same page.
 
 ### I removed a preroll but the scan keeps bringing it back
 
-It should not, as of 2.1.0. A preroll removed from the library while its file
+It should not, as of 2.1.0 and later. A preroll removed from the library while its file
 stays on disk is added to an ignore list, so the next scan leaves it alone
 rather than undoing your change. Deliberately re-importing the file clears the
 entry automatically.

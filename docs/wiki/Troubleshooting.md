@@ -369,6 +369,50 @@ New-NetFirewallRule -DisplayName "NeXroll" -Direction Inbound -Port 9393 -Protoc
 2. **Verify tray app is running**: Check Task Manager
 3. **Restart tray app**: From Start Menu or reinstall
 
+## System Page
+
+**Settings → System** is where you check what NeXroll thinks about itself before reporting a problem.
+
+### Version and scheduler
+
+Shows the running version, whether the scheduler thread is alive, the active theme, and NeXroll's install directory. **Show Resolved Paths** prints exactly which folders this install is using for the database, prerolls and thumbnails — worth checking first whenever something is "missing".
+
+### Dependencies
+
+Every external component NeXroll relies on, with its detected version:
+
+| Component | Used for |
+|-----------|----------|
+| Python | The backend runtime |
+| FFmpeg | Video processing and preroll generation |
+| FFprobe | Reading duration, resolution and codec |
+| yt-dlp | YouTube and trailer downloads (NeX-Up) |
+| Deno | JavaScript runtime used during YouTube extraction |
+| PO-token provider | Mints Proof-of-Origin tokens so trailer downloads are not blocked |
+
+A red entry means that feature will not work. Use **Re-check dependencies** after installing something, rather than restarting.
+
+**yt-dlp is bundled in the Windows build.** Updating yt-dlp yourself will not affect NeXroll — use the **Update yt-dlp** button on this page instead. A stale bundled copy is a common cause of trailers failing to download.
+
+**The PO-token provider shows an Install button even though it is installed.**
+Fixed in 2.2.0-beta.5. If the install itself fails with an npm `ENOENT` about a missing `package.json`, the provider folder was left in a broken state by an earlier attempt; from 2.2.0-beta.5 pressing Install repairs it automatically.
+
+### Diagnostics
+
+**Download Diagnostics** produces a bundle with logs, versions, resolved paths and dependency state — with credentials removed. Attach it to a GitHub issue; it answers most of the questions a maintainer would otherwise have to ask.
+
+### Updates
+
+Set how often NeXroll checks for a new version, and whether pre-releases count. **Check for Updates** runs it immediately and reports what it found.
+
+### Danger zone
+
+**Factory reset** empties the database and clears saved connections, returning the install to first-run setup. It can optionally delete downloaded trailers, uploaded prerolls and the PO-token provider from disk. This cannot be undone — take a backup first. See [Backup and Restore](Backup-and-Restore).
+
+To walk through setup again *without* resetting anything, use **Run Setup Wizard** on this page instead.
+
+---
+
 ## Getting Help
 
 ### Check the Logs

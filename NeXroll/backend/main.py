@@ -524,6 +524,8 @@ def ensure_schema() -> None:
             # onboarding_complete=1 whenever there are signs of prior configuration
             # (a configured server, or any prerolls/categories). A genuinely fresh
             # DB leaves it 0 so the wizard shows.
+            if not _sqlite_has_column("settings", "onboarding_restart_requested"):
+                _sqlite_add_column("settings", "onboarding_restart_requested BOOLEAN DEFAULT 0")
             if not _sqlite_has_column("settings", "onboarding_complete"):
                 _sqlite_add_column("settings", "onboarding_complete BOOLEAN DEFAULT 0")
                 try:
@@ -753,6 +755,7 @@ def ensure_settings_schema_now() -> None:
                 "ignored_conflicts": "TEXT",
                 # v2 onboarding wizard completion flag
                 "onboarding_complete": "BOOLEAN",
+                "onboarding_restart_requested": "BOOLEAN",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -3449,6 +3452,29 @@ def install_potoken():
         # --- 2. Provider source + build ---
         provider_root = os.path.join(_potoken_home(), "bgutil-provider")
         server_dir = os.path.join(provider_root, "server")
+
+        # Self-heal a directory left nested by an earlier install. shutil.move()
+        # puts the source *inside* an existing destination instead of replacing
+        # it, so a failed cleanup produced <server>/server/ with the real
+        # package.json one level down -- npm then ran in a directory with no
+        # package.json and stopped with ENOENT.
+        nested = os.path.join(server_dir, "server")
+        if (os.path.isfile(os.path.join(nested, "package.json"))
+                and not os.path.isfile(os.path.join(server_dir, "package.json"))):
+            steps.append("Repairing nested provider directory from a previous install...")
+            _file_log("PO-token: flattening nested bgutil-provider/server/server")
+            try:
+                _mgr = nexup_potoken.get_manager()
+                if _mgr is not None:
+                    _mgr.stop_any(server_dir)
+            except Exception:
+                pass
+            staging = server_dir + ".flatten"
+            shutil.rmtree(staging, ignore_errors=True)
+            os.replace(nested, staging)
+            shutil.rmtree(server_dir, ignore_errors=True)
+            os.replace(staging, server_dir)
+
         if os.path.isfile(os.path.join(server_dir, "build", "main.js")):
             steps.append("Provider already built.")
         else:
@@ -3465,9 +3491,40 @@ def install_potoken():
             if not srcrepo or not os.path.isdir(os.path.join(srcrepo, "server")):
                 return {"success": False, "steps": steps, "message": "Provider download malformed."}
             os.makedirs(provider_root, exist_ok=True)
+            # The provider server may be running out of this very directory and
+            # holding node_modules open, which makes the removal below fail. Stop
+            # it first so the replace can actually happen.
+            try:
+                _mgr = nexup_potoken.get_manager()
+                if _mgr is not None:
+                    killed = _mgr.stop_any(server_dir)
+                    if killed:
+                        steps.append(f"Stopped {killed} running provider process(es).")
+                        time.sleep(1.0)  # let Windows release the file handles
+            except Exception as stop_err:
+                _file_log(f"PO-token: could not stop provider before reinstall: {stop_err}")
+
             if os.path.isdir(server_dir):
                 shutil.rmtree(server_dir, ignore_errors=True)
+            # rmtree above is best-effort, and shutil.move() would silently nest
+            # the new copy inside whatever survived. Refuse to move onto an
+            # existing directory: rename it aside, and if even that fails, say so
+            # instead of producing a half-installed tree.
+            if os.path.exists(server_dir):
+                aside = server_dir + f".old-{int(time.time())}"
+                try:
+                    os.replace(server_dir, aside)
+                    shutil.rmtree(aside, ignore_errors=True)
+                except Exception as move_err:
+                    return {"success": False, "steps": steps,
+                            "message": ("Could not replace the existing provider folder at "
+                                        f"{server_dir} ({move_err}). Close anything using it "
+                                        "(or stop NeXroll) and try again.")}
             shutil.move(os.path.join(srcrepo, "server"), server_dir)
+            if not os.path.isfile(os.path.join(server_dir, "package.json")):
+                return {"success": False, "steps": steps,
+                        "message": (f"Provider files did not land correctly in {server_dir} "
+                                    "(no package.json). Delete that folder and try again.")}
             try:
                 os.remove(tmpzip)
                 shutil.rmtree(extract_to, ignore_errors=True)
@@ -3623,6 +3680,22 @@ def factory_reset(req: FactoryResetRequest, request: Request, db: Session = Depe
         scheduler.start()
     except Exception:
         pass
+
+    # Put the install back at first run explicitly. The wipe alone was not enough:
+    # /onboarding/status also suppresses the wizard when it finds prior config,
+    # and the preroll rescan repopulates that table within seconds of the reset,
+    # so a reset install could land on the dashboard instead of the wizard.
+    try:
+        fresh = db.query(models.Setting).first()
+        if not fresh:
+            fresh = models.Setting()
+            db.add(fresh)
+        fresh.onboarding_complete = False
+        fresh.onboarding_restart_requested = True
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        _file_log(f"factory-reset: could not re-arm onboarding: {e}")
 
     _file_log(f"Factory reset performed. Removed: {', '.join(removed) or 'nothing'}")
     return {"success": True, "removed": removed}
@@ -6078,15 +6151,136 @@ async def onboarding_status(request: Request, db: Session = Depends(get_db)):
     user_count = db.query(models.User).count()
 
     has_prior_config = has_server or preroll_count > 0 or user_count > 0
-    needs_onboarding = (not complete) and (not has_prior_config)
+    # A re-run is deliberate, so it beats both the completion flag and the
+    # prior-config guard; that guard exists only to spare upgraders a wizard
+    # they never asked for.
+    restart_requested = bool(getattr(setting, 'onboarding_restart_requested', False)) if setting else False
+    needs_onboarding = restart_requested or ((not complete) and (not has_prior_config))
 
     return {
-        "onboarding_complete": complete or has_prior_config,
+        "onboarding_complete": (complete or has_prior_config) and not restart_requested,
         "needs_onboarding": needs_onboarding,
+        "is_rerun": restart_requested,
         "has_server": has_server,
         "preroll_count": preroll_count,
         "users_exist": user_count > 0,
+        # Drives the wizard's Docker-only Path Mappings step. Path translation is
+        # the single most common reason a container install "works" but the media
+        # server plays nothing, so first-run is where it belongs.
+        "is_docker": _is_running_in_docker(),
     }
+
+
+def _container_bind_mounts() -> list:
+    """Host directories bind-mounted into this container, newest-looking first.
+
+    Read from /proc/self/mountinfo, whose bind-mount lines name the mount point
+    inside the container. Presenting the user their real mount points beats
+    asking them to recall what they put in their compose file, which is the step
+    Docker newcomers most often get wrong.
+    """
+    if not _is_running_in_docker():
+        return []
+    skip_prefixes = ('/proc', '/sys', '/dev', '/etc/hosts', '/etc/hostname',
+                     '/etc/resolv.conf', '/run', '/var/run', '/tmp')
+    seen, mounts = set(), []
+    try:
+        with open('/proc/self/mountinfo', 'rt') as handle:
+            for line in handle:
+                parts = line.split()
+                if len(parts) < 5:
+                    continue
+                point = parts[4]
+                if point in ('/', '') or point in seen:
+                    continue
+                if any(point == p or point.startswith(p + '/') or point.startswith(p) for p in skip_prefixes):
+                    continue
+                seen.add(point)
+                mounts.append(point)
+    except Exception as e:
+        _file_log(f"[ONBOARDING] Could not read mountinfo: {e}")
+        return []
+    # A shallow mount is more likely to be the media root the user cares about.
+    mounts.sort(key=lambda m: (m.count('/'), m))
+    return mounts[:24]
+
+
+@app.get("/onboarding/docker-info")
+def onboarding_docker_info(db: Session = Depends(get_db)):
+    """Everything the wizard's Path Mappings step needs to explain itself.
+
+    Always accessible: like /onboarding/status this runs before any user exists.
+    """
+    setting = db.query(models.Setting).first()
+    server = None
+    if setting:
+        if getattr(setting, 'plex_url', None) or getattr(setting, 'plex_token', None):
+            server = 'plex'
+        elif getattr(setting, 'jellyfin_url', None):
+            server = 'jellyfin'
+        elif getattr(setting, 'emby_url', None):
+            server = 'emby'
+
+    existing = []
+    try:
+        raw = getattr(setting, 'path_mappings', None) if setting else None
+        if raw:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                existing = [{"local": str(m["local"]), "plex": str(m["plex"])}
+                            for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+    except Exception:
+        existing = []
+
+    # Where NeX-Up should keep downloaded trailers. There is no application
+    # default, so the wizard has to suggest one: inside the prerolls tree, which
+    # is already mounted and already covered by whatever path mapping the media
+    # server uses. That is the one location guaranteed to be playable, and it is
+    # the mistake Docker users most often make -- trailers download fine, then
+    # the server cannot see the files and silently plays nothing.
+    in_docker = _is_running_in_docker()
+    current_nexup = getattr(setting, "nexup_storage_path", None) if setting else None
+    # Inside the prerolls tree on both platforms. The library scanner already
+    # excludes NeX-Up's storage (see _scanner_exclude_trees), so nothing gets
+    # indexed twice, and this is the one place the media server is guaranteed to
+    # reach without a further path mapping.
+    suggested = os.path.join(PREROLLS_DIR, "NeXup")
+
+    return {
+        "is_docker": in_docker,
+        "prerolls_dir": PREROLLS_DIR,
+        "mounts": _container_bind_mounts(),
+        "server_type": server,
+        "mappings": existing,
+        "nexup_storage_path": current_nexup,
+        "nexup_suggested_path": suggested,
+        "nexup_storage_status": _nexup_storage_mapping_status(current_nexup, setting),
+    }
+
+
+@app.get("/nexup/storage-check")
+def nexup_storage_check(path: str, db: Session = Depends(get_db)):
+    """Will the media server be able to play trailers stored at `path`?
+
+    Reachability is the whole question for trailer storage: NeX-Up writes the
+    file, but the server has to open it. A folder inside the prerolls tree is
+    always fine; anywhere else needs an explicit path mapping.
+    """
+    setting = db.query(models.Setting).first()
+    status = _nexup_storage_mapping_status(path, setting)
+    reachable = bool(status.get("under_prerolls_dir") or status.get("covered_by_mapping"))
+    if reachable:
+        detail = ("Inside your prerolls folder, so your media server already reaches it."
+                  if status.get("under_prerolls_dir")
+                  else "Covered by one of your path mappings.")
+    elif status.get("is_docker"):
+        detail = ("Outside your prerolls folder. In a container your media server will not "
+                  "be able to open files here unless you add a path mapping for it - trailers "
+                  "will download but nothing will play.")
+    else:
+        detail = ("Outside your prerolls folder. If your media server runs on another machine "
+                  "it will need a path mapping to reach this location.")
+    return {"path": path, "reachable": reachable, "detail": detail, **status}
 
 
 @app.post("/onboarding/complete")
@@ -6099,12 +6293,36 @@ async def onboarding_complete(request: Request, db: Session = Depends(get_db)):
         setting = models.Setting()
         db.add(setting)
     setting.onboarding_complete = True
+    setting.onboarding_restart_requested = False
     try:
         setting.updated_at = datetime.datetime.utcnow()
     except Exception:
         pass
     db.commit()
     return {"success": True, "onboarding_complete": True}
+
+
+@app.post("/onboarding/restart")
+async def onboarding_restart(request: Request, db: Session = Depends(get_db)):
+    """Send the user back through the first-run wizard.
+
+    Leaving the wizard used to be one-way: /onboarding/complete is what every
+    exit calls, and nothing could unset it, so the only route back was a factory
+    reset. This clears the flag only -- no configuration is touched, so re-running
+    the wizard is safe and shows the current settings rather than a blank slate.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting()
+        db.add(setting)
+    setting.onboarding_restart_requested = True
+    try:
+        setting.updated_at = datetime.datetime.utcnow()
+    except Exception:
+        pass
+    db.commit()
+    _file_log("[ONBOARDING] Wizard re-armed by user request")
+    return {"success": True, "needs_onboarding": True}
 
 
 @app.post("/auth/reset-password")
@@ -15952,6 +16170,185 @@ def rescan_prerolls(
         log_event('ERROR', 'system', f'Preroll rescan failed: {e}', source='rescan_prerolls')
         raise HTTPException(status_code=500, detail=f"Rescan failed: {str(e)}")
 
+def _resolve_nexup_root(setting=None) -> str | None:
+    """Where NeX-Up keeps generated prerolls, trailers and brand assets.
+
+    There is no application-level default for nexup_storage_path -- the user
+    picks it -- so this has to cope with it being unset, which is the case
+    before NeX-Up is configured and again after a factory reset, while generated
+    files may already exist on disk. The sibling scan is case-insensitive on
+    purpose: the Windows convention is "NeXup", and a Linux container will not
+    match that unless we compare case-folded.
+    """
+    from backend.database import DB_PATH
+    candidates = []
+    configured = getattr(setting, "nexup_storage_path", None) if setting else None
+    if configured:
+        candidates.append(str(configured))
+
+    parent = os.path.dirname(DB_PATH)
+    try:
+        for entry in os.listdir(parent):
+            if entry.casefold() == "nexup":
+                candidates.append(os.path.join(parent, entry))
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+def _relink_relocated_prerolls(db, search_root: str) -> int:
+    """Point Preroll rows at files that moved when the install moved.
+
+    The post-restore scanner only walks PREROLLS_DIR, so generated prerolls and
+    Coming Soon lists -- which live under the NeX-Up root -- kept the absolute
+    path from the machine the backup came from. A Windows path never resolves in
+    a Linux container and vice versa, leaving library entries with no file. Match
+    the survivors by filename and rewrite the path.
+    """
+    if not search_root or not os.path.isdir(search_root):
+        return 0
+    by_name = {}
+    for root, _dirs, files in os.walk(search_root):
+        for f in files:
+            by_name.setdefault(f, os.path.join(root, f))
+
+    fixed = 0
+    for preroll in db.query(models.Preroll).all():
+        current = preroll.path
+        if not current or os.path.isfile(current):
+            continue
+        # os.path.basename cannot split a Windows path when running on Linux
+        # (or vice versa), so normalise both separators before taking the name.
+        leaf = str(current).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        found = by_name.get(leaf)
+        if found:
+            preroll.path = found
+            fixed += 1
+    if fixed:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            return 0
+    return fixed
+
+
+# --- Settings in backups -----------------------------------------------------
+# The Settings row carries every connection, credential and preference the app
+# has (129 columns): media server, Radarr/Sonarr, path mappings, dashboard
+# layout, generator defaults, logging, filler. None of it used to be exported,
+# so a "Database Backup" restored on a new machine came back with no server
+# connected and every preference at its default. Worse, restore NULLs the
+# category/sequence columns before deleting those tables and never put them
+# back, so even a same-machine restore silently lost the NeX-Up category, the
+# filler category, the filler sequence and the active category.
+
+# Values that belong to *this* install or to a moment in time, never to a
+# backup. Restoring these would move the target install's identity or replay
+# stale runtime state.
+_SETTINGS_BACKUP_SKIP = frozenset({
+    "id", "updated_at",
+    # Runtime state, rebuilt by the scheduler on its next pass.
+    "active_schedule_id", "applied_sequence_id", "applied_sequence_name",
+    "last_schedule_fallback", "override_expires_at", "filler_active",
+    # Wizard state: a restore must not drag the target into or out of onboarding.
+    "onboarding_complete", "onboarding_restart_requested",
+    # Identity and "when did we last check" bookkeeping.
+    "plex_client_id", "last_seen_version",
+    "update_last_check", "update_dismissed_version",
+    "nexup_last_sync", "nexup_last_sonarr_sync",
+})
+
+# Foreign keys into tables the restore rebuilds. Exported as-is and translated
+# through the id maps the restore already builds for categories and sequences.
+_SETTINGS_CATEGORY_FKS = ("active_category", "nexup_category_id",
+                          "nexup_tv_category_id", "filler_category_id")
+_SETTINGS_SEQUENCE_FKS = ("filler_sequence_id",)
+
+# Absolute paths from the source machine. Kept in the backup (a same-machine
+# restore wants them) but only applied when they actually exist on the target,
+# so restoring onto a different host does not point storage at a missing drive.
+_SETTINGS_PATH_COLUMNS = ("preroll_folder", "nexup_storage_path")
+
+# Exported as ISO strings, so they have to be parsed back before assignment.
+_SETTINGS_DATETIME_COLUMNS = ("community_fair_use_accepted_at",)
+
+
+def _export_settings(setting) -> dict:
+    """Every persisted preference, minus this install's own runtime state.
+
+    Includes credentials: without them a restored install cannot reconnect, and
+    the system ZIP already carries the whole database anyway. The UI labels the
+    download accordingly.
+    """
+    if not setting:
+        return {}
+    out = {}
+    for column in models.Setting.__table__.columns:
+        name = column.name
+        if name in _SETTINGS_BACKUP_SKIP:
+            continue
+        value = getattr(setting, name, None)
+        if isinstance(value, datetime.datetime):
+            value = value.isoformat()
+        elif isinstance(value, datetime.date):
+            value = value.isoformat()
+        out[name] = value
+    return out
+
+
+def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: dict) -> dict:
+    """Apply an exported settings block, translating ids and checking paths.
+
+    Returns a small report so the caller can tell the user what was skipped.
+    """
+    report = {"applied": 0, "skipped_paths": [], "unknown_columns": 0}
+    if not data:
+        return report
+
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting()
+        db.add(setting)
+        db.flush()
+
+    known = {c.name for c in models.Setting.__table__.columns}
+    for name, value in data.items():
+        if name in _SETTINGS_BACKUP_SKIP:
+            continue
+        if name not in known:
+            # A backup from a newer NeXroll can name columns this build lacks.
+            report["unknown_columns"] += 1
+            continue
+
+        if name in _SETTINGS_CATEGORY_FKS:
+            value = category_id_map.get(value) if value is not None else None
+        elif name in _SETTINGS_SEQUENCE_FKS:
+            value = sequence_id_map.get(value) if value is not None else None
+        elif name in _SETTINGS_DATETIME_COLUMNS and isinstance(value, str) and value:
+            # Exported as ISO text; a DateTime column needs it parsed back.
+            try:
+                value = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except ValueError:
+                continue
+        elif name in _SETTINGS_PATH_COLUMNS and value:
+            if not os.path.isdir(str(value)):
+                report["skipped_paths"].append(f"{name}={value}")
+                continue
+
+        try:
+            setattr(setting, name, value)
+            report["applied"] += 1
+        except Exception as e:
+            _file_log(f"restore: could not set settings.{name}: {e}")
+
+    return report
+
+
 @app.get("/backup/database")
 def backup_database(db: Session = Depends(get_db)):
     """Export database to JSON.
@@ -15965,7 +16362,9 @@ def backup_database(db: Session = Depends(get_db)):
     """
     try:
         data = {
-            "schema_version": 3,  # v3 includes preroll IDs for safe reference remapping
+            # v4 adds settings, ignored paths and community templates; v3 added
+            # preroll IDs for safe reference remapping.
+            "schema_version": 4,
             "prerolls": [
                 {
                     "id": p.id,
@@ -16054,8 +16453,31 @@ def backup_database(db: Session = Depends(get_db)):
                     "category_id": gm.category_id,
                 } for gm in db.query(models.GenreMap).all()
             ],
+            # The whole Settings row: connections, credentials, path mappings,
+            # dashboard layout, generator defaults. Previously absent entirely,
+            # which is what made a restore on a new machine come back blank.
+            "settings": _export_settings(db.query(models.Setting).first()),
+            "ignored_paths": [
+                {
+                    "path": ip.path,
+                    "path_key": getattr(ip, "path_key", None),
+                    "filename": getattr(ip, "filename", None),
+                    "reason": getattr(ip, "reason", None),
+                } for ip in db.query(models.IgnoredPath).all()
+            ],
+            "community_templates": [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "author": getattr(t, "author", None),
+                    "template_data": getattr(t, "template_data", None),
+                    "category": getattr(t, "category", None),
+                    "tags": getattr(t, "tags", None),
+                    "is_public": getattr(t, "is_public", True),
+                } for t in db.query(models.CommunityTemplate).all()
+            ],
             "exported_at": datetime.datetime.utcnow().isoformat(),
-            "exported_by_version": "1.13.13",
+            "exported_by_version": app_version,
         }
 
         return data
@@ -16106,59 +16528,17 @@ def backup_files():
         zip_filename = f"nexroll_system_backup_{timestamp}.zip"
 
         # Build the cross-version JSON export up front (needs a DB session).
+        # This calls the same exporter as /backup/database rather than keeping a
+        # second, reduced copy: the old inline version claimed schema_version 3
+        # while omitting most of what v3 carries (preroll enabled/hash/duration,
+        # category plex_mode, schedule priority/exclusive/blend, holiday ranges,
+        # genre maps), so the JSON fallback inside a system ZIP restored less
+        # than the plain database backup did.
         json_bytes = b""
         try:
             db = SessionLocal()
             try:
-                db_export = {
-                    "schema_version": 3,
-                    "prerolls": [
-                        {
-                            "id": p.id,
-                            "filename": p.filename,
-                            "display_name": getattr(p, "display_name", None),
-                            "path": p.path,
-                            "thumbnail": p.thumbnail,
-                            "tags": p.tags,
-                            "category_id": p.category_id,
-                            "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
-                            "description": p.description,
-                            "managed": getattr(p, "managed", True),
-                            "upload_date": p.upload_date.isoformat() if p.upload_date else None
-                        } for p in db.query(models.Preroll).all()
-                    ],
-                    "categories": [
-                        {"id": c.id, "name": c.name, "description": c.description}
-                        for c in db.query(models.Category).all()
-                    ],
-                    "schedules": [
-                        {
-                            "name": s.name, "type": s.type,
-                            "start_date": s.start_date.isoformat() if s.start_date else None,
-                            "end_date": s.end_date.isoformat() if s.end_date else None,
-                            "category_id": s.category_id,
-                            "fallback_category_id": getattr(s, "fallback_category_id", None),
-                            "shuffle": s.shuffle, "playlist": s.playlist, "is_active": s.is_active,
-                            "recurrence_pattern": s.recurrence_pattern, "preroll_ids": s.preroll_ids,
-                            "sequence": getattr(s, "sequence", None),
-                            "source_sequence_id": getattr(s, "source_sequence_id", None),
-                        } for s in db.query(models.Schedule).all()
-                    ],
-                    "holiday_presets": [
-                        {"name": h.name, "description": h.description, "month": h.month,
-                         "day": h.day, "category_id": h.category_id}
-                        for h in db.query(models.HolidayPreset).all()
-                    ],
-                    "saved_sequences": [
-                        {"id": seq.id, "name": seq.name, "description": seq.description, "blocks": seq.get_blocks(),
-                         "created_at": seq.created_at.isoformat() if seq.created_at else None,
-                         "updated_at": seq.updated_at.isoformat() if seq.updated_at else None}
-                        for seq in db.query(models.SavedSequence).all()
-                    ],
-                    "exported_at": datetime.datetime.utcnow().isoformat(),
-                    "version": "1.10.14",
-                }
-                json_bytes = json.dumps(db_export, indent=2).encode("utf-8")
+                json_bytes = json.dumps(backup_database(db=db), indent=2, default=str).encode("utf-8")
             finally:
                 db.close()
         except Exception as db_err:
@@ -16188,6 +16568,34 @@ def backup_files():
         settings_path = os.path.join(data_dir, "settings.json")
         if os.path.exists(settings_path):
             entries.append((settings_path, "settings/settings.json"))
+
+        # NeX-Up storage sits beside PREROLLS_DIR, not under it, so none of it
+        # was in the "comprehensive" backup -- including generated prerolls and
+        # Coming Soon lists, which Preroll rows point straight at. Restoring
+        # elsewhere therefore produced library entries with no file behind them.
+        # Generated output and uploaded brand assets are included because they
+        # cannot be recreated; downloaded movie/TV trailers are deliberately left
+        # out because NeX-Up re-downloads those on demand and they are usually
+        # the bulk of the folder.
+        try:
+            _st = SessionLocal()
+            try:
+                nexup_root = _resolve_nexup_root(_st.query(models.Setting).first())
+            finally:
+                _st.close()
+        except Exception:
+            nexup_root = None
+        if nexup_root:
+            for sub in ("dynamic_prerolls", "assets"):
+                sub_dir = os.path.join(nexup_root, sub)
+                if not os.path.isdir(sub_dir):
+                    continue
+                for root, dirs, files in os.walk(sub_dir):
+                    dirs[:] = [d for d in dirs if d.lower() not in _skip]
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        rel = os.path.relpath(fp, nexup_root)
+                        entries.append((fp, "nexup/" + rel.replace(os.sep, "/")))
 
         est_total = len(json_bytes)
         for fp, _arc in entries:
@@ -16561,6 +16969,50 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
 
         db.commit()
 
+        # Settings last: it holds foreign keys into categories and sequences, so
+        # it can only be written once those tables have their new ids. This also
+        # puts back the four columns the deletion step above had to NULL
+        # (active_category, nexup_category_id, nexup_tv_category_id,
+        # filler_category_id) plus filler_sequence_id, which nothing restored
+        # before, so they were lost on every restore.
+        settings_report = {"applied": 0, "skipped_paths": [], "unknown_columns": 0}
+        try:
+            settings_report = _restore_settings(
+                db,
+                backup_data.get("settings") or {},
+                old_id_to_new_id,
+                old_sequence_id_to_new_id,
+            )
+            db.commit()
+            if settings_report["applied"]:
+                print(f"RESTORE: applied {settings_report['applied']} settings values")
+            for skipped in settings_report["skipped_paths"]:
+                print(f"RESTORE: kept this install's own path instead of {skipped} (not present here)")
+        except Exception as set_err:
+            db.rollback()
+            print(f"RESTORE: settings restore failed (non-fatal): {set_err}")
+            log_event('WARNING', 'system', f'Settings restore failed: {set_err}', source='restore_database')
+
+        # Ignored paths and community templates: small tables, replaced wholesale.
+        for key, model, fields in (
+            ("ignored_paths", models.IgnoredPath, ("path", "path_key", "filename", "reason")),
+            ("community_templates", models.CommunityTemplate,
+             ("name", "description", "author", "template_data", "category", "tags", "is_public")),
+        ):
+            rows = backup_data.get(key)
+            if not rows:
+                continue
+            try:
+                db.query(model).delete(synchronize_session=False)
+                for row in rows:
+                    with db.begin_nested():
+                        db.add(model(**{f: row.get(f) for f in fields if f in row}))
+                db.commit()
+                print(f"RESTORE: restored {len(rows)} {key}")
+            except Exception as row_err:
+                db.rollback()
+                print(f"RESTORE: {key} restore failed (non-fatal): {row_err}")
+
         # Reconcile DB paths against actual on-disk files after restore. This is the
         # cross-platform migration fix: JSON backups carry absolute paths from the
         # source machine (e.g. C:\Users\... from Windows), which never resolve in
@@ -16585,8 +17037,11 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
             log_event('WARNING', 'system', f'Post-restore scan failed: {scan_err}', source='restore_database')
 
         return {
-            "message": "Database restored successfully (v1.9.0)",
-            "version": "1.9.0",
+            "message": "Database restored successfully",
+            "version": app_version,
+            "schema_version": backup_data.get("schema_version"),
+            "settings_restored": settings_report.get("applied", 0),
+            "settings_paths_skipped": settings_report.get("skipped_paths", []),
             "rescan": scan_stats,
         }
     except Exception as e:
@@ -16699,6 +17154,51 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                         written += 1
                     restored_items.append(f"{written} thumbnails")
                 
+                # 3b. Restore NeX-Up generated prerolls and brand assets. Written
+                # under this install's own storage path, not the one baked into
+                # the archive, so a restore onto a different host lands correctly.
+                nexup_files = [n for n in namelist if n.startswith("nexup/") and not n.endswith("/")]
+                if nexup_files:
+                    try:
+                        _st = SessionLocal()
+                        try:
+                            nexup_root = _resolve_nexup_root(_st.query(models.Setting).first())
+                        finally:
+                            _st.close()
+                    except Exception:
+                        nexup_root = None
+                    if not nexup_root:
+                        # Nothing on disk yet: create the conventional location
+                        # beside the database so the archive has somewhere to land.
+                        from backend.database import DB_PATH as _DBP
+                        nexup_root = os.path.join(os.path.dirname(_DBP), "NeXup")
+                    written = 0
+                    for name in nexup_files:
+                        rel_path = name[len("nexup/"):]
+                        target_path = os.path.join(nexup_root, rel_path)
+                        if not _is_within_directory(nexup_root, target_path):
+                            print(f"RESTORE: skipping unsafe archive entry: {name}")
+                            continue
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with zip_ref.open(name) as src_f:
+                            with open(target_path, "wb") as dst:
+                                dst.write(src_f.read())
+                        written += 1
+                    if written:
+                        restored_items.append(f"{written} generated prerolls/assets")
+                        # The archive may come from a different OS, so the paths
+                        # in the restored database will not resolve here.
+                        try:
+                            _rl = SessionLocal()
+                            try:
+                                relinked = _relink_relocated_prerolls(_rl, nexup_root)
+                                if relinked:
+                                    restored_items.append(f"{relinked} relinked preroll paths")
+                            finally:
+                                _rl.close()
+                        except Exception as relink_err:
+                            print(f"RESTORE: relink skipped (non-fatal): {relink_err}")
+
                 # 4. Restore settings if present
                 if "settings/settings.json" in namelist:
                     print("RESTORE: Restoring settings...")
@@ -19198,6 +19698,7 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
 @app.get("/nexup/sonarr/trailers")
 def get_sonarr_trailers(db: Session = Depends(get_db)):
     """Get all downloaded TV show trailers"""
+    _backfill_trailer_posters(db)
     trailers = db.query(models.ComingSoonTVTrailer).filter(
         models.ComingSoonTVTrailer.status == 'downloaded'
     ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
@@ -21001,9 +21502,97 @@ def _trailer_matches_preference(release_type, preference) -> bool:
     return True
 
 
+# Poster art for downloaded trailers. Rows created before poster capture -- and
+# any row whose source lookup came back without images -- have an empty
+# poster_url, which leaves the poster view blank. Radarr and Sonarr both carry
+# the artwork, so fill the gaps from there the first time a listing needs them.
+_poster_backfill_state = {"last_attempt": 0.0}
+_POSTER_BACKFILL_COOLDOWN = 300  # seconds; a failed lookup should not retry per request
+
+
+def _backfill_trailer_posters(db: Session) -> int:
+    """Fill missing poster_url on downloaded trailers from Radarr/Sonarr.
+
+    Cheap in the common case: it returns immediately when nothing is missing,
+    and one list call per service covers every gap. Failures are swallowed --
+    artwork is decoration, never a reason to fail a listing.
+    """
+    try:
+        missing_movies = db.query(models.ComingSoonTrailer).filter(
+            (models.ComingSoonTrailer.poster_url.is_(None)) | (models.ComingSoonTrailer.poster_url == ""),
+            models.ComingSoonTrailer.radarr_movie_id > 0,
+        ).all()
+        missing_shows = db.query(models.ComingSoonTVTrailer).filter(
+            (models.ComingSoonTVTrailer.poster_url.is_(None)) | (models.ComingSoonTVTrailer.poster_url == ""),
+            models.ComingSoonTVTrailer.sonarr_series_id > 0,
+        ).all()
+    except Exception:
+        return 0
+    if not missing_movies and not missing_shows:
+        return 0
+
+    now = time.monotonic()
+    if now - _poster_backfill_state["last_attempt"] < _POSTER_BACKFILL_COOLDOWN:
+        return 0
+    _poster_backfill_state["last_attempt"] = now
+
+    def poster_from(record) -> Optional[str]:
+        for image in (record.get("images") or []):
+            if image.get("coverType") == "poster":
+                url = image.get("remoteUrl") or image.get("url")
+                if url and str(url).startswith("http"):
+                    return url
+        return None
+
+    setting = db.query(models.Setting).first()
+    filled = 0
+
+    if missing_movies and setting and setting.nexup_radarr_url and setting.nexup_radarr_api_key:
+        try:
+            response = requests.get(
+                f"{str(setting.nexup_radarr_url).rstrip('/')}/api/v3/movie",
+                headers={"X-Api-Key": setting.nexup_radarr_api_key}, timeout=25,
+            )
+            response.raise_for_status()
+            by_id = {m.get("id"): m for m in response.json()}
+            for trailer in missing_movies:
+                poster = poster_from(by_id.get(trailer.radarr_movie_id, {}))
+                if poster:
+                    trailer.poster_url = poster
+                    filled += 1
+        except Exception as e:
+            _file_log(f"[POSTER-BACKFILL] Radarr lookup failed: {e}")
+
+    if missing_shows and setting and setting.nexup_sonarr_url and setting.nexup_sonarr_api_key:
+        try:
+            response = requests.get(
+                f"{str(setting.nexup_sonarr_url).rstrip('/')}/api/v3/series",
+                headers={"X-Api-Key": setting.nexup_sonarr_api_key}, timeout=25,
+            )
+            response.raise_for_status()
+            by_id = {s.get("id"): s for s in response.json()}
+            for trailer in missing_shows:
+                poster = poster_from(by_id.get(trailer.sonarr_series_id, {}))
+                if poster:
+                    trailer.poster_url = poster
+                    filled += 1
+        except Exception as e:
+            _file_log(f"[POSTER-BACKFILL] Sonarr lookup failed: {e}")
+
+    if filled:
+        try:
+            db.commit()
+            _file_log(f"[POSTER-BACKFILL] Filled poster art for {filled} trailer(s)")
+        except Exception:
+            db.rollback()
+            return 0
+    return filled
+
+
 @app.get("/nexup/trailers")
 def get_nexup_trailers(db: Session = Depends(get_db)):
     """Get all downloaded trailers"""
+    _backfill_trailer_posters(db)
     _pref_setting = db.query(models.Setting).first()
     _pref = getattr(_pref_setting, 'nexup_release_date_preference', 'digital_first') if _pref_setting else 'digital_first'
     _all_trailers = db.query(models.ComingSoonTrailer).order_by(
@@ -22402,7 +22991,10 @@ async def upload_coming_soon_audio(
     db.commit()
     
     _file_log(f"Custom Coming Soon audio uploaded: {dest} ({len(content)} bytes)")
-    return {"success": True, "path": str(dest), "filename": file.filename, "size_bytes": len(content)}
+    # The length is what the "match preroll length to the soundtrack" control
+    # needs; without it the caller would have to reload settings to see it.
+    return {"success": True, "path": str(dest), "filename": file.filename,
+            "size_bytes": len(content), "duration": _audio_duration_seconds(str(dest))}
 
 
 @app.delete("/nexup/coming-soon-list/upload-audio")
@@ -22470,7 +23062,10 @@ async def upload_dynamic_preroll_audio(
     db.commit()
 
     _file_log(f"Custom Dynamic Preroll audio uploaded: {dest} ({len(content)} bytes)")
-    return {"success": True, "path": str(dest), "filename": file.filename, "size_bytes": len(content)}
+    # The length is what the "match preroll length to the soundtrack" control
+    # needs; without it the caller would have to reload settings to see it.
+    return {"success": True, "path": str(dest), "filename": file.filename,
+            "size_bytes": len(content), "duration": _audio_duration_seconds(str(dest))}
 
 
 @app.delete("/nexup/preroll/upload-audio")
