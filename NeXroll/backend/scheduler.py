@@ -1454,6 +1454,36 @@ class Scheduler:
             _scheduler_log(f"Refreshed {changed} linked holiday schedule date(s) for {now.year}")
         self._last_holiday_date_refresh_day = refresh_day
 
+    def _backfill_missing_next_run(self, db: Session) -> None:
+        """Give schedules that have never fired a next_run.
+
+        next_run was only ever written when a schedule activated, so one that
+        has not run yet carried NULL. Consumers fall back to start_date, and a
+        monthly schedule deliberately stores start_date as the sentinel
+        2000-01-01 -- so the schedules list showed "Jan 1" for a schedule set to
+        October. Nothing had asked for the date that this class could already
+        work out.
+        """
+        try:
+            pending = db.query(models.Schedule).filter(models.Schedule.next_run.is_(None)).all()
+        except Exception:
+            return
+        filled = 0
+        for schedule in pending:
+            try:
+                computed = self._calculate_next_run(schedule)
+            except Exception:
+                continue
+            if computed is not None:
+                schedule.next_run = computed
+                filled += 1
+        if filled:
+            try:
+                db.commit()
+                _scheduler_log(f"Filled next_run for {filled} schedule(s) that had never run")
+            except Exception:
+                db.rollback()
+
     def _check_and_execute_schedules(self):
         """Serialize every scheduler tick, including request-triggered checks."""
         with self._schedule_check_lock:
@@ -1466,6 +1496,7 @@ class Scheduler:
             # Use local time (per Setting.timezone) for comparisons since schedules are stored as naive local datetimes
             now = _localized_now(db)
             self._refresh_linked_holiday_dates_if_needed(db, now)
+            self._backfill_missing_next_run(db)
             schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
 
             # Determine active schedules (window-aware)

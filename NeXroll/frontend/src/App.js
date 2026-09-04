@@ -82,6 +82,16 @@ const DEFAULT_HIDDEN = DEFAULT_ORDER.filter(key => !FOCUS_ESSENTIAL_KEYS.include
 const DASH_KEYS = DEFAULT_ORDER.slice();
 const NEXROLL_WIKI_URL = 'https://github.com/JFLXCLOUD/NeXroll/wiki';
 
+// Monthly schedules deliberately store start_date as this sentinel; their real
+// dates live in recurrence_pattern. It must never be shown as a run date.
+const SCHEDULE_DATE_SENTINEL_YEAR = 2000;
+const usableScheduleDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.getFullYear() <= SCHEDULE_DATE_SENTINEL_YEAR ? null : date;
+};
+
 // Help button target per page. Longest matching prefix wins, so a sub-page
 // inherits its section's page unless it names a better one. Keys are activeTab
 // values; values are wiki page names (and optional #anchor).
@@ -6996,7 +7006,7 @@ const DashboardTiles = {
         return {
           ...s,
           isActiveNow: !!(start && start <= now && (!end || end > now)),
-          when: s.next_run ? new Date(s.next_run) : (start || now),
+          when: usableScheduleDate(s.next_run) || start || now,
         };
       })
       .sort((a, b) => (b.isActiveNow - a.isActiveNow) || (a.when - b.when))
@@ -18659,10 +18669,8 @@ const DashboardTiles = {
     const conflictCount = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id)).length;
 
     const nextDate = schedule => {
-      const value = schedule.next_run || schedule.start_date;
-      if (!value) return 'Not scheduled';
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return 'Not scheduled';
+      const date = usableScheduleDate(schedule.next_run) || usableScheduleDate(schedule.start_date);
+      if (!date) return 'Not scheduled';
       const today = new Date();
       const sameDay = date.toDateString() === today.toDateString();
       return sameDay
@@ -18739,7 +18747,8 @@ const DashboardTiles = {
     );
 
     const todayQueue = [...runningSchedules, ...enabledSchedules]
-      .sort((a, b) => new Date(a.next_run || a.start_date || 0) - new Date(b.next_run || b.start_date || 0))
+      .sort((a, b) => (usableScheduleDate(a.next_run) || usableScheduleDate(a.start_date) || 0)
+                    - (usableScheduleDate(b.next_run) || usableScheduleDate(b.start_date) || 0))
       .slice(0, 5);
 
     return (

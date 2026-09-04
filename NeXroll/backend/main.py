@@ -11164,6 +11164,24 @@ def _resolve_holiday_window(holiday_name, country_code):
     )
 
 
+def _refresh_schedule_next_run(schedule) -> None:
+    """Fill in next_run for a schedule that has not fired yet.
+
+    next_run used to be written only when the scheduler actually activated a
+    schedule, so a freshly created one carried NULL until its first run. The UI
+    falls back to start_date in that case, and monthly schedules deliberately
+    store start_date as the sentinel 2000-01-01 (their real dates live in
+    recurrence_pattern) -- so a schedule set for October displayed "Jan 1".
+
+    The scheduler could already work the date out; nothing ever asked it at
+    creation time.
+    """
+    try:
+        schedule.next_run = scheduler._calculate_next_run(schedule)
+    except Exception as e:
+        _file_log(f"Could not compute next_run for schedule {getattr(schedule, 'id', '?')}: {e}")
+
+
 @app.post("/schedules")
 def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     _validate_schedule_references(schedule, db)
@@ -11245,6 +11263,7 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         holiday_country=schedule.holiday_country,
         source_sequence_id=schedule.source_sequence_id
     )
+    _refresh_schedule_next_run(db_schedule)
     db.add(db_schedule)
     try:
         db.commit()
@@ -11425,6 +11444,9 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     db_schedule.holiday_name = schedule.holiday_name
     db_schedule.holiday_country = schedule.holiday_country
     db_schedule.source_sequence_id = schedule.source_sequence_id
+    # Editing the dates or the recurrence changes when it runs next, so this has
+    # to be recomputed here rather than left at whatever the last run wrote.
+    _refresh_schedule_next_run(db_schedule)
 
     try:
         db.commit()
