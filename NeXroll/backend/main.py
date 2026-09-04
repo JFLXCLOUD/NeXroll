@@ -19331,7 +19331,11 @@ def update_nexup_settings(
     if coming_soon_list_source is not None:
         setting.nexup_coming_soon_list_source = coming_soon_list_source
     if coming_soon_list_duration is not None:
-        setting.nexup_coming_soon_list_duration = max(5, min(30, coming_soon_list_duration))
+        # The old 30s cap silently undid "match length to the soundtrack": a
+        # music bed is usually minutes long, so the stored duration came back
+        # clamped, the toggle read as off, and the choice looked like it had
+        # not saved. The cap only exists to bound a runaway value.
+        setting.nexup_coming_soon_list_duration = max(5, min(MAX_GENERATED_DURATION, coming_soon_list_duration))
     if coming_soon_list_max_items is not None:
         setting.nexup_coming_soon_list_max_items = max(4, min(12, coming_soon_list_max_items))
     if coming_soon_list_bg_color is not None:
@@ -19387,7 +19391,9 @@ def update_nexup_settings(
     if dynamic_preroll_server_name is not None:
         setting.nexup_dynamic_preroll_server_name = dynamic_preroll_server_name.strip()[:120]
     if dynamic_preroll_duration is not None:
-        setting.nexup_dynamic_preroll_duration = max(3, min(20, dynamic_preroll_duration))
+        # Same reason as the Coming Soon cap above; 20s clamped any matched
+        # soundtrack or clip back down.
+        setting.nexup_dynamic_preroll_duration = max(3, min(MAX_GENERATED_DURATION, dynamic_preroll_duration))
     if dynamic_preroll_theme is not None:
         setting.nexup_dynamic_preroll_theme = dynamic_preroll_theme.strip()[:80] or 'midnight'
     if dynamic_preroll_language is not None:
@@ -20372,6 +20378,15 @@ async def _auto_regenerate_coming_soon_list(db: Session):
             _auto_backdrop = getattr(setting, 'nexup_coming_soon_list_custom_backdrop_path', None)
             if _auto_backdrop and not os.path.isfile(_auto_backdrop):
                 _auto_backdrop = None
+            # An uploaded clip wins; otherwise reuse the themed backdrop the
+            # browser recorded on the last manual render, so a sync keeps the
+            # motion the user already approved instead of dropping to a still.
+            _auto_theme_backdrop = None
+            if not _auto_backdrop:
+                _cached = _theme_backdrop_cache_path(setting, list_theme)
+                if _cached and os.path.isfile(_cached):
+                    _auto_theme_backdrop = _cached
+                    _file_log(f"[COMING-SOON-LIST] Auto-regen reusing recorded theme backdrop: {_cached}")
 
             output_path = generator.generate_coming_soon_list(
                 items=items,
@@ -20399,7 +20414,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 # An uploaded clip is the only backdrop that survives here: the
                 # themed one is recorded in a browser, and a sync has none, which
                 # is why auto-regenerated lists otherwise fall back to a still.
-                backdrop_video=_auto_backdrop,
+                backdrop_video=_auto_backdrop or _auto_theme_backdrop,
                 backdrop_dim=(getattr(setting, 'nexup_coming_soon_list_backdrop_dim', 45)
                               if _auto_backdrop else 0),
                 font_scale=getattr(setting, 'nexup_coming_soon_list_font_scale', 1.0) or 1.0,
@@ -23044,6 +23059,29 @@ def _register_coming_soon_list_to_category(db: Session, output_path: Path, layou
         _file_log(f"Error registering Coming Soon List to category: {e}")
 
 
+# A preroll matched to a soundtrack is as long as the soundtrack, and music beds
+# run for minutes. This bound only exists to stop an absurd value reaching
+# FFmpeg, not to express a sensible preroll length.
+MAX_GENERATED_DURATION = 600
+
+
+def _theme_backdrop_cache_path(setting, theme) -> Optional[str]:
+    """Where the browser-recorded themed backdrop is kept for reuse.
+
+    The animated theme background only exists because a browser records it off
+    the preview canvas and posts it with the render. A sync has no browser, so
+    auto-regeneration used to fall back to a still and the list quietly lost its
+    motion. Keeping the last recording lets the headless path reuse it.
+
+    Keyed by theme so switching themes cannot resurrect the previous look.
+    """
+    storage = getattr(setting, 'nexup_storage_path', None) if setting else None
+    if not storage:
+        return None
+    slug = re.sub(r'[^a-z0-9]+', '_', str(theme or 'custom').strip().lower()).strip('_') or 'custom'
+    return os.path.join(storage, 'dynamic_prerolls', 'assets', f'theme_backdrop_{slug}.webm')
+
+
 def _nexup_font_dir(setting) -> Optional[Path]:
     """Where uploaded typefaces live. None when NeX-Up storage is unset."""
     storage_path = getattr(setting, 'nexup_storage_path', None) if setting else None
@@ -24075,6 +24113,7 @@ async def generate_coming_soon_list(
     # after a sync has no browser and sends nothing, and the generator falls
     # back to the still it bakes itself.
     _backdrop_tmp = None
+    _backdrop_cached = None
     _uploaded_backdrop = getattr(setting, 'nexup_coming_soon_list_custom_backdrop_path', None)
     if _uploaded_backdrop and not os.path.isfile(_uploaded_backdrop):
         _file_log(f"[COMING-SOON-LIST] Configured backdrop missing from disk: {_uploaded_backdrop}")
@@ -24090,13 +24129,28 @@ async def generate_coming_soon_list(
             raw = _b64.b64decode(payload)
             if len(raw) > 120 * 1024 * 1024:
                 raise ValueError("backdrop recording too large")
-            fd, _backdrop_tmp = _tempfile.mkstemp(suffix='.webm', prefix='nexroll_backdrop_')
-            with os.fdopen(fd, 'wb') as handle:
-                handle.write(raw)
-            _file_log(f"[COMING-SOON-LIST] Using recorded backdrop ({len(raw)} bytes)")
+            # Keep the recording instead of discarding it: auto-regeneration
+            # after a sync has no browser to record a new one, and without this
+            # the list silently reverts to a still background.
+            _cache_path = _theme_backdrop_cache_path(
+                setting, getattr(setting, 'nexup_coming_soon_list_theme', None))
+            if _cache_path:
+                os.makedirs(os.path.dirname(_cache_path), exist_ok=True)
+                staging = _cache_path + '.part'
+                with open(staging, 'wb') as handle:
+                    handle.write(raw)
+                os.replace(staging, _cache_path)
+                _backdrop_cached = _cache_path
+                _file_log(f"[COMING-SOON-LIST] Using recorded backdrop ({len(raw)} bytes), cached for auto-regeneration")
+            else:
+                fd, _backdrop_tmp = _tempfile.mkstemp(suffix='.webm', prefix='nexroll_backdrop_')
+                with os.fdopen(fd, 'wb') as handle:
+                    handle.write(raw)
+                _file_log(f"[COMING-SOON-LIST] Using recorded backdrop ({len(raw)} bytes)")
         except Exception as e:
             _file_log(f"[COMING-SOON-LIST] Recorded backdrop unusable, falling back to a still: {e}")
             _backdrop_tmp = None
+            _backdrop_cached = None
 
     try:
         output_path = generator.generate_coming_soon_list(
@@ -24122,7 +24176,7 @@ async def generate_coming_soon_list(
             audio_bitrate=render['audio_bitrate'],
             theme=getattr(setting, 'nexup_coming_soon_list_theme', None),
             qr_data=getattr(setting, 'nexup_coming_soon_list_qr_data', None),
-            backdrop_video=_uploaded_backdrop or _backdrop_tmp,
+            backdrop_video=_uploaded_backdrop or _backdrop_cached or _backdrop_tmp,
             backdrop_dim=(getattr(setting, 'nexup_coming_soon_list_backdrop_dim', 45)
                           if _uploaded_backdrop else 0),
             font_scale=getattr(setting, 'nexup_coming_soon_list_font_scale', 1.0) or 1.0,
