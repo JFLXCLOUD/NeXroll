@@ -9205,13 +9205,91 @@ body.light :is(.nx-ap-panel,.nx-ap-service-card,.nx-ap-command,.nx-ap-upcoming-l
 .nx-gen-choice-grid strong,.nx-gen-choice-grid span { display: block; }
 .nx-gen-choice-grid strong { font-size: 11px; }
 .nx-gen-choice-grid span { margin-top: 6px; color: var(--text-muted); font-size: 9px; line-height: 1.35; }
-.nx-gen-color-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-top: 12px; }
+/* Colour pickers. The swatch is the thing being chosen, so it leads: a wide
+   colour bar with the name above it and the hex on a chip below, rather than a
+   stock 40px browser square sitting next to grey text. The inner ring keeps a
+   near-white swatch from disappearing into the card. */
+.nx-gen-palette {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--gen-line);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--raised-bg) 55%, transparent);
+}
+.nx-gen-palette-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 2px; }
+.nx-gen-palette-head + .nx-gen-color-grid { margin-top: 9px; }
+.nx-gen-palette-head strong { color: var(--text-color); font-size: 11px; letter-spacing: .01em; }
+.nx-gen-palette-head span { color: var(--text-muted); font-size: 9.5px; }
+.nx-gen-color-grid + .nx-gen-palette-head { margin-top: 15px; }
+
+.nx-gen-color-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; margin-top: 12px; }
 .nx-gen-color-grid.two { grid-template-columns: repeat(2,minmax(0,1fr)); }
-.nx-gen-color-grid label { padding: 9px; border: 1px solid var(--gen-line); border-radius: 10px; background: var(--raised-bg); }
-.nx-gen-color-grid label > span { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 9px; font-weight: 800; }
-.nx-gen-color-grid label > div { display: flex; align-items: center; gap: 8px; }
-.nx-gen-color-grid input { width: 40px; height: 34px; padding: 2px; border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
-.nx-gen-color-grid code { color: var(--text-secondary); font: 10px/1 ui-monospace,SFMono-Regular,Consolas,monospace; }
+.nx-gen-color-grid:not(.nx-gen-role-colors) { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.nx-gen-color-grid label {
+  position: relative;
+  padding: 9px 9px 8px;
+  border: 1px solid var(--gen-line);
+  border-radius: 11px;
+  background: var(--raised-bg);
+  transition: border-color .15s ease;
+}
+.nx-gen-color-grid label:hover { border-color: color-mix(in srgb, var(--accent-color) 45%, var(--gen-line)); }
+.nx-gen-color-grid label > span {
+  display: block; margin-bottom: 7px;
+  color: var(--text-secondary);
+  font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+.nx-gen-color-grid label > div { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+
+/* The swatch: a full-width bar, not a browser default square. */
+.nx-gen-color-grid input[type="color"] {
+  flex: 1 1 100%;
+  width: 100%; height: 32px;
+  padding: 0; border: 0; border-radius: 8px;
+  background: transparent; cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.16), 0 1px 2px rgba(0,0,0,.25);
+}
+.nx-gen-color-grid input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.nx-gen-color-grid input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 8px; }
+.nx-gen-color-grid input[type="color"]::-moz-color-swatch { border: 0; border-radius: 8px; }
+.nx-gen-color-grid input[type="color"]:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+
+.nx-gen-color-grid code {
+  padding: 2px 6px; border-radius: 5px;
+  background: var(--input-bg); color: var(--text-secondary);
+  font: 10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;
+  text-transform: uppercase;
+}
+/* Inherit / Default: a quiet pill that only reads as available when it is. */
+.nx-gen-color-grid label > div > button {
+  margin-left: auto; padding: 3px 8px;
+  border: 1px solid var(--gen-line); border-radius: 999px;
+  background: transparent; color: var(--text-secondary);
+  font-size: 9.5px; font-weight: 700; cursor: pointer;
+  transition: color .15s ease, border-color .15s ease;
+}
+.nx-gen-color-grid label > div > button:hover:not(:disabled) {
+  color: var(--text-color);
+  border-color: color-mix(in srgb, var(--accent-color) 55%, var(--gen-line));
+}
+.nx-gen-color-grid label > div > button:disabled { opacity: .35; cursor: default; }
+
+/* Backdrop dim slider */
+.nx-gen-dim { display: block; margin-top: 9px; padding: 10px 11px; border: 1px solid var(--gen-line); border-radius: 11px; background: var(--raised-bg); }
+.nx-gen-dim > span { display: block; color: var(--text-color); font-size: 11px; font-weight: 600; }
+.nx-gen-dim > span small { display: block; margin-top: 3px; color: var(--text-muted); font-size: 9px; font-weight: 400; }
+.nx-gen-dim > div { display: flex; align-items: center; gap: 11px; margin-top: 9px; }
+.nx-gen-dim input[type="range"] { flex: 1 1 auto; accent-color: var(--accent-color); cursor: pointer; }
+.nx-gen-dim b { min-width: 34px; text-align: right; color: var(--text-secondary); font: 10px/1 ui-monospace,SFMono-Regular,Consolas,monospace; }
+
+@media (max-width: 900px) {
+  .nx-gen-color-grid,
+  .nx-gen-color-grid:not(.nx-gen-role-colors) { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nx-gen-color-grid label,
+  .nx-gen-color-grid label > div > button { transition: none; }
+}
 .nx-gen-dynamic-colors button { margin-left: auto; padding: 5px 7px; border: 1px solid var(--gen-line); border-radius: 7px; background: var(--input-bg); color: var(--text-secondary); font-size: 12px; font-weight: 800; cursor: pointer; }
 .nx-gen-dynamic-colors button:disabled { opacity: .4; cursor: default; }
 .nx-gen-soundtrack { padding-top: 3px; }
@@ -9283,6 +9361,9 @@ body.light :is(.nx-ap-panel,.nx-ap-service-card,.nx-ap-command,.nx-ap-upcoming-l
 .nx-gen-marquee b:nth-child(even) { animation-delay: -.6s; }
 .nx-gen-canvas footer { position: absolute; inset: auto 10px 8px; display: flex; justify-content: space-between; color: var(--gen-primary-78); font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 .nx-gen-coming-canvas { --gen-primary:#fff; background: var(--gen-bg); }
+/* The chosen typeface, when there is one. Empty falls back to the inherited
+   stack, which is what "Template default" means. */
+.nx-gen-coming-canvas, .nx-gen-coming-canvas * { font-family: var(--gen-font-family, inherit); }
 .nx-gen-coming-canvas::before { background: radial-gradient(ellipse at 50% 42%,var(--gen-accent-13),rgba(0,0,0,0) 48%),var(--gen-bg); }
 .nx-gen-coming-vignette { position: absolute; inset: 0; z-index: -1; box-shadow: inset 0 0 70px rgba(0,0,0,.7); }
 .nx-gen-watermark { position: absolute; width: 34%; max-height: 40%; inset: 50% auto auto 50%; z-index: -1; object-fit: contain; opacity: .13; transform: translate(-50%,-50%); }
@@ -9642,6 +9723,29 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
 .nx-filler-choice.capitalize { text-transform: capitalize; }
 .nx-filler-block select.input { max-width: 100%; min-height: 32px; font-size: 12px; }
 .nx-filler-hint { margin: 7px 0 0; color: var(--text-secondary); font-size: .63rem; line-height: 1.45; }
+/* Inline "go do this elsewhere" link inside a hint. A button, not an anchor,
+   because it navigates within the app rather than to a URL. */
+.nx-linkbtn {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--accent-color); font: inherit; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.nx-linkbtn:hover { color: var(--text-color); }
+
+/* Filler banner shown on Schedules and the calendar when filler is armed. */
+.nx-filler-banner {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  margin-bottom: 12px; padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--success-color) 32%, var(--border-color));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--success-color) 9%, transparent);
+  font-size: .78rem; color: var(--text-secondary);
+}
+.nx-filler-banner svg { color: var(--success-color); flex-shrink: 0; }
+.nx-filler-banner strong { color: var(--text-color); }
+.nx-filler-banner .nx-linkbtn { margin-left: auto; }
+.nx-filler-banner.is-off { border-color: var(--border-color); background: var(--neutral-soft); }
+.nx-filler-banner.is-off svg { color: var(--text-muted); }
 
 .nx-settings:is(.nx-settings-paths, .nx-settings-storage) { display: grid !important; }
 .nx-settings.nx-settings-paths { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
@@ -10053,6 +10157,192 @@ p.nx-draft-field-hint { margin: 10px 0; color: var(--text-secondary); font-size:
 .nx-draft-month-date:hover,
 .nx-draft-month-day.today .nx-draft-month-date { background: #31c48d; color: #071610; }
 .nx-draft-month-events { display: flex; flex-direction: column; gap: 3px; }
+
+/* ── Calendar: continuous 24-hour grid ───────────────────────────────────────
+   Day and week share one axis so a 02:00 schedule is as visible as an 20:00
+   one, and so filler can be drawn as a single ribbon over the stretch it
+   covers rather than a badge repeated in every cell. */
+.nx-cal { display: flex; flex-direction: column; gap: 10px; }
+
+.nx-cal-dayhead { display: flex; align-items: baseline; gap: 14px; }
+.nx-cal-dayhead > div { display: flex; align-items: baseline; gap: 8px; }
+.nx-cal-dayhead span { color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.nx-cal-dayhead strong { color: var(--text-color); font-size: 26px; line-height: 1; }
+.nx-cal-dayhead p { margin: 0; color: var(--text-secondary); font-size: 12px; }
+.nx-cal-dayhead em { font-style: normal; color: var(--accent-color); }
+
+.nx-cal-weekhead { display: grid; gap: 1px; }
+.nx-cal-weekhead > div {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 7px 4px; border-radius: 8px 8px 0 0;
+  color: var(--text-secondary); font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+}
+.nx-cal-weekhead > div strong { color: var(--text-color); font-size: 15px; }
+.nx-cal-weekhead > div.today { background: color-mix(in srgb, var(--success-color) 14%, transparent); }
+.nx-cal-weekhead > div.today strong { color: var(--success-color); }
+
+.nx-cal-allday { display: grid; gap: 1px; align-items: stretch; }
+.nx-cal-allday-label {
+  display: flex; align-items: center; justify-content: flex-end; padding-right: 8px;
+  color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+}
+.nx-cal-allday-cell { display: flex; flex-direction: column; gap: 3px; padding: 4px; min-height: 30px; }
+
+.nx-cal-grid {
+  position: relative;
+  display: grid; gap: 1px;
+  height: 620px;
+  border: 1px solid var(--border-color); border-radius: 10px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+.nx-cal-axis { position: relative; background: var(--card-bg); }
+.nx-cal-axis span {
+  position: absolute; right: 8px; transform: translateY(-50%);
+  color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums;
+}
+.nx-cal-daycol { position: relative; background: var(--card-bg); overflow: hidden; }
+.nx-cal-gridline { position: absolute; left: 0; right: 0; height: 1px; background: var(--border-color); opacity: .5; }
+
+/* Filler: one ribbon spanning the whole uncovered stretch. Deliberately not
+   card-like — it is the absence of a schedule, not a schedule. */
+.nx-cal-filler {
+  position: absolute; left: 0; right: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--accent-color) 34%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent-color) 34%, transparent);
+  background:
+    linear-gradient(color-mix(in srgb, var(--accent-color) 4%, transparent),
+                    color-mix(in srgb, var(--accent-color) 4%, transparent)),
+    repeating-linear-gradient(135deg,
+      color-mix(in srgb, var(--accent-color) 9%, transparent) 0 5px,
+      transparent 5px 14px);
+  pointer-events: none;
+}
+.nx-cal-filler span {
+  position: absolute; inset: 6px auto auto 8px;
+  display: inline-flex; align-items: baseline; gap: 6px;
+  color: color-mix(in srgb, var(--accent-color) 78%, var(--text-muted));
+  font-size: 10px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase; opacity: .9;
+}
+.nx-cal-filler em {
+  font-style: normal; text-transform: none; letter-spacing: 0;
+  color: var(--text-muted); font-weight: 500;
+}
+
+.nx-cal-block {
+  position: absolute;
+  display: flex; flex-direction: column; justify-content: flex-start; gap: 2px;
+  min-height: 20px; padding: 5px 7px;
+  border: 1px solid color-mix(in srgb, var(--success-color) 45%, transparent);
+  border-left: 3px solid var(--success-color);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--success-color) 17%, var(--card-bg));
+  color: var(--text-color); text-align: left; cursor: pointer; overflow: hidden;
+  transition: filter .15s ease;
+}
+.nx-cal-block:hover { filter: brightness(1.18); }
+.nx-cal-block strong { font-size: 11px; line-height: 1.25; }
+.nx-cal-block small { color: var(--text-secondary); font-size: 9.5px; font-variant-numeric: tabular-nums; }
+.nx-cal-block.is-exclusive { border-left-color: var(--warning-color); border-color: color-mix(in srgb, var(--warning-color) 45%, transparent); background: color-mix(in srgb, var(--warning-color) 15%, var(--card-bg)); }
+.nx-cal-block.is-blend { border-left-color: #8b80ff; border-color: rgba(139,128,255,.45); background: color-mix(in srgb, #8b80ff 15%, var(--card-bg)); }
+
+.nx-cal-chip {
+  padding: 3px 8px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--success-color) 45%, transparent);
+  background: color-mix(in srgb, var(--success-color) 16%, var(--card-bg));
+  color: var(--text-color); font-size: 10px; font-weight: 600; cursor: pointer;
+  text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nx-cal-chip.is-exclusive { border-color: color-mix(in srgb, var(--warning-color) 45%, transparent); background: color-mix(in srgb, var(--warning-color) 15%, var(--card-bg)); }
+.nx-cal-chip.is-blend { border-color: rgba(139,128,255,.45); background: color-mix(in srgb, #8b80ff 15%, var(--card-bg)); }
+
+@media (max-width: 900px) {
+  .nx-cal-grid { height: 460px; }
+  .nx-cal-block small { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .nx-cal-block { transition: none; } }
+
+/* Current time. The one line on a calendar that has to be unmistakable, so it
+   gets the danger hue rather than the accent every other element shares. */
+.nx-cal-now {
+  position: absolute; left: 0; right: 0; height: 0;
+  border-top: 2px solid var(--danger-color, #ef4444);
+  z-index: 6; pointer-events: none;
+}
+.nx-cal-now::before {
+  content: ''; position: absolute; left: -3px; top: -4px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--danger-color, #ef4444);
+}
+
+.nx-cal-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
+  padding: 9px 14px; border-top: 1px solid var(--border-color);
+  color: var(--text-muted); font-size: 11px;
+}
+.nx-cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.nx-cal-legend i {
+  width: 18px; height: 10px; border-radius: 3px; flex-shrink: 0;
+}
+.nx-cal-key-filler {
+  border: 1px dashed color-mix(in srgb, var(--accent-color) 30%, transparent);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-color) 14%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+}
+.nx-cal-key-plain {
+  border: 1px solid color-mix(in srgb, var(--success-color) 45%, transparent);
+  background: color-mix(in srgb, var(--success-color) 16%, var(--card-bg));
+}
+.nx-cal-key-blend {
+  border: 1px solid rgba(139,128,255,.45);
+  background: color-mix(in srgb, #8b80ff 15%, var(--card-bg));
+}
+.nx-cal-key-exclusive {
+  border: 1px solid color-mix(in srgb, var(--warning-color) 45%, transparent);
+  background: color-mix(in srgb, var(--warning-color) 15%, var(--card-bg));
+}
+
+/* Filler on the month grid.
+   Filler is not a schedule, so it must not look like one: no solid card, no
+   accent bar, nothing clickable. A faint diagonal hatch reads as "nothing is
+   booked here, but something will play", which is exactly what filler is.
+   One bar spans the whole run of uncovered days rather than repeating a badge
+   in every cell, so the eye reads the stretch, not the count. */
+.nx-month-fillerbar {
+  --nx-filler-tint: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  --nx-filler-line: color-mix(in srgb, var(--accent-color) 30%, transparent);
+  z-index: 2;
+  align-self: end;
+  margin: 0 5px 5px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--nx-filler-line);
+  border-radius: 9px;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--nx-filler-tint) 0 6px,
+    transparent 6px 12px
+  );
+  pointer-events: none;
+}
+.nx-month-fillerbar span {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 0 7px;
+  border-radius: 7px;
+  background: var(--card-bg);
+  color: var(--accent-color);
+  font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nx-month-fillerbar { background-image: none; }
+}
 .nx-draft-month-events button { width: 100%; padding: 4px 5px; overflow: hidden; border: 0; border-left: 2px solid #31c48d; border-radius: 4px; background: rgba(49,196,141,.11); color: #9be4c6; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .nx-draft-month-events span { padding-left: 6px; color: var(--text-muted); font-size: 12px; }
 
@@ -10306,6 +10596,48 @@ body.light .nx-draft-cal-event { color: #157a55; }
 
 /* Coming Soon preview: mirror where the renderer composites the QR so what the
    operator lays out matches the finished video. */
+/* Typeface picker. The select lives in the normal field grid beside Font size;
+   everything that supports it spans the full row so the two-column rhythm above
+   is not stretched by a tall cell. The sample line is the point of it: it shows
+   the face rendering before the user commits to a render that takes a minute. */
+.nx-gen-fontpicker {
+  grid-column: 1 / -1;
+  display: grid;
+  /* Flex rather than grid tracks: the sample should take whatever is left after
+     the uploader, and the pair should wrap on the card's own width. The sidebar
+     and preview panel can leave this card narrow while the window is still
+     wide, which truncated the sample line to an ellipsis. */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+.nx-gen-font-sample { flex: 1 1 260px; }
+.nx-gen-fontpicker > .nx-gen-asset { flex: 0 1 300px; }
+.nx-gen-fontpicker > .nx-gen-asset { margin: 0; }
+.nx-gen-font-sample {
+  margin: 0; padding: 9px 12px;
+  border: 1px solid var(--border-color); border-radius: 8px;
+  background: var(--raised-bg); color: var(--text-color);
+  font-size: 16px; line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nx-gen-font-note { flex: 1 1 100%; color: var(--text-muted); font-size: 11.5px; line-height: 1.45; }
+.nx-gen-font-list {
+  flex: 1 1 100%;
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.nx-gen-font-list li {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 5px 4px 10px;
+  border: 1px solid var(--border-color); border-radius: 7px;
+  background: var(--card-bg); font-size: 12.5px;
+  max-width: 260px;
+}
+.nx-gen-font-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+
 .nx-gen-coming-canvas { position: relative; }
 .nx-gen-coming-qr {
   position: absolute;
@@ -10378,7 +10710,9 @@ body.light .nx-draft-cal-event { color: #157a55; }
 .nx-gen-sample-list b.is-available,
 .nx-gen-poster-grid span.is-available { color: var(--gen-available); }
 .nx-gen-poster-grid span { color: var(--gen-date); }
-.nx-gen-role-colors { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* Four roles, one row: heading, titles, dates and available-now belong together
+   at a glance rather than leaving the last one stranded on its own line. */
+.nx-gen-role-colors { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
 /* The heading colour is its own role: with a theme selected the manual Accent
    picker is hidden, which left "COMING SOON" unchangeable. */

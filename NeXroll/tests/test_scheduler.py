@@ -309,6 +309,67 @@ class SequentialSequenceResolutionTests(unittest.TestCase):
 
         self.assertEqual(set(selected_ids), set(self.expected_ids))
 
+    def test_random_block_covering_the_whole_pool_is_still_shuffled(self):
+        """A random block whose count reaches the whole category used to fall
+        through to the sequential return and played in ascending id order every
+        time."""
+        orders = set()
+        with self.Session() as db:
+            for _ in range(40):
+                resolved = scheduler_module.resolve_category_sequence_block(
+                    {
+                        "type": "random",
+                        "category_id": self.category_id,
+                        "count": len(self.expected_ids),
+                    },
+                    db,
+                )
+                self.assertEqual(sorted(p.id for p in resolved), sorted(self.expected_ids))
+                orders.add(tuple(p.id for p in resolved))
+
+        self.assertGreater(len(orders), 1, "random block returned one fixed order")
+
+    def test_blended_schedule_resolves_sequential_blocks_and_skips_missing_files(self):
+        """Blend built its own random-only resolver, so a sequential block was
+        dropped from the blended playlist and a preroll whose file no longer
+        existed was still published to Plex."""
+        connector = MagicMock()
+        connector.get_server_info.return_value = {"platform": "Windows"}
+        connector.set_preroll.return_value = True
+
+        with self.Session() as db, patch.object(
+            scheduler_module,
+            "PlexConnector",
+            return_value=connector,
+        ):
+            schedule = models.Schedule(
+                name="Blended sequential",
+                type="daily",
+                start_date=datetime.datetime(2026, 1, 1),
+                category_id=self.category_id,
+                is_active=True,
+                sequence=json.dumps([{
+                    "type": "sequential",
+                    "categoryId": str(self.category_id),
+                    "count": 3,
+                }]),
+            )
+            db.add(schedule)
+            db.commit()
+            scheduler = scheduler_module.Scheduler()
+            self.assertTrue(
+                scheduler._apply_blended_schedules_to_plex([schedule], db)
+            )
+
+        self.assertTrue(connector.set_preroll.call_args_list)
+        published = [
+            item
+            for item in connector.set_preroll.call_args_list[-1].args[0].split(";")
+            if item
+        ]
+        self.assertEqual(sorted(published), sorted(self.expected_paths))
+        self.assertNotIn("missing.mp4", " ".join(published))
+
     def test_sequential_only_schedule_and_saved_filler_apply_identically(self):
         connector = MagicMock()
         connector.get_server_info.return_value = {"platform": "Windows"}

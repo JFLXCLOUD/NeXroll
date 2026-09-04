@@ -41,6 +41,8 @@ a = Analysis(
         (frontend_build, 'frontend/build'),
         (os.path.join(project_root, 'NeXroll', 'CHANGELOG.md'), '.'),
         (os.path.join(project_root, 'docs', 'lefty-blue-wednesday-main-version-36162-02-38.mp3'), 'docs'),
+        # Typefaces the generator offers on every install (SIL OFL 1.1).
+        (os.path.join(project_root, 'assets', 'fonts'), 'assets/fonts'),
     ] + _potoken_datas + _plugin_datas,
     hiddenimports=['backend.radarr_connector', 'backend.dynamic_preroll', 'backend.theme_backdrop', 'segno', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFilter', 'httpx', 'httpx._transports', 'httpx._transports.default', 'httpcore', 'h11', 'h2', 'hpack', 'hyperframe', 'yt_dlp', 'yt_dlp_plugins', 'yt_dlp_plugins.extractor', 'yt_dlp_plugins.extractor.getpot_bgutil', 'yt_dlp_plugins.extractor.getpot_bgutil_http', 'yt_dlp_plugins.extractor.getpot_bgutil_script'] + _potoken_hidden,
     hookspath=[],

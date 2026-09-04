@@ -66,8 +66,36 @@ const rgba = (value, alpha, fallback) => {
   return `rgba(${(numeric >> 16) & 255}, ${(numeric >> 8) & 255}, ${numeric & 255}, ${alpha})`;
 };
 
+// The chosen typeface for the frame being drawn. Every text helper below reads
+// it, so the caller sets it once per frame rather than threading a family
+// through two dozen setFont calls. Rendering a frame is synchronous, so a
+// module-level value cannot interleave between canvases.
+export const DEFAULT_DYNAMIC_FONT_STACK = 'Inter, "Segoe UI", Arial, sans-serif';
+let activeFontStack = DEFAULT_DYNAMIC_FONT_STACK;
+
+// Look a stored choice ('builtin:georgia', 'custom:MyFace.ttf') up in the
+// server's font list and return the CSS stack to draw with. Uploaded faces
+// carry the family name they were registered under; built-ins carry a stack of
+// installed names.
+export const fontStackFor = (fonts, id) => {
+  if (!id) return '';
+  const match = (fonts || []).find(font => font.id === id);
+  return match ? (match.previewStack || match.css || '') : '';
+};
+
+export const resolveDynamicFontStack = stack => {
+  const text = String(stack || '').trim();
+  // Always keep a real fallback behind an uploaded face: if the @font-face load
+  // failed, the canvas silently measures and draws with the fallback rather
+  // than with whatever the browser defaults to.
+  if (!text) return DEFAULT_DYNAMIC_FONT_STACK;
+  return /sans-serif|serif|monospace|cursive|fantasy/i.test(text)
+    ? text
+    : `${text}, ${DEFAULT_DYNAMIC_FONT_STACK}`;
+};
+
 const setFont = (context, size, weight = 700) => {
-  context.font = `${weight} ${Math.round(size)}px Inter, "Segoe UI", Arial, sans-serif`;
+  context.font = `${weight} ${Math.round(size)}px ${activeFontStack}`;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
 };
@@ -259,6 +287,55 @@ const drawLogo = (context, logoImage, centerX, centerY, maxWidth, maxHeight, alp
 // luxe / starfield / solar treatments the dynamic templates use -- with no
 // template copy on top. The Coming Soon preview draws its posters and list over
 // this so both generators read as the same visual family.
+/**
+ * Paint whatever sits behind the text: either the caller's own footage, or the
+ * generated theme.
+ *
+ * This is the single place both the Coming Soon backdrop and the full dynamic
+ * preroll get their background, which is what lets an uploaded video show up in
+ * the live preview and -- because the dynamic recorder captures this same canvas
+ * -- end up in the rendered file without any server-side compositing.
+ *
+ * Returns the theme effect name when the theme was drawn, or null when the
+ * video replaced it.
+ */
+export function paintBackdropLayer(context, width, height, options, state) {
+  const video = options?.backdropVideo;
+  const ready = video
+    && video.readyState >= 2          // HAVE_CURRENT_DATA: there is a frame to draw
+    && video.videoWidth > 0;
+
+  if (ready) {
+    // Cover-crop, matching what FFmpeg does at render time, so the preview is
+    // not a different composition from the output.
+    const scale = Math.max(width / video.videoWidth, height / video.videoHeight);
+    const drawWidth = video.videoWidth * scale;
+    const drawHeight = video.videoHeight * scale;
+    context.clearRect(0, 0, width, height);
+    try {
+      context.drawImage(video, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+    } catch (error) {
+      return null;   // a frame that cannot be drawn yet is not worth throwing over
+    }
+    const dim = Math.max(0, Math.min(90, Number(options?.backdropDim ?? 0))) / 100;
+    if (dim > 0) {
+      context.fillStyle = `rgba(0,0,0,${dim})`;
+      context.fillRect(0, 0, width, height);
+    }
+    return null;
+  }
+
+  const background = normalizeDynamicColor(options?.theme?.bg, '#141428');
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = background;
+  context.fillRect(0, 0, width, height);
+  return drawDynamicThemeBackdrop(context, width, height, height / 720, state, options?.theme || {}, {
+    primary: normalizeDynamicColor(options?.theme?.primary, '#00d4ff'),
+    secondary: normalizeDynamicColor(options?.theme?.secondary, '#7b2cbf'),
+    accent: normalizeDynamicColor(options?.theme?.accent, '#ff006e'),
+  });
+}
+
 export function drawThemeBackdropFrame(canvas, options, elapsedSeconds) {
   const context = canvas?.getContext?.('2d');
   if (!context) return;
@@ -273,10 +350,12 @@ export function drawThemeBackdropFrame(canvas, options, elapsedSeconds) {
     const scale = height / 720;
     // A long cycle keeps the motion ambient rather than looping visibly.
     const state = getDynamicFrameState((Number(elapsedSeconds) || 0) % 12, 12);
-    context.clearRect(0, 0, width, height);
-    context.fillStyle = background;
-    context.fillRect(0, 0, width, height);
-    const effect = drawDynamicThemeBackdrop(context, width, height, scale, state, theme, { primary, secondary, accent });
+    const effect = paintBackdropLayer(context, width, height, options, state);
+    if (effect === null && options?.backdropVideo) {
+      // Someone's own footage is the whole background; the theme glows and
+      // scanlines below would only muddy it.
+      return;
+    }
 
     const glow = context.createRadialGradient(width * 0.5, height * 0.45, 0, width * 0.5, height * 0.45, height * 0.34);
     glow.addColorStop(0, rgba(primary, 0.16, '#00d4ff'));
@@ -306,12 +385,12 @@ export function drawThemeBackdropFrame(canvas, options, elapsedSeconds) {
 // Animates the backdrop on screen. Shares drawThemeBackdropFrame with the
 // recorder below, so what the preview shows and what gets baked into a Coming
 // Soon list are the same drawing code at the same point in the cycle.
-export function startThemeBackdropPreview(canvas, theme) {
+export function startThemeBackdropPreview(canvas, theme, extra = {}) {
   if (!canvas?.getContext?.('2d')) return () => {};
   const startedAt = performance.now();
   let frame;
   const paint = now => {
-    drawThemeBackdropFrame(canvas, { theme }, (now - startedAt) / 1000);
+    drawThemeBackdropFrame(canvas, { theme, ...extra }, (now - startedAt) / 1000);
     frame = requestAnimationFrame(paint);
   };
   frame = requestAnimationFrame(paint);
@@ -338,22 +417,25 @@ export function drawDynamicPrerollFrame(canvas, options, elapsedSeconds) {
   const titleColor = normalizeDynamicColor(settings.titleColor, primary);
   const subjectColor = normalizeDynamicColor(settings.subjectColor, secondary);
   const fontScale = resolveDynamicFontScale(settings.fontScale);
+  activeFontStack = resolveDynamicFontStack(settings.fontStack);
 
-  context.clearRect(0, 0, width, height);
-  context.fillStyle = background;
-  context.fillRect(0, 0, width, height);
+  const usingVideoBackdrop = Boolean(options.backdropVideo);
+  const themeEffect = paintBackdropLayer(context, width, height, {
+    theme,
+    backdropVideo: options.backdropVideo,
+    backdropDim: options.backdropDim,
+  }, state);
 
-  const themeEffect = drawDynamicThemeBackdrop(context, width, height, scale, state, theme, {
-    primary,
-    secondary,
-    accent,
-  });
-
-  const centerGlow = context.createRadialGradient(width * 0.5, height * 0.45, 0, width * 0.5, height * 0.45, height * 0.34);
-  centerGlow.addColorStop(0, rgba(primary, 0.18, '#00d4ff'));
-  centerGlow.addColorStop(1, 'rgba(0,0,0,0)');
-  context.fillStyle = centerGlow;
-  context.fillRect(0, 0, width, height);
+  // The glow, orbs and scanlines exist to give a flat generated background some
+  // depth. Over real footage they only add haze, so they are skipped entirely
+  // when the user supplied their own video.
+  if (!usingVideoBackdrop) {
+    const centerGlow = context.createRadialGradient(width * 0.5, height * 0.45, 0, width * 0.5, height * 0.45, height * 0.34);
+    centerGlow.addColorStop(0, rgba(primary, 0.18, '#00d4ff'));
+    centerGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    context.fillStyle = centerGlow;
+    context.fillRect(0, 0, width, height);
+  }
 
   const drawOrb = (x, y, radius, color) => {
     const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
@@ -364,13 +446,15 @@ export function drawDynamicPrerollFrame(canvas, options, elapsedSeconds) {
     context.arc(x, y, radius, 0, Math.PI * 2);
     context.fill();
   };
-  if (themeEffect === 'orbital') {
+  if (!usingVideoBackdrop && themeEffect === 'orbital') {
     drawOrb(width * (0.10 + state.driftX * 0.025), height * (0.10 + state.driftY * 0.018), height * 0.46, secondary);
     drawOrb(width * (0.91 - state.driftX * 0.022), height * (0.91 - state.driftY * 0.02), height * 0.42, accent);
   }
 
-  context.fillStyle = themeEffect === 'cyber_grid' ? 'rgba(255,255,255,0.032)' : 'rgba(255,255,255,0.018)';
-  for (let y = 0; y < height; y += Math.max(3, Math.round(3 * scale))) context.fillRect(0, y, width, Math.max(1, scale));
+  if (!usingVideoBackdrop) {
+    context.fillStyle = themeEffect === 'cyber_grid' ? 'rgba(255,255,255,0.032)' : 'rgba(255,255,255,0.018)';
+    for (let y = 0; y < height; y += Math.max(3, Math.round(3 * scale))) context.fillRect(0, y, width, Math.max(1, scale));
+  }
 
   context.save();
   context.strokeStyle = rgba(primary, 0.10, '#00d4ff');

@@ -335,6 +335,7 @@ class Setting(Base):
     nexup_dynamic_preroll_frame_rate = Column(Integer, default=30)  # Output FPS: 24, 30, or 60
     nexup_dynamic_preroll_render_quality = Column(String, default='high')  # draft, balanced, high, or master
     nexup_dynamic_preroll_font_scale = Column(Float, default=1.0)  # Shared preview/export type scale: 0.85 to 1.30
+    nexup_dynamic_preroll_font_family = Column(String, nullable=True)  # 'builtin:<id>' or 'custom:<file>'; null keeps the template default
     nexup_dynamic_preroll_title_color = Column(String, nullable=True)  # Optional #RRGGBB override; null inherits theme primary
     nexup_dynamic_preroll_subject_color = Column(String, nullable=True)  # Optional #RRGGBB override; null inherits theme secondary
     nexup_dynamic_preroll_audio_mode = Column(String, default='none')  # none, default, or custom
@@ -358,6 +359,17 @@ class Setting(Base):
     nexup_coming_soon_list_include_audio = Column(Boolean, default=False)  # Include background music in generated video
     nexup_coming_soon_list_custom_audio_path = Column(String, nullable=True)  # User-uploaded custom audio file path
     nexup_coming_soon_list_custom_logo_path = Column(String, nullable=True)  # User-uploaded custom logo image path
+    # Your own footage behind a Coming Soon list, instead of a generated theme.
+    # Unlike the browser-recorded theme backdrop this is a file on disk, so it
+    # also works when a sync regenerates the list with no browser involved.
+    nexup_coming_soon_list_custom_backdrop_path = Column(String, nullable=True)
+    # How far to darken that footage so titles stay readable, 0-90 percent.
+    nexup_coming_soon_list_backdrop_dim = Column(Integer, default=45)
+    # Same idea for dynamic prerolls. Those composite in the browser canvas, so
+    # this path is only ever read back to the Studio -- the recorder bakes the
+    # footage in before the file reaches FFmpeg.
+    nexup_dynamic_preroll_custom_backdrop_path = Column(String, nullable=True)
+    nexup_dynamic_preroll_backdrop_dim = Column(Integer, default=45)
     nexup_coming_soon_list_logo_mode = Column(String, default='watermark')  # 'watermark' (faded bg), 'right' (right of title), or 'below' (below title)
     nexup_coming_soon_list_language = Column(String, default='en')  # Language for generated CSL text: en, fr, es, de
     nexup_coming_soon_list_resolution = Column(String, default='1080')  # Output height: 720, 1080, or 2160
@@ -366,6 +378,7 @@ class Setting(Base):
     nexup_coming_soon_list_theme = Column(String, nullable=True)  # Named palette from DynamicPrerollGenerator.COLOR_THEMES; null keeps the manual colours
     nexup_coming_soon_list_qr_data = Column(String, nullable=True)  # Optional link encoded as a QR in the corner
     nexup_coming_soon_list_font_scale = Column(Float, default=1.0)  # Item text scale, 0.85 to 1.60; row pitch follows it
+    nexup_coming_soon_list_font_family = Column(String, nullable=True)  # 'builtin:<id>' or 'custom:<file>'; null keeps the template default
     nexup_coming_soon_list_title_color = Column(String, nullable=True)  # Title text; null inherits the Text colour
     nexup_coming_soon_list_date_color = Column(String, nullable=True)  # Release dates; null inherits the Accent colour
     nexup_coming_soon_list_available_color = Column(String, nullable=True)  # "Available Now!"; null keeps the default green
@@ -405,6 +418,10 @@ class Setting(Base):
     filler_category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Category to use as filler
     filler_sequence_id = Column(Integer, ForeignKey("saved_sequences.id"), nullable=True)  # Sequence to use as filler
     filler_coming_soon_layout = Column(String, default='grid')  # 'grid' or 'list' for Coming Soon List
+    # Which generated dynamic preroll to use when filler_type is 'dynamic'.
+    # A filename inside the NeX-Up dynamic_prerolls folder, the same place
+    # Coming Soon lists are written.
+    filler_dynamic_filename = Column(String, nullable=True)
     filler_active = Column(String, nullable=True)  # Tracks active filler: "category:ID", "sequence:ID", "coming_soon:layout", or null
     
     # Manual sequence apply tracking

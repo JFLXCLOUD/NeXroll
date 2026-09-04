@@ -139,6 +139,12 @@ COPY NeXroll/CHANGELOG.md /app/NeXroll/CHANGELOG.md
 # Copy audio assets for Coming Soon generator
 COPY docs/lefty-blue-wednesday-main-version-36162-02-38.mp3 /app/docs/lefty-blue-wednesday-main-version-36162-02-38.mp3
 
+# Typefaces the Preroll Generator offers. The image only carries DejaVu and
+# Liberation otherwise, so without these the font picker is nearly empty in
+# Docker while a Windows install shows a dozen. SIL OFL 1.1; see
+# assets/fonts/licenses/.
+COPY assets/fonts /app/assets/fonts
+
 # Copy pre-built frontend assets (built locally before Docker build)
 COPY NeXroll/frontend/build /app/NeXroll/frontend/build
 

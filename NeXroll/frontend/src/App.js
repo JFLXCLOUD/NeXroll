@@ -12,11 +12,12 @@ import Sidebar from './components/Sidebar';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import NexUpApprovedPages from './components/NexUpApprovedPages';
-import { captureDynamicPrerollFrame, drawThemeBackdropFrame, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
+import { captureDynamicPrerollFrame, drawThemeBackdropFrame, fontStackFor, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
 import {
   buildBlendBothChanges,
   buildRecurrencePattern,
+  getScheduleTimeRange,
   buildScheduleTimeOccurrence,
   evaluateScheduleOccurrenceSegments,
   evaluateScheduleTimeSegments,
@@ -254,6 +255,11 @@ const normalizeFocusEssentialLayout = (layout) => {
 // Theater-style boot quotes: one is picked per page load and shown on the
 // loading screen, in the spirit of the pre-show bumpers NeXroll exists to
 // serve. Module-level so the pick is stable across re-renders of the loader.
+//
+// The pool is the evergreen list plus whichever seasonal sets today falls in,
+// so December gets festive lines without losing the everyday ones. Windows are
+// plain date ranges rather than a holiday lookup: a loading screen must never
+// wait on the network to decide what to say.
 const BOOT_QUOTES = [
   'Please silence your cell phone, and your inner monologue',
   'Now showing: a loading screen',
@@ -273,9 +279,116 @@ const BOOT_QUOTES = [
   'Your prerolls have been waiting all day for this',
   "Selecting tonight's mandatory viewing",
   "Queuing trailers for movies you'll forget to watch",
-  'Dusting off the holiday prerolls',
+  'Threading the film. Metaphorically.',
+  'Aligning the projector. It drifts.',
+  'Sweeping under the seats',
+  'The good seats are already taken',
+  'Turning the house lights down slowly, for drama',
+  'Rewinding, out of respect for tradition',
+  'Someone is talking behind you. Nothing can be done.',
+  'Checking every preroll is exactly as long as it claims',
+  'Politely ignoring the aspect ratio',
+  'Locating the projectionist. They stepped out.',
+  'Nobody has ever clapped at the end of a preroll',
+  'Two minutes of anticipation, professionally manufactured',
+  'Adjusting the volume to "slightly too loud"',
+  'Waiting for the person in row F to sit down',
+  'The trailer was better than the film. It usually is.',
+  'Your library is fine. It is the loading that is slow.',
+  'Generating a preroll nobody asked for',
+  'Asking a computer what "cinematic" means',
+  'Prompting our way to a mediocre bumper',
+  'The AI made a preroll. It has six fingers.',
+  'No models were trained in the making of this loading screen',
+  'Labelling the AI ones, because you asked us to',
+  'Rendering something a person could have made better',
+  'Somewhere, a real artist is rolling their eyes',
+  'Hand-crafted prerolls. Some of them, anyway.',
 ];
-const BOOT_QUOTE = BOOT_QUOTES[Math.floor(Math.random() * BOOT_QUOTES.length)];
+
+// Each entry is [firstMonth, firstDay, lastMonth, lastDay], inclusive, with
+// months 1-12. A window whose end falls before its start wraps the new year.
+const BOOT_QUOTE_SEASONS = [
+  {
+    name: 'halloween',
+    window: [10, 1, 10, 31],
+    quotes: [
+      'Something is in the projection booth',
+      'The prerolls are coming from inside the house',
+      'Cueing up something with a synth score and fog',
+      'This one has a jump scare. Sorry.',
+    ],
+  },
+  {
+    name: 'festive',
+    window: [12, 1, 1, 2],
+    quotes: [
+      'Dusting off the holiday prerolls',
+      'Wrapping your prerolls. Badly.',
+      'Cueing up the one with the sleigh bells',
+      'Yes, it is that preroll again. It is tradition now.',
+    ],
+  },
+  {
+    name: 'new-year',
+    window: [1, 1, 1, 14],
+    quotes: [
+      'New year, same prerolls',
+      'Resolving to finally organise your categories',
+    ],
+  },
+  {
+    name: 'valentines',
+    window: [2, 7, 2, 15],
+    quotes: [
+      'A romance preroll. You have been warned.',
+    ],
+  },
+  {
+    name: 'spring',
+    window: [3, 1, 5, 31],
+    quotes: [
+      'Spring cleaning the preroll library',
+      'Dusting off the projector after a long winter',
+    ],
+  },
+  {
+    name: 'summer',
+    window: [6, 1, 8, 31],
+    quotes: [
+      'Blockbuster season. Brace yourself.',
+      'The air conditioning is working. Enjoy it.',
+      'Summer hours: the prerolls run longer',
+    ],
+  },
+  {
+    name: 'autumn',
+    window: [9, 1, 11, 30],
+    quotes: [
+      'Prestige season. The prerolls got serious.',
+      'Giving thanks for anyone who actually watches the prerolls',
+    ],
+  },
+];
+
+const bootSeasonMatches = ([startMonth, startDay, endMonth, endDay], date) => {
+  const value = (date.getMonth() + 1) * 100 + date.getDate();
+  const start = startMonth * 100 + startDay;
+  const end = endMonth * 100 + endDay;
+  return end < start
+    ? (value >= start || value <= end)   // wraps the year, e.g. Dec 1 - Jan 2
+    : (value >= start && value <= end);
+};
+
+export const bootQuotePool = (date = new Date()) => {
+  const seasonal = BOOT_QUOTE_SEASONS
+    .filter(season => bootSeasonMatches(season.window, date))
+    .flatMap(season => season.quotes);
+  return BOOT_QUOTES.concat(seasonal);
+};
+
+const BOOT_QUOTE_POOL = bootQuotePool();
+const BOOT_QUOTE = BOOT_QUOTE_POOL[Math.floor(Math.random() * BOOT_QUOTE_POOL.length)];
 
 // Quick-pick chips rendered under the native time inputs in the schedule
 // create/edit forms. One click fills the input; the native picker stays for
@@ -1319,7 +1432,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     type: 'category',
     category_id: null,
     sequence_id: null,
-    coming_soon_layout: 'grid'
+    coming_soon_layout: 'grid',
+    dynamic_filename: null
   });
   const [fillerLoading, setFillerLoading] = useState(false);
 
@@ -1417,6 +1531,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     frameRate: 30,
     renderQuality: 'high',
     fontScale: 1,
+    fontFamily: '', // '' keeps whatever face the template picked
     titleColor: null,
     subjectColor: null,
     audioMode: 'none',
@@ -1469,6 +1584,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     theme: '', // Named palette shared with the dynamic templates; '' keeps the manual colours below
     qrData: '', // Optional link rendered as a QR in the bottom-right corner
     fontScale: 1, // Item text scale; the row pitch follows it so titles never collide
+    fontFamily: '', // '' keeps whatever face the template picked
     titleColor: null, // null inherits the Text colour
     dateColor: null, // null inherits the Accent colour
     availableColor: null, // null keeps the default green
@@ -9739,8 +9855,8 @@ const DashboardTiles = {
   const renderWeeklyCalendar = () => {
         // Calculate current week (always show current week on dashboard)
         const now = new Date();
-        const dayOfWeek = now.getDay();
-        const weekStartDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek);
+        // Monday-first, matching the full calendar page.
+        const weekStartDate = startOfWeek(now);
         
         const days = [];
         for (let i = 0; i < 7; i++) {
@@ -9862,11 +9978,7 @@ const DashboardTiles = {
                   )}
                   {fillerSettings.enabled && (
                     <div
-                      title={`Filler plays in any gap with no active schedule — ${fillerSettings.type === 'category'
-                        ? (categories.find(c => c.id === fillerSettings.category_id)?.name || 'Category')
-                        : fillerSettings.type === 'sequence'
-                        ? (savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence')
-                        : `Coming Soon (${fillerSettings.coming_soon_layout})`}`}
+                      title={`Filler plays in any gap with no active schedule — ${fillerLabel()}`}
                       style={{
                         display: 'flex', alignItems: 'center', gap: '5px',
                         padding: '4px 10px', borderRadius: '20px',
@@ -9938,12 +10050,12 @@ const DashboardTiles = {
                 const dExclusiveHasTimeRange = dd?.exclusiveHasTimeRange;
                 const isFullDayExclusive = dHasExclusive && !dExclusiveHasTimeRange;
                 const schedCount = dayScheduleCounts[idx];
-                // Filler plays during any unscheduled gap. If the user enabled
-                // filler and this day has no content schedule on it, the
-                // filler will run the whole day — surface that in the header
-                // rather than just at the bottom of the schedule grid.
-                const hasContentScheds = (dd?.contentScheds?.length || 0) > 0;
-                const fillerAllDay = fillerSettings.enabled && !hasContentScheds;
+                // Filler plays during any unscheduled gap. Tint the header only
+                // when it covers the entire day; partial coverage is the filler
+                // lane's job to show.
+                const dayGaps = fillerGapsForDay(day);
+                const fillerAllDay = dayGaps.length === 1
+                  && dayGaps[0][0] === 0 && dayGaps[0][1] === DAY_MINUTES;
 
                 let accentColor = isToday ? 'var(--button-bg)' : 'var(--text-muted)';
                 let accentBg = 'transparent';
@@ -9969,13 +10081,6 @@ const DashboardTiles = {
                       {isFullDayExclusive && <Lock size={9} />}
                       {dHasBlend && !dHasExclusive && <Shuffle size={9} />}
                       {dHasConflict && !dHasBlend && !dHasExclusive && <AlertTriangle size={9} />}
-                      {fillerAllDay && !isFullDayExclusive && !dHasBlend && !dHasConflict && (
-                        <span title="Filler will play all day" style={{
-                          display: 'inline-block', width: '6px', height: '6px',
-                          borderRadius: '50%', backgroundColor: '#00d4ff',
-                          boxShadow: '0 0 4px rgba(0,212,255,0.6)',
-                        }} />
-                      )}
                     </div>
                     <div style={{
                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -9992,7 +10097,7 @@ const DashboardTiles = {
                       color: fillerAllDay ? '#00d4ff' : 'var(--text-muted)',
                       opacity: (schedCount > 0 || fillerAllDay) ? 1 : 0.5,
                     }}>
-                      {schedCount > 0 ? `${schedCount} active` : (fillerAllDay ? 'Filler' : 'none')}
+                      {schedCount > 0 ? `${schedCount} active` : (fillerAllDay ? '—' : 'none')}
                     </div>
                   </div>
                 );
@@ -10212,7 +10317,111 @@ const DashboardTiles = {
                   </div>
                 );
               }).filter(Boolean)}
-              
+
+              {/* Filler row. Filler is not a schedule, so it gets its own lane
+                  under the Gantt rather than a badge in each day header: one
+                  hatched bar spanning the run of days it actually covers. */}
+              {fillerSettings.enabled && !fillerIsIncomplete() && (() => {
+                const covered = days.map(day => fillerGapsForDay(day).length > 0);
+                if (!covered.some(Boolean)) return null;
+                const runs = [];
+                let runStart = null;
+                covered.forEach((isCovered, dayIdx) => {
+                  if (isCovered && runStart === null) runStart = dayIdx;
+                  if (!isCovered && runStart !== null) { runs.push([runStart, dayIdx - 1]); runStart = null; }
+                });
+                if (runStart !== null) runs.push([runStart, days.length - 1]);
+                return (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '150px 1fr',
+                    borderTop: '1px solid var(--border-color)', minHeight: '44px',
+                  }}>
+                    <div style={{
+                      padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '7px',
+                      borderRight: '1px solid var(--border-color)', overflow: 'hidden',
+                    }} title={`Filler plays whenever nothing is scheduled — ${fillerLabel()}`}>
+                      <Zap size={11} style={{ color: '#00d4ff', flexShrink: 0 }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{
+                          fontSize: '0.8rem', fontWeight: 600, color: '#00d4ff',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>
+                          Filler
+                        </div>
+                        <div style={{
+                          fontSize: '0.6rem', color: 'var(--text-muted)',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>
+                          {fillerLabel()}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '5px 0' }}>
+                      {days.map((day, dayIdx) => {
+                        const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+                        return (
+                          <div key={dayIdx} style={{
+                            flex: 1, height: '100%',
+                            borderRight: dayIdx < 6 ? '1px solid var(--border-color)' : 'none',
+                            backgroundColor: t === todayTime ? (darkMode ? 'rgba(59,130,246,0.05)' : 'rgba(59,130,246,0.03)') : 'transparent',
+                          }} />
+                        );
+                      })}
+                      {runs.map(([from, to]) => {
+                        const colWidth = 100 / 7;
+                        const dayCount = to - from + 1;
+                        // Describe the actual coverage, not just the day count:
+                        // a partly-scheduled day gets filler only in its gaps.
+                        const runDays = days.slice(from, to + 1);
+                        const isWholeDay = day => {
+                          const gaps = fillerGapsForDay(day);
+                          return gaps.length === 1
+                            && gaps[0][0] === 0 && gaps[0][1] === DAY_MINUTES;
+                        };
+                        // Say what is actually covered. A run of days where some
+                        // are only partly free is "in gaps", not a solid block.
+                        const allWholeDays = runDays.every(isWholeDay);
+                        const gapLabel = dayCount > 1
+                          ? (allWholeDays ? `${dayCount} days` : `${dayCount} days, in gaps`)
+                          : (allWholeDays
+                            ? 'All day'
+                            : fillerGapsForDay(days[from])
+                                .map(([s, e]) => `${formatGapTime(s)} - ${formatGapTime(e)}`).join(', '));
+                        const tip = dayCount > 1
+                          ? (allWholeDays
+                            ? `Filler plays all day across ${dayCount} days`
+                            : `Filler plays in the unscheduled gaps across ${dayCount} days`)
+                          : `Filler plays ${gapLabel}`;
+                        return (
+                          <div
+                            key={from}
+                            title={`${tip} — ${fillerLabel()}`}
+                            style={{
+                              position: 'absolute',
+                              left: `${(from * colWidth) + (colWidth * 0.08)}%`,
+                              width: `${(dayCount * colWidth) - (colWidth * 0.16)}%`,
+                              top: '7px', bottom: '7px',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              border: '1px dashed rgba(0,212,255,0.45)', borderRadius: '5px',
+                              background: 'repeating-linear-gradient(135deg, rgba(0,212,255,0.14) 0 6px, transparent 6px 12px)',
+                              overflow: 'hidden', zIndex: 1,
+                            }}
+                          >
+                            <span style={{
+                              padding: '1px 8px', borderRadius: '7px',
+                              backgroundColor: darkMode ? 'rgba(10,16,22,0.75)' : 'rgba(255,255,255,0.8)',
+                              color: '#00d4ff', fontSize: '0.6rem', fontWeight: 700,
+                              letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap',
+                            }}>
+                              {gapLabel}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Compact legend footer */}
@@ -14299,11 +14508,7 @@ const DashboardTiles = {
                       gap: '6px'
                     }}>
                       <Layers size={14} />
-                      Filler: {fillerSettings.type === 'category' 
-                        ? (categories.find(c => c.id === fillerSettings.category_id)?.name || 'Category')
-                        : fillerSettings.type === 'sequence'
-                        ? (savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence')
-                        : `Coming Soon (${fillerSettings.coming_soon_layout})`}
+                      Filler: {fillerLabel()}
                     </span>
                   ) : (
                     <span style={{ 
@@ -18761,6 +18966,37 @@ const DashboardTiles = {
           <div className={conflictCount ? 'is-warning' : 'is-success'}><span>Need attention</span><strong>{conflictCount}</strong><small>{conflictCount ? 'conflicts' : 'all clear'}</small></div>
         </section>
 
+        {/* Filler is what plays in the gaps between schedules, but it lives in
+            Settings, so this page never mentioned it. Say what is covering the
+            gaps, or point at where to turn it on. */}
+        {fillerSettings.enabled ? (
+          <div className={`nx-filler-banner${fillerIsIncomplete() ? ' is-off' : ''}`}>
+            <Layers size={15} />
+            {fillerIsIncomplete() ? (
+              <span>
+                <strong>Filler is on but nothing is selected</strong> — gaps between schedules will play whatever was set last.
+              </span>
+            ) : (
+              <span>
+                <strong>Filler is on</strong> — gaps with no active schedule play {fillerLabel()}.
+              </span>
+            )}
+            <button type="button" className="nx-linkbtn" onClick={() => setActiveTab('settings')}>
+              {fillerIsIncomplete() ? 'Finish setting it up' : 'Change'}
+            </button>
+          </div>
+        ) : (
+          <div className="nx-filler-banner is-off">
+            <Layers size={15} />
+            <span>
+              <strong>No filler set</strong> — when no schedule is active, your server keeps whatever preroll was last applied.
+            </span>
+            <button type="button" className="nx-linkbtn" onClick={() => setActiveTab('settings')}>
+              Enable fallback filler
+            </button>
+          </div>
+        )}
+
         <section className="nx-command-toolbar">
           <label className="nx-command-search"><Search size={15} /><input value={scheduleSearchQuery} onChange={event => setScheduleSearchQuery(event.target.value)} placeholder="Search schedules..." /></label>
           <select value={scheduleFilterType} onChange={event => setScheduleFilterType(event.target.value)} aria-label="Filter schedule type">
@@ -19104,24 +19340,6 @@ const DashboardTiles = {
   };
 
   const renderApprovedScheduleCalendar = () => {
-    const toDayTime = value => {
-      const date = parseNaiveDatetime(value);
-      return date && !Number.isNaN(date.getTime())
-        ? new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-        : null;
-    };
-    const dateKey = date => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-    const startOfWeek = date => new Date(
-      date.getFullYear(),
-      date.getMonth(),
-      date.getDate() - ((date.getDay() + 6) % 7)
-    );
-    const schedulesForDay = date => {
-      const dayTime = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-      // A disabled schedule cannot run, so it does not belong on the calendar.
-      return schedules.filter(schedule => schedule.is_active !== false
-        && isScheduleActiveOnDay(schedule, dayTime, toDayTime));
-    };
     const formatScheduleTime = schedule => {
       const date = parseNaiveDatetime(schedule.start_date);
       return date && !Number.isNaN(date.getTime())
@@ -19172,84 +19390,247 @@ const DashboardTiles = {
           ? calendarDay.toLocaleDateString([], { month: 'long', year: 'numeric' })
           : String(calendarDay.getFullYear());
 
-    const renderDayView = () => (
-      <div className="nx-draft-day-calendar" data-calendar-view="day">
-        <header className="nx-draft-day-heading">
-          <div><span>{calendarDay.toLocaleDateString([], { weekday: 'long' })}</span><strong>{calendarDay.getDate()}</strong></div>
-          <p>{daySchedules.length} active schedule{daySchedules.length === 1 ? '' : 's'}</p>
-        </header>
-        <div className="nx-draft-day-agenda">
-          {daySchedules.length > 0 ? daySchedules.map(schedule => (
-            <button type="button" key={schedule.id} className="nx-draft-day-event" onClick={() => handleEditSchedule(schedule)}>
-              <time>{formatScheduleTime(schedule)}</time>
-              <span><strong>{schedule.name}</strong><small>{schedule.type || 'schedule'} / Priority {schedule.priority ?? 5}</small></span>
-              {schedule.exclusive
-                ? <em className="nx-draft-overlap-tag is-exclusive" title="Wins outright when it overlaps another schedule">Exclusive</em>
-                : schedule.blend_enabled
-                  ? <em className="nx-draft-overlap-tag is-blend">Blends</em>
-                  : null}
-              <ChevronRight size={13} />
-            </button>
-          )) : (
-            <div className="nx-draft-calendar-empty"><CalendarDays size={20} /><strong>No schedules for this day</strong><span>Choose another date or create a new schedule.</span></div>
-          )}
-        </div>
+    // A continuous 24-hour axis, so a schedule at 02:00 is as visible as one at
+    // 20:00. The old grid started at 08:00 and read the hour off start_date,
+    // which for a monthly schedule is the 2000-01-01 sentinel — everything
+    // landed at midnight and fell off the top of the grid.
+    const AXIS_HOURS = [0, 3, 6, 9, 12, 15, 18, 21];
+    const AXIS_LABELS = AXIS_HOURS.filter(hour => hour > 0);
+    const pct = minutes => `${(minutes / DAY_MINUTES) * 100}%`;
+    const scheduleTone = schedule => (
+      schedule.exclusive ? 'is-exclusive' : schedule.blend_enabled ? 'is-blend' : ''
+    );
+
+    // Lay overlapping blocks side by side rather than on top of each other.
+    const withColumns = spans => {
+      const lanes = [];
+      return spans.map(span => {
+        let lane = lanes.findIndex(end => end <= span.start);
+        if (lane === -1) { lane = lanes.length; lanes.push(span.end); }
+        else lanes[lane] = span.end;
+        return { ...span, lane };
+      }).map((span, _index, all) => ({
+        ...span,
+        laneCount: Math.max(...all.map(other => other.lane)) + 1,
+      }));
+    };
+
+    const renderTimeAxis = () => (
+      <div className="nx-cal-axis" aria-hidden="true">
+        {AXIS_LABELS.map(hour => (
+          <span key={hour} style={{ top: pct(hour * 60) }}>
+            {new Date(2026, 0, 1, hour).toLocaleTimeString([], { hour: 'numeric' })}
+          </span>
+        ))}
       </div>
     );
+
+    // The filler band is the point of the whole thing: one continuous ribbon
+    // over the stretch it covers, rather than a badge repeated in every cell.
+    const renderFillerBands = (day, { compact = false } = {}) => fillerGapsForDay(day).map(([start, end]) => (
+      <div
+        key={`filler-${start}`}
+        className="nx-cal-filler"
+        style={{ top: pct(start), height: pct(end - start) }}
+        title={`Filler plays ${formatGapTime(start)} to ${formatGapTime(end)} — ${fillerLabel()}`}
+      >
+        {(end - start) >= 60 && (
+          <span>
+            <Layers size={11} /> Filler
+            {!compact && <em>{fillerLabel()}</em>}
+          </span>
+        )}
+      </div>
+    ));
+
+    const renderDayColumn = (day, { compact = false } = {}) => {
+      const spans = withColumns(scheduleSpansForDay(day).filter(span => !span.allDay));
+      const isToday = dateKey(day) === dateKey(dashboardNow);
+      return (
+        <div className="nx-cal-daycol">
+          {AXIS_HOURS.map(hour => (
+            <div key={hour} className="nx-cal-gridline" style={{ top: pct(hour * 60) }} aria-hidden="true" />
+          ))}
+          {renderFillerBands(day, { compact })}
+          {isToday && (
+            <div
+              className="nx-cal-now"
+              style={{ top: pct((dashboardNow.getHours() * 60) + dashboardNow.getMinutes()) }}
+              title={`Now - ${formatGapTime((dashboardNow.getHours() * 60) + dashboardNow.getMinutes())}`}
+            />
+          )}
+          {spans.map((span, index) => (
+            <button
+              type="button"
+              key={`${span.schedule.id}-${index}`}
+              className={`nx-cal-block ${scheduleTone(span.schedule)}`}
+              style={{
+                top: pct(span.start),
+                height: pct(Math.max(span.end - span.start, 30)),
+                left: `${(span.lane / span.laneCount) * 100}%`,
+                width: `${(1 / span.laneCount) * 100}%`,
+              }}
+              onClick={() => handleEditSchedule(span.schedule)}
+              title={`${span.schedule.name} — ${formatGapTime(span.start)} to ${formatGapTime(span.end)}`}
+            >
+              <strong>{span.schedule.name}</strong>
+              {!compact && <small>{formatGapTime(span.start)} - {formatGapTime(span.end)}</small>}
+            </button>
+          ))}
+        </div>
+      );
+    };
+
+    const renderAllDayRow = days => {
+      const perDay = days.map(day => scheduleSpansForDay(day).filter(span => span.allDay));
+      if (!perDay.some(list => list.length)) return null;
+      return (
+        <div className="nx-cal-allday" style={{ gridTemplateColumns: `64px repeat(${days.length}, minmax(0, 1fr))` }}>
+          <span className="nx-cal-allday-label">All day</span>
+          {perDay.map((list, index) => (
+            <div key={dateKey(days[index])} className="nx-cal-allday-cell">
+              {list.map(span => (
+                <button
+                  type="button"
+                  key={span.schedule.id}
+                  className={`nx-cal-chip ${scheduleTone(span.schedule)}`}
+                  onClick={() => handleEditSchedule(span.schedule)}
+                  title={`${span.schedule.name} — runs all day`}
+                >
+                  {span.schedule.name}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    const renderCalendarLegend = ({ tones = true } = {}) => (
+      <div className="nx-cal-legend">
+        <span><i className="nx-cal-key-filler" /> Filler covers the gap</span>
+        <span><i className="nx-cal-key-plain" /> Scheduled</span>
+        {tones && <span><i className="nx-cal-key-blend" /> Blends with overlaps</span>}
+        {tones && <span><i className="nx-cal-key-exclusive" /> Exclusive, wins overlaps</span>}
+      </div>
+    );
+
+    const renderDayView = () => {
+      const spans = scheduleSpansForDay(calendarDay);
+      const gaps = fillerGapsForDay(calendarDay);
+      return (
+        <div className="nx-cal" data-calendar-view="day">
+          <header className="nx-cal-dayhead">
+            <div>
+              <span>{calendarDay.toLocaleDateString([], { weekday: 'long' })}</span>
+              <strong>{calendarDay.getDate()}</strong>
+            </div>
+            <p>
+              {daySchedules.length} active schedule{daySchedules.length === 1 ? '' : 's'}
+              {gaps.length > 0 && <em> · filler covers {gaps.length} gap{gaps.length === 1 ? '' : 's'}</em>}
+            </p>
+          </header>
+          {renderAllDayRow([calendarDay])}
+          {spans.length === 0 && gaps.length === 0 ? (
+            <div className="nx-draft-calendar-empty">
+              <CalendarDays size={20} />
+              <strong>Nothing scheduled for this day</strong>
+              <span>Create a schedule, or turn on filler to cover the gap.</span>
+            </div>
+          ) : (
+            <div className="nx-cal-grid" style={{ gridTemplateColumns: '64px minmax(0, 1fr)' }}>
+              {renderTimeAxis()}
+              {renderDayColumn(calendarDay)}
+            </div>
+          )}
+      {renderCalendarLegend()}
+        </div>
+      );
+    };
 
     const renderWeekView = () => (
-      <div className="nx-draft-week-calendar" data-calendar-view="week">
-        <div className="nx-draft-cal-head" />
-        {weekDaysView.map(day => (
-          <div key={dateKey(day)} className={`nx-draft-cal-head${dateKey(day) === dateKey(today) ? ' today' : ''}`}>
-            {day.toLocaleDateString([], { weekday: 'short' })}<strong>{day.getDate()}</strong>
-          </div>
-        ))}
-        {hours.flatMap((hour, rowIndex) => [
-          <div key={`hour-${hour}`} className="nx-draft-cal-hour">{new Date(2026, 0, 1, hour).toLocaleTimeString([], { hour: 'numeric' })}</div>,
-          ...weekDaysView.map((day, dayIndex) => {
-            const matchingSchedules = schedulesForDay(day).filter(schedule => {
-              const startDate = parseNaiveDatetime(schedule.start_date);
-              const startHour = startDate ? startDate.getHours() : 8;
-              const nextHour = hours[rowIndex + 1] ?? 24;
-              return startHour >= hour && startHour < nextHour;
-            });
-            return (
-              <div key={`${hour}-${dayIndex}`} className="nx-draft-cal-cell">
-                {matchingSchedules.slice(0, 1).map(schedule => (
-                  <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} className={`nx-draft-cal-event${schedule.type === 'yearly' || schedule.type === 'holiday' ? ' violet' : ''}`}>
-                    <strong>{schedule.name}{schedule.exclusive ? <i className="nx-draft-overlap-dot is-exclusive" title="Exclusive" /> : schedule.blend_enabled ? <i className="nx-draft-overlap-dot is-blend" title="Blends" /> : null}</strong><span>{formatScheduleTime(schedule)}</span>
-                  </button>
-                ))}
-                {matchingSchedules.length > 1 && <span className="nx-draft-cal-more">+{matchingSchedules.length - 1}</span>}
-              </div>
-            );
-          })
-        ])}
+      <div className="nx-cal" data-calendar-view="week">
+        <div className="nx-cal-weekhead" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
+          <span />
+          {weekDaysView.map(day => (
+            <div key={dateKey(day)} className={dateKey(day) === dateKey(today) ? 'today' : ''}>
+              {day.toLocaleDateString([], { weekday: 'short' })}<strong>{day.getDate()}</strong>
+            </div>
+          ))}
+        </div>
+        {renderAllDayRow(weekDaysView)}
+        <div className="nx-cal-grid" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
+          {renderTimeAxis()}
+          {weekDaysView.map(day => (
+            <React.Fragment key={dateKey(day)}>{renderDayColumn(day, { compact: true })}</React.Fragment>
+          ))}
+        </div>
+      {renderCalendarLegend()}
       </div>
     );
 
-    const renderMonthView = () => (
-      <div className="nx-draft-month-calendar" data-calendar-view="month">
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => <div key={day} className="nx-draft-month-weekday">{day}</div>)}
-        {monthDaysView.map(day => {
-          const daySchedulesForView = schedulesForDay(day);
-          const isOutsideMonth = day.getMonth() !== calendarDay.getMonth();
-          const isToday = dateKey(day) === dateKey(today);
-          return (
-            <div key={dateKey(day)} className={`nx-draft-month-day${isOutsideMonth ? ' outside' : ''}${isToday ? ' today' : ''}`}>
-              <button type="button" className="nx-draft-month-date" onClick={() => { syncCalendarDate(day); setCalendarMode('day'); }} aria-label={`Open ${day.toLocaleDateString()}`}>{day.getDate()}</button>
-              <div className="nx-draft-month-events">
-                {daySchedulesForView.slice(0, 2).map(schedule => (
-                  <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} title={`${schedule.name}${schedule.exclusive ? ' — exclusive, wins any overlap' : schedule.blend_enabled ? ' — blends with overlapping schedules' : ''}`}>{schedule.name}</button>
-                ))}
-                {daySchedulesForView.length > 2 && <span>+{daySchedulesForView.length - 2} more</span>}
+    const renderMonthView = () => {
+      // Filler reads as a run, not a per-day badge: find consecutive filled days
+      // within each week row and draw one bar spanning those columns. A month of
+      // uncovered days becomes four ribbons instead of twenty-eight chips.
+      const fillerRuns = [];
+      for (let weekIndex = 0; weekIndex < 6; weekIndex += 1) {
+        let runStart = null;
+        for (let dayIndex = 0; dayIndex <= 7; dayIndex += 1) {
+          const day = monthDaysView[(weekIndex * 7) + dayIndex];
+          const filled = dayIndex < 7 && day && fillerGapsForDay(day).length > 0;
+          if (filled && runStart === null) runStart = dayIndex;
+          if (!filled && runStart !== null) {
+            fillerRuns.push({ weekIndex, from: runStart, to: dayIndex });
+            runStart = null;
+          }
+        }
+      }
+      return (
+        <>
+        <div className="nx-draft-month-calendar" data-calendar-view="month">
+          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, index) => (
+            <div key={day} className="nx-draft-month-weekday" style={{ gridRow: 1, gridColumn: index + 1 }}>{day}</div>
+          ))}
+          {monthDaysView.map((day, index) => {
+            const daySchedulesForView = schedulesForDay(day);
+            const isOutsideMonth = day.getMonth() !== calendarDay.getMonth();
+            const isToday = dateKey(day) === dateKey(today);
+            return (
+              <div
+                key={dateKey(day)}
+                className={`nx-draft-month-day${isOutsideMonth ? ' outside' : ''}${isToday ? ' today' : ''}`}
+                style={{ gridRow: Math.floor(index / 7) + 2, gridColumn: (index % 7) + 1 }}
+              >
+                <button type="button" className="nx-draft-month-date" onClick={() => { syncCalendarDate(day); setCalendarMode('day'); }} aria-label={`Open ${day.toLocaleDateString()}`}>{day.getDate()}</button>
+                <div className="nx-draft-month-events">
+                  {daySchedulesForView.slice(0, 2).map(schedule => (
+                    <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} title={`${schedule.name}${schedule.exclusive ? ' — exclusive, wins any overlap' : schedule.blend_enabled ? ' — blends with overlapping schedules' : ''}`}>{schedule.name}</button>
+                  ))}
+                  {daySchedulesForView.length > 2 && <span>+{daySchedulesForView.length - 2} more</span>}
+                </div>
               </div>
+            );
+          })}
+          {fillerRuns.map(run => (
+            <div
+              key={`fillerrun-${run.weekIndex}-${run.from}`}
+              className="nx-month-fillerbar"
+              style={{
+                // +2 because row 1 is the weekday header and columns are 1-based.
+                gridRow: run.weekIndex + 2,
+                gridColumn: `${run.from + 1} / ${run.to + 1}`,
+              }}
+              title={`Filler covers ${run.to - run.from} day${run.to - run.from === 1 ? '' : 's'} here — ${fillerLabel()}`}
+            >
+              <span><Layers size={10} /> Filler</span>
             </div>
-          );
-        })}
-      </div>
-    );
+          ))}
+        </div>
+        {renderCalendarLegend({ tones: false })}
+        </>
+      );
+    };
 
     const renderYearView = () => (
       <div className="nx-draft-year-calendar" data-calendar-view="year">
@@ -22855,6 +23236,147 @@ const DashboardTiles = {
   };
 
   // === Filler Category Functions ===
+  // What the configured filler actually plays, in words. Used by the Schedules
+  // banner, the calendar, and the day tooltips so they cannot disagree.
+  const fillerLabel = () => {
+    switch (fillerSettings.type) {
+      case 'category':
+        return categories.find(c => c.id === fillerSettings.category_id)?.name || 'Category';
+      case 'sequence':
+        return savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence';
+      case 'coming_soon':
+        return `Coming Soon (${fillerSettings.coming_soon_layout})`;
+      case 'dynamic': {
+        const file = fillerSettings.dynamic_filename;
+        if (!file) return 'Dynamic preroll (none chosen)';
+        const match = generatedPrerolls.find(item => item.filename === file);
+        return match?.name || match?.template_id || file;
+      }
+      default:
+        return 'Filler';
+    }
+  };
+  // Filler that is switched on but has nothing selected will not play anything.
+  const fillerIsIncomplete = () => (
+    fillerSettings.enabled && (
+      (fillerSettings.type === 'category' && !fillerSettings.category_id) ||
+      (fillerSettings.type === 'sequence' && !fillerSettings.sequence_id) ||
+      (fillerSettings.type === 'dynamic' && !fillerSettings.dynamic_filename)
+    )
+  );
+
+  // Calendar date and filler-gap maths. These live at component scope so the
+  // dashboard tile and the full calendar answer "when does filler play" the
+  // same way; they used to be defined inside the calendar renderer only.
+  const toDayTime = value => {
+    const date = parseNaiveDatetime(value);
+    return date && !Number.isNaN(date.getTime())
+      ? new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+      : null;
+  };
+  const dateKey = date => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  const startOfWeek = date => new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate() - ((date.getDay() + 6) % 7)
+  );
+  const schedulesForDay = date => {
+    const dayTime = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    // A disabled schedule cannot run, so it does not belong on the calendar.
+    return schedules.filter(schedule => schedule.is_active !== false
+      && isScheduleActiveOnDay(schedule, dayTime, toDayTime));
+  };
+  // Filler covers whatever a day's schedules do not. Work that out honestly:
+  // merge each schedule's covered minutes, then take the complement. A
+  // schedule with no time range runs all day, which correctly leaves no gap.
+  const DAY_MINUTES = 24 * 60;
+  const scheduleBusyIntervals = day => {
+    const spans = [];
+    schedulesForDay(day).forEach(schedule => {
+      const range = getScheduleTimeRange(schedule) || {};
+      const toMinutes = value => {
+        // Guard the blank case first: Number('') is 0, not NaN, so a missing
+        // time range would otherwise parse as midnight and make an all-day
+        // schedule look like it covered nothing.
+        const text = String(value ?? '').trim();
+        if (!text) return null;
+        const parts = text.split(':');
+        const hour = Number(parts[0]);
+        const minute = parts.length > 1 ? Number(parts[1]) : 0;
+        if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+        return (hour * 60) + minute;
+      };
+      const start = toMinutes(range.start);
+      const end = toMinutes(range.end);
+      if (start === null) { spans.push([0, DAY_MINUTES]); return; }
+      const finish = end === null ? DAY_MINUTES : end;
+      // A range that ends before it starts runs past midnight, so it covers
+      // both the tail of the day and its beginning.
+      if (finish < start) { spans.push([start, DAY_MINUTES], [0, finish]); }
+      else spans.push([start, finish]);
+    });
+    spans.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    spans.forEach(span => {
+      const last = merged[merged.length - 1];
+      if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+      else merged.push([...span]);
+    });
+    return merged;
+  };
+  // One schedule's occupied minutes on a given day. The time lives in the
+  // recurrence pattern, not start_date: monthly schedules store the sentinel
+  // 2000-01-01, so reading the hour off start_date puts everything at
+  // midnight, which is why the old week grid (which began at 08:00) showed
+  // nothing at all for them.
+  const scheduleSpansForDay = day => {
+    const spans = [];
+    schedulesForDay(day).forEach(schedule => {
+      const range = getScheduleTimeRange(schedule) || {};
+      const toMinutes = value => {
+        const text = String(value ?? '').trim();
+        if (!text) return null;
+        const parts = text.split(':');
+        const hour = Number(parts[0]);
+        const minute = parts.length > 1 ? Number(parts[1]) : 0;
+        return Number.isFinite(hour) && Number.isFinite(minute) ? (hour * 60) + minute : null;
+      };
+      const start = toMinutes(range.start);
+      const end = toMinutes(range.end);
+      if (start === null) { spans.push({ schedule, start: 0, end: DAY_MINUTES, allDay: true }); return; }
+      const finish = end === null ? DAY_MINUTES : end;
+      if (finish < start) {
+        // Runs past midnight, so it occupies both ends of the day.
+        spans.push({ schedule, start, end: DAY_MINUTES, wraps: true });
+        spans.push({ schedule, start: 0, end: finish, wraps: true });
+      } else {
+        spans.push({ schedule, start, end: finish });
+      }
+    });
+    return spans.sort((a, b) => a.start - b.start || a.end - b.end);
+  };
+
+  const fillerGapsForDay = day => {
+    // Filler that is switched on but has nothing selected plays nothing, so
+    // drawing it on the calendar would promise something that will not happen.
+    if (!fillerSettings.enabled || fillerIsIncomplete()) return [];
+    const busy = scheduleBusyIntervals(day);
+    const gaps = [];
+    let cursor = 0;
+    busy.forEach(([start, end]) => {
+      if (start > cursor) gaps.push([cursor, start]);
+      cursor = Math.max(cursor, end);
+    });
+    if (cursor < DAY_MINUTES) gaps.push([cursor, DAY_MINUTES]);
+    // Ignore slivers; a two-minute gap is noise, not something to draw.
+    return gaps.filter(([start, end]) => end - start >= 15);
+  };
+  const formatGapTime = minutes => {
+    const clamped = Math.min(DAY_MINUTES - 1, Math.max(0, minutes));
+    return new Date(2026, 0, 1, Math.floor(clamped / 60), clamped % 60)
+      .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+
   const loadFillerSettings = React.useCallback(async () => {
     try {
       const res = await fetch(apiUrl('/settings/filler'));
@@ -22865,7 +23387,8 @@ const DashboardTiles = {
           type: data.type || 'category',
           category_id: data.category_id || null,
           sequence_id: data.sequence_id || null,
-          coming_soon_layout: data.coming_soon_layout || 'grid'
+          coming_soon_layout: data.coming_soon_layout || 'grid',
+          dynamic_filename: data.dynamic_filename || null
         });
       }
     } catch (err) {
@@ -22882,6 +23405,7 @@ const DashboardTiles = {
       if (updates.category_id !== undefined) params.append('category_id', updates.category_id);
       if (updates.sequence_id !== undefined) params.append('sequence_id', updates.sequence_id);
       if (updates.coming_soon_layout !== undefined) params.append('coming_soon_layout', updates.coming_soon_layout);
+      if (updates.dynamic_filename !== undefined) params.append('dynamic_filename', updates.dynamic_filename ?? '');
       
       const res = await fetch(apiUrl('/settings/filler?' + params.toString()), {
         method: 'PUT'
@@ -22924,6 +23448,9 @@ const DashboardTiles = {
           customAudioFilename: data.coming_soon_list_custom_audio_filename || null,
           customAudioDuration: data.coming_soon_list_custom_audio_duration || null,
           customLogoFilename: data.coming_soon_list_custom_logo_filename || null,
+          customBackdropFilename: data.coming_soon_list_custom_backdrop_filename || null,
+          customBackdropDuration: data.coming_soon_list_custom_backdrop_duration || null,
+          backdropDim: data.coming_soon_list_backdrop_dim ?? 45,
           logoMode: (() => { const m = data.coming_soon_list_logo_mode || 'watermark'; return m === 'replace' ? 'below' : m; })(),
           language: data.coming_soon_list_language || 'en',
           resolution: data.coming_soon_list_resolution || '1080',
@@ -22934,6 +23461,7 @@ const DashboardTiles = {
           theme: data.coming_soon_list_theme || '',
           qrData: data.coming_soon_list_qr_data || '',
           fontScale: data.coming_soon_list_font_scale || 1,
+          fontFamily: data.coming_soon_list_font_family || '',
           titleColor: data.coming_soon_list_title_color || null,
           dateColor: data.coming_soon_list_date_color || null,
           availableColor: data.coming_soon_list_available_color || null,
@@ -22967,11 +23495,14 @@ const DashboardTiles = {
       if (settings.resolution !== undefined) params.append('coming_soon_list_resolution', settings.resolution);
       if (settings.frameRate !== undefined) params.append('coming_soon_list_frame_rate', settings.frameRate.toString());
       if (settings.renderQuality !== undefined) params.append('coming_soon_list_render_quality', settings.renderQuality);
+      if (settings.backdropDim !== undefined) params.append('coming_soon_list_backdrop_dim', String(settings.backdropDim));
       if (settings.availableDays !== undefined) params.append('coming_soon_available_days', settings.availableDays.toString());
       if (settings.maxAvailableNow !== undefined) params.append('coming_soon_max_available_now', settings.maxAvailableNow.toString());
       if (settings.theme !== undefined) params.append('coming_soon_list_theme', settings.theme);
       if (settings.qrData !== undefined) params.append('coming_soon_list_qr_data', settings.qrData);
       if (settings.fontScale !== undefined) params.append('coming_soon_list_font_scale', String(settings.fontScale));
+      // '' clears the override; the server also clears it if the face no longer resolves.
+      if (settings.fontFamily !== undefined) params.append('coming_soon_list_font_family', settings.fontFamily || '');
       // '' clears the override server-side and restores the inherited colour.
       if (settings.titleColor !== undefined) params.append('coming_soon_list_title_color', settings.titleColor || '');
       if (settings.dateColor !== undefined) params.append('coming_soon_list_date_color', settings.dateColor || '');
@@ -22987,7 +23518,7 @@ const DashboardTiles = {
     }
   };
 
-  const saveDynamicPrerollSettings = async () => {
+  const saveDynamicPrerollSettings = async ({ silent = false } = {}) => {
     try {
       const params = new URLSearchParams({
         dynamic_preroll_template: dynamicPrerollSettings.template || 'coming_soon',
@@ -22998,16 +23529,26 @@ const DashboardTiles = {
         dynamic_preroll_resolution: dynamicPrerollSettings.resolution || '1080',
         dynamic_preroll_frame_rate: String(dynamicPrerollSettings.frameRate || 30),
         dynamic_preroll_render_quality: dynamicPrerollSettings.renderQuality || 'high',
+        dynamic_preroll_backdrop_dim: dynamicPrerollSettings.backdropDim ?? 45,
         dynamic_preroll_font_scale: String(dynamicPrerollSettings.fontScale || 1),
+        dynamic_preroll_font_family: dynamicPrerollSettings.fontFamily || '',
         dynamic_preroll_title_color: dynamicPrerollSettings.titleColor || '',
         dynamic_preroll_subject_color: dynamicPrerollSettings.subjectColor || '',
-        dynamic_preroll_audio_mode: dynamicPrerollSettings.audioMode || 'none'
+        dynamic_preroll_audio_mode: dynamicPrerollSettings.audioMode || 'none',
+        // The Custom Message and QR templates are entirely these four fields;
+        // without them "Save defaults" discarded the only thing the user typed.
+        dynamic_preroll_custom_headline: dynamicPrerollSettings.customHeadline ?? '',
+        dynamic_preroll_custom_subtext: dynamicPrerollSettings.customSubtext ?? '',
+        dynamic_preroll_qr_data: dynamicPrerollSettings.qrData ?? '',
+        dynamic_preroll_qr_caption: dynamicPrerollSettings.qrCaption ?? ''
       });
       const response = await fetch(apiUrl(`/nexup/settings?${params.toString()}`), { method: 'PUT' });
       if (!response.ok) throw new Error('Dynamic preroll defaults could not be saved.');
-      showAlert('Dynamic preroll defaults saved.', 'success');
+      if (!silent) showAlert('Dynamic preroll defaults saved.', 'success');
+      return true;
     } catch (error) {
-      showAlert(error?.message || 'Dynamic preroll defaults could not be saved.', 'error');
+      if (!silent) showAlert(error?.message || 'Dynamic preroll defaults could not be saved.', 'error');
+      return false;
     }
   };
 
@@ -23023,19 +23564,15 @@ const DashboardTiles = {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comingSoonListSettings]);
 
-  // Auto-save Dynamic Preroll language when it changes (with debounce)
+  // Auto-save the whole dynamic preset, matching Coming Soon. Only `language`
+  // used to persist as you typed, so anything else was lost by navigating away
+  // without pressing the button.
   React.useEffect(() => {
     if (!dynamicPrerollSettingsLoadedRef.current) return;
-    
-    const timer = setTimeout(() => {
-      const params = new URLSearchParams();
-      params.append('dynamic_preroll_language', dynamicPrerollSettings.language);
-      fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
-    }, 500);
-    
+    const timer = setTimeout(() => { saveDynamicPrerollSettings({ silent: true }); }, 500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dynamicPrerollSettings.language]);
+  }, [dynamicPrerollSettings]);
 
   const loadNexupTrailers = async () => {
     try {
@@ -23992,12 +24529,16 @@ const DashboardTiles = {
           frameRate: data.frame_rate || 30,
           renderQuality: data.render_quality || 'high',
           fontScale: data.font_scale || 1,
+          fontFamily: data.font_family || '',
           titleColor: data.title_color || null,
           subjectColor: data.subject_color || null,
           audioMode: data.audio_mode || 'none',
           preroll_path: data.preroll_path,
           customLogoFilename: data.custom_logo_filename || null,
           customAudioFilename: data.custom_audio_filename || null,
+          customBackdropFilename: data.custom_backdrop_filename || null,
+          customBackdropDuration: data.custom_backdrop_duration || null,
+          backdropDim: data.backdrop_dim ?? 45,
           customAudioDuration: data.custom_audio_duration || null,
           customHeadline: data.custom_headline ?? 'COMING SOON',
           customSubtext: data.custom_subtext ?? '',
@@ -24096,7 +24637,9 @@ const DashboardTiles = {
         ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(dynamicPrerollSettings.qrData.trim())}`
         : null;
       const motionOptions = await prepareDynamicPrerollOptions({
-        settings: { ...dynamicPrerollSettings },
+        // The recording is what actually ships, so it has to use the chosen
+        // face, not just the on-screen preview.
+        settings: { ...dynamicPrerollSettings, fontStack: fontStackFor(nexupFonts, dynamicPrerollSettings.fontFamily) },
         theme: { ...selectedTheme },
         templateName: selectedTemplate?.name || 'Dynamic preroll',
         logoUrl,
@@ -24700,12 +25243,125 @@ const DashboardTiles = {
     }
   };
 
+  // Typefaces the generators can use. The list comes from the server because
+  // only the server knows which faces it can actually render with: the Coming
+  // Soon list is rebuilt headlessly by FFmpeg after every sync, so a font that
+  // exists only in this browser would silently fall back there.
+  const [nexupFonts, setNexupFonts] = React.useState([]);
+  const [nexupFontsNote, setNexupFontsNote] = React.useState('');
+  const [nexupFontUploading, setNexupFontUploading] = React.useState(false);
+  const loadedFontFacesRef = React.useRef(new Set());
+
+  const loadNexupFonts = React.useCallback(async () => {
+    try {
+      const response = await fetch(apiUrl('/nexup/fonts'));
+      if (!response.ok) {
+        // A 404 here means the running backend predates the font picker, which
+        // is the common case right after an update: the UI is served from the
+        // new build while the Python process is still the old one.
+        setNexupFonts([]);
+        setNexupFontsNote(response.status === 404
+          ? 'Font choices need a newer NeXroll backend than the one currently running. Restart NeXroll to pick up the update.'
+          : `Fonts could not be loaded (server said ${response.status}). The generators will use their template defaults.`);
+        return;
+      }
+      const data = await response.json();
+      const rows = Array.isArray(data.fonts) ? data.fonts : [];
+
+      // Register uploaded faces with the document so the canvas preview can
+      // draw with them. Built-ins already resolve through their CSS stack.
+      const withStacks = await Promise.all(rows.map(async font => {
+        // Anything served by URL has to be registered with the document before
+        // the canvas can draw with it: uploads, and the faces NeXroll ships
+        // (which are on the server, not on the viewer's machine). Host-installed
+        // built-ins already resolve through their CSS stack.
+        if (!font.url) {
+          return { ...font, previewStack: font.css };
+        }
+        const family = `NeXrollFont-${String(font.filename || '').replace(/[^A-Za-z0-9]+/g, '')}`;
+        const stack = `"${family}", Inter, "Segoe UI", Arial, sans-serif`;
+        if (!loadedFontFacesRef.current.has(family) && typeof window.FontFace === 'function') {
+          try {
+            const face = new window.FontFace(family, `url(${apiUrl(font.url)})`);
+            await face.load();
+            document.fonts.add(face);
+            loadedFontFacesRef.current.add(family);
+          } catch (err) {
+            // The picker still lists it: the server render is what matters and
+            // that reads the file directly. Only the preview loses fidelity.
+            console.warn('Could not load font for preview:', font.label, err);
+          }
+        }
+        return { ...font, previewStack: stack };
+      }));
+
+      setNexupFonts(withStacks);
+      // Say where the list comes from, because a Docker user and a Windows user
+      // legitimately see different lengths. What they share is the shipped set.
+      const shipped = Number(data.bundled_count || 0);
+      const hostCount = rows.filter(f => f.source === 'builtin').length;
+      setNexupFontsNote(
+        [
+          shipped ? `${shipped} ship with NeXroll` : '',
+          hostCount ? `${hostCount} installed on this server` : '',
+          '- only fonts the server can render are listed, so the preview matches the finished video.',
+        ].filter(Boolean).join(', ').replace(', -', ' -')
+      );
+    } catch (err) {
+      console.error('Failed to load fonts:', err);
+      setNexupFonts([]);
+      setNexupFontsNote('Fonts could not be loaded. The generators will use their template defaults.');
+    }
+  }, []);
+
+  React.useEffect(() => { loadNexupFonts(); }, [loadNexupFonts]);
+
+  const handleNexupFontUpload = async (file) => {
+    setNexupFontUploading(true);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const response = await fetch(apiUrl('/nexup/fonts/upload'), { method: 'POST', body });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'Font could not be uploaded.');
+      await loadNexupFonts();
+      showAlert(`Added ${data.label || data.filename}.`, 'success');
+    } catch (err) {
+      showAlert(err.message || 'Font could not be uploaded.', 'error');
+    } finally {
+      setNexupFontUploading(false);
+    }
+  };
+
+  const handleNexupFontDelete = async (font) => {
+    if (!window.confirm(`Delete the font "${font.label}"? Any generator using it goes back to its template default.`)) return;
+    try {
+      const response = await fetch(apiUrl(`/nexup/fonts/${encodeURIComponent(font.filename)}`), { method: 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'Font could not be deleted.');
+      // The server clears the reference; mirror that here so the picker does not
+      // keep showing a face that no longer exists.
+      if (dynamicPrerollSettings.fontFamily === font.id) {
+        setDynamicPrerollSettings(previous => ({ ...previous, fontFamily: '' }));
+      }
+      if (comingSoonListSettings.fontFamily === font.id) {
+        setComingSoonListSettings(previous => ({ ...previous, fontFamily: '' }));
+      }
+      await loadNexupFonts();
+      showAlert(`Deleted ${font.label}.`, 'success');
+    } catch (err) {
+      showAlert(err.message || 'Font could not be deleted.', 'error');
+    }
+  };
+
   const handleNexupAssetUpload = async (kind, file) => {
     const endpoint = {
       'dynamic-logo': '/nexup/preroll/upload-logo',
       'dynamic-audio': '/nexup/preroll/upload-audio',
+      'dynamic-backdrop': '/nexup/preroll/upload-backdrop',
       'coming-logo': '/nexup/coming-soon-list/upload-logo',
       'coming-audio': '/nexup/coming-soon-list/upload-audio',
+      'coming-backdrop': '/nexup/coming-soon-list/upload-backdrop',
     }[kind];
     if (!endpoint) return;
     const formData = new FormData();
@@ -24720,6 +25376,10 @@ const DashboardTiles = {
         // data.duration is what makes the "match length to the soundtrack"
         // control appear; without it the control stays hidden until a reload.
         setDynamicPrerollSettings(previous => ({ ...previous, customAudioFilename: data.filename || file.name, customAudioDuration: data.duration || null, audioMode: 'custom' }));
+      } else if (kind === 'dynamic-backdrop') {
+        setDynamicPrerollSettings(previous => ({ ...previous, customBackdropFilename: data.filename || file.name, customBackdropDuration: data.duration || null }));
+      } else if (kind === 'coming-backdrop') {
+        setComingSoonListSettings(previous => ({ ...previous, customBackdropFilename: data.filename || file.name, customBackdropDuration: data.duration || null }));
       } else if (kind === 'coming-logo') {
         setComingSoonListSettings(previous => ({ ...previous, customLogoFilename: data.filename || file.name }));
       } else {
@@ -24735,8 +25395,10 @@ const DashboardTiles = {
     const endpoint = {
       'dynamic-logo': '/nexup/preroll/upload-logo',
       'dynamic-audio': '/nexup/preroll/upload-audio',
+      'dynamic-backdrop': '/nexup/preroll/upload-backdrop',
       'coming-logo': '/nexup/coming-soon-list/upload-logo',
       'coming-audio': '/nexup/coming-soon-list/upload-audio',
+      'coming-backdrop': '/nexup/coming-soon-list/upload-backdrop',
     }[kind];
     if (!endpoint) return;
     try {
@@ -24746,6 +25408,10 @@ const DashboardTiles = {
         setDynamicPrerollSettings(previous => ({ ...previous, customLogoFilename: null }));
       } else if (kind === 'dynamic-audio') {
         setDynamicPrerollSettings(previous => ({ ...previous, customAudioFilename: null, customAudioDuration: null, audioMode: 'default' }));
+      } else if (kind === 'dynamic-backdrop') {
+        setDynamicPrerollSettings(previous => ({ ...previous, customBackdropFilename: null, customBackdropDuration: null }));
+      } else if (kind === 'coming-backdrop') {
+        setComingSoonListSettings(previous => ({ ...previous, customBackdropFilename: null, customBackdropDuration: null }));
       } else if (kind === 'coming-logo') {
         setComingSoonListSettings(previous => ({ ...previous, customLogoFilename: null }));
       } else {
@@ -24827,8 +25493,16 @@ const DashboardTiles = {
         dynamicQrUrl={dynamicPrerollSettings.qrData?.trim() ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(dynamicPrerollSettings.qrData.trim())}` : ''}
         comingLogoUrl={`${apiUrl('/nexup/coming-soon-list/logo-image')}?v=${encodeURIComponent(comingSoonListSettings.customLogoFilename || 'none')}`}
         comingQrUrl={comingSoonListSettings.qrData?.trim() ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(comingSoonListSettings.qrData.trim())}&size=260` : ''}
+        // Cache-busted on the filename so replacing the clip refreshes the preview.
+        dynamicBackdropUrl={dynamicPrerollSettings.customBackdropFilename ? `${apiUrl('/nexup/preroll/backdrop-video')}?v=${encodeURIComponent(dynamicPrerollSettings.customBackdropFilename)}` : ''}
+        comingBackdropUrl={comingSoonListSettings.customBackdropFilename ? `${apiUrl('/nexup/coming-soon-list/backdrop-video')}?v=${encodeURIComponent(comingSoonListSettings.customBackdropFilename)}` : ''}
         onUploadAsset={handleNexupAssetUpload}
         onRemoveAsset={handleNexupAssetRemove}
+        fonts={nexupFonts}
+        fontsNote={nexupFontsNote}
+        fontUploading={nexupFontUploading}
+        onUploadFont={handleNexupFontUpload}
+        onDeleteFont={handleNexupFontDelete}
         comingSettings={comingSoonListSettings}
         setComingSettings={setComingSoonListSettings}
         comingGenerating={comingSoonListGenerating}
@@ -29267,7 +29941,8 @@ const DashboardTiles = {
                 {[
                   { value: 'category', label: 'Category', icon: <Folder size={13} /> },
                   { value: 'sequence', label: 'NeX-Up Sequence', icon: <Layers size={13} /> },
-                  { value: 'coming_soon', label: 'NeX-Up Coming Soon', icon: <Film size={13} /> }
+                  { value: 'coming_soon', label: 'NeX-Up Coming Soon', icon: <Film size={13} /> },
+                  { value: 'dynamic', label: 'Dynamic Preroll', icon: <Sparkles size={13} /> }
                 ].map(opt => (
                   <button
                     key={opt.value}
@@ -29340,6 +30015,42 @@ const DashboardTiles = {
                 <p className="nx-filler-hint">
                   Displays upcoming movies/shows from NeX-Up as the filler preroll.
                 </p>
+              </div>
+            )}
+
+            {/* Dynamic preroll selector */}
+            {fillerSettings.type === 'dynamic' && (
+              <div className="nx-filler-block">
+                <label className="nx-filler-label">Generated Preroll</label>
+                {generatedPrerolls.length === 0 ? (
+                  <p className="nx-filler-hint">
+                    No generated prerolls yet.{' '}
+                    <button type="button" className="nx-linkbtn" onClick={() => setActiveTab('nexup/generator')}>
+                      Create one in the Generator Studio
+                    </button>{' '}
+                    and it will appear here.
+                  </p>
+                ) : (
+                  <>
+                    <select
+                      className="input"
+                      value={fillerSettings.dynamic_filename || ''}
+                      disabled={fillerLoading}
+                      onChange={event => updateFillerSettings({ dynamic_filename: event.target.value })}
+                    >
+                      <option value="">Select a generated preroll…</option>
+                      {generatedPrerolls.map(item => (
+                        <option key={item.filename} value={item.filename}>
+                          {item.name || item.template_id || item.filename}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="nx-filler-hint">
+                      Plays this generated preroll whenever no schedule is active.
+                      Regenerating it under the same name keeps this selection working.
+                    </p>
+                  </>
+                )}
               </div>
             )}
 

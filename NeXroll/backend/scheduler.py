@@ -274,6 +274,12 @@ def resolve_category_sequence_block(
             return shuffle_bag_sample(rotation_key, pool, selected_count)
         if len(pool) > selected_count:
             return random.sample(pool, selected_count)
+        # Asking for the whole pool is still a random block: shuffle it rather
+        # than falling through to the sequential return, which handed back
+        # ascending id order every single time.
+        shuffled = list(pool)
+        random.shuffle(shuffled)
+        return shuffled
     return pool[:selected_count]
 
 
@@ -437,6 +443,22 @@ class Scheduler:
                     return True
                 else:
                     _scheduler_log(f"Failed to apply filler Coming Soon List", level="ERROR")
+                    return False
+            elif filler_type == "dynamic":
+                filler_filename = getattr(setting, "filler_dynamic_filename", None)
+                if not filler_filename:
+                    _scheduler_log("Filler is set to a dynamic preroll but none is chosen", level="WARNING")
+                    return False
+                applied_ok = self._apply_generated_video_to_plex(
+                    filler_filename, db, f"dynamic preroll ({filler_filename})")
+                if applied_ok:
+                    setting.filler_active = f"dynamic:{filler_filename}"
+                    setting.active_category = None
+                    db.commit()
+                    _scheduler_log(f"Filler dynamic preroll ({filler_filename}) applied immediately")
+                    return True
+                else:
+                    _scheduler_log("Failed to apply filler dynamic preroll", level="ERROR")
                     return False
             else:
                 _scheduler_log(f"Unknown filler type: {filler_type}", level="ERROR")
@@ -799,7 +821,7 @@ class Scheduler:
     def _regenerate_coming_soon_lists(self, db: Session, setting):
         """Regenerate Coming Soon List videos after sync"""
         from pathlib import Path
-        from backend.dynamic_preroll import DynamicPrerollGenerator, resolve_render_settings
+        from backend.dynamic_preroll import DynamicPrerollGenerator, resolve_render_settings, resolve_font_selection
         import datetime
         
         storage_path = getattr(setting, 'nexup_storage_path', None)
@@ -872,6 +894,18 @@ class Scheduler:
         output_dir.mkdir(parents=True, exist_ok=True)
         
         generator = DynamicPrerollGenerator(str(output_dir))
+        # Honor the chosen typeface here too: this is the headless path that
+        # rebuilds the list after a sync, with no browser to fall back on.
+        try:
+            _storage = getattr(setting, 'nexup_storage_path', None)
+            _font = resolve_font_selection(
+                getattr(setting, 'nexup_coming_soon_list_font_family', None),
+                os.path.join(_storage, 'fonts') if _storage else None,
+            )
+            if _font:
+                generator.set_font_override(_font)
+        except Exception as e:
+            _scheduler_log(f"Could not apply Coming Soon font choice: {e}", level="WARNING")
         if not generator.check_ffmpeg_available():
             _scheduler_log("NeX-Up auto-regen: FFmpeg not found, skipping Coming Soon List generation", level="ERROR")
             return
@@ -1835,7 +1869,25 @@ class Scheduler:
                                     db.commit()
                                 filler_applied = True
                                 return  # Coming soon applied, exit early
-                            
+
+                            elif filler_type == "dynamic":
+                                filler_filename = getattr(setting, "filler_dynamic_filename", None)
+                                if filler_filename:
+                                    state_key = f"filler_dynamic:{filler_filename}"
+                                    if self._last_logged_state != state_key:
+                                        _scheduler_log(f"No active schedules; using FILLER dynamic preroll ({filler_filename})")
+                                        self._last_logged_state = state_key
+                                        self._last_logged_time = now
+                                    applied_ok = self._apply_generated_video_to_plex(
+                                        filler_filename, db, f"dynamic preroll ({filler_filename})")
+                                    if applied_ok:
+                                        setting.filler_active = f"dynamic:{filler_filename}"
+                                        setting.active_category = None
+                                        setting.active_schedule_id = None
+                                        db.commit()
+                                    filler_applied = True
+                                    return  # Dynamic preroll applied, exit early
+
                             if not filler_applied:
                                 state_key = "filler_not_configured"
                                 if self._last_logged_state != state_key:
@@ -2998,17 +3050,14 @@ class Scheduler:
                         for step_index, step in enumerate(seq):
                             stype = str(step.get("type", "")).lower()
                             rotation_key = ("plex", "blend", schedule.id, "block", step_index)
-                            if stype == "random":
-                                cid = int(step.get("category_id") or schedule.category_id or 0)
-                                if not cid:
-                                    continue
-                                count = int(step.get("count") or 1)
-                                pool = _prerolls_for_category(cid)
-                                if pool:
-                                    k = min(max(count, 1), len(pool))
-                                    picks = shuffle_bag_sample(rotation_key, pool, k)
-                                    for p in picks:
-                                        paths.append(os.path.abspath(p.path))
+                            if stype in {"random", "sequential"}:
+                                for p in resolve_category_sequence_block(
+                                    step,
+                                    db,
+                                    fallback_category_id=schedule.category_id,
+                                    rotation_key=rotation_key,
+                                ):
+                                    paths.append(os.path.abspath(p.path))
                             elif stype == "fixed":
                                 pids = []
                                 ids_array = step.get("preroll_ids")
@@ -3069,7 +3118,10 @@ class Scheduler:
             
             # Otherwise, use the category's prerolls
             elif schedule.category_id:
-                pool = _prerolls_for_category(schedule.category_id)
+                pool = [
+                    preroll for preroll in _prerolls_for_category(schedule.category_id)
+                    if preroll.path and os.path.exists(preroll.path)
+                ]
                 # For blending, take a random sample (up to 3) from each category to keep it manageable
                 if pool:
                     k = min(3, len(pool))
@@ -3380,33 +3432,36 @@ class Scheduler:
             return False
 
     def _apply_coming_soon_list_to_plex(self, layout: str, db: Session) -> bool:
-        """
-        Apply a Coming Soon List video to Plex (used for filler mode).
-        Layout can be 'grid' or 'list'.
+        """Apply a Coming Soon List video to Plex (used for filler mode)."""
+        return self._apply_generated_video_to_plex(
+            f"coming_soon_{layout}.mp4", db, f"Coming Soon List ({layout})")
+
+    def _apply_generated_video_to_plex(self, filename: str, db: Session, label: str) -> bool:
+        """Apply one video from the NeX-Up generated folder as the Plex preroll.
+
+        Coming Soon lists and dynamic prerolls both live in dynamic_prerolls/ and
+        differ only by filename, so filler can point at either through here.
         """
         try:
             setting = db.query(models.Setting).first()
             if not setting:
-                _scheduler_log("Settings not found; cannot apply Coming Soon List", level="ERROR")
+                _scheduler_log(f"Settings not found; cannot apply {label}", level="ERROR")
                 return False
             
             # Find the Coming Soon List video file
             storage_path = getattr(setting, "nexup_storage_path", None)
             if not storage_path:
-                _scheduler_log("NeX-Up storage path not configured; cannot find Coming Soon List", level="WARNING")
+                _scheduler_log(f"NeX-Up storage path not configured; cannot find {label}", level="WARNING")
                 return False
             
-            # The coming soon list files are named: coming_soon_grid.mp4 or coming_soon_list.mp4
-            # They are generated in the dynamic_prerolls subfolder
-            filename = f"coming_soon_{layout}.mp4"
             video_path = os.path.join(storage_path, "dynamic_prerolls", filename)
             
             if not os.path.exists(video_path):
-                _scheduler_log(f"Coming Soon List video not found: {video_path}", level="WARNING")
+                _scheduler_log(f"{label} video not found: {video_path}", level="WARNING")
                 return False
             
             video_path = os.path.abspath(video_path)
-            _scheduler_log(f"FILLER: Applying Coming Soon List ({layout}) from {video_path}")
+            _scheduler_log(f"FILLER: Applying {label} from {video_path}")
             
             # Get path mappings
             mappings = []
@@ -3456,22 +3511,22 @@ class Scheduler:
             if not setting.plex_url:
                 # For Jellyfin/Emby, Coming Soon videos are served via the plugin endpoint
                 if getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None):
-                    _scheduler_log(f"Plex not configured; applying Coming Soon List for plugin-based server(s)")
+                    _scheduler_log(f"Plex not configured; applying {label} for plugin-based server(s)")
                     return True
-                _scheduler_log("Plex not configured; cannot apply Coming Soon List", level="WARNING")
+                _scheduler_log(f"Plex not configured; cannot apply {label}", level="WARNING")
                 return False
             
             connector = PlexConnector(setting.plex_url, setting.plex_token)
-            _scheduler_log(f"FILLER: Sending Coming Soon List to Plex...")
+            _scheduler_log(f"FILLER: Sending {label} to Plex...")
             ok = connector.set_preroll(plex_path)
             if ok:
-                _scheduler_log(f"FILLER: Coming Soon List ({layout}) applied successfully")
+                _scheduler_log(f"FILLER: {label} applied successfully")
             else:
-                _scheduler_log(f"FILLER: Failed to apply Coming Soon List to Plex", level="ERROR")
+                _scheduler_log(f"FILLER: Failed to apply {label} to Plex", level="ERROR")
             
             return ok
         except Exception as e:
-            _scheduler_log(f"Error applying Coming Soon List: {e}", level="ERROR")
+            _scheduler_log(f"Error applying {label}: {e}", level="ERROR")
             return False
 
     def _get_active_schedules(self) -> List[models.Schedule]:

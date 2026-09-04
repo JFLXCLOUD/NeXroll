@@ -1,0 +1,8 @@
+# core.autocrlf is enabled for this repo, so anything git mistakes for text gets
+# line-ending conversion on checkout. That would silently corrupt a font file.
+# Mark the binary formats explicitly rather than relying on auto-detection.
+*.ttf binary
+*.otf binary
+*.ttc binary
+*.woff binary
+*.woff2 binary

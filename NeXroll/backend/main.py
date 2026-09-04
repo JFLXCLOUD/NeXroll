@@ -59,10 +59,16 @@ from backend.scheduler import (
 )
 from backend import secure_store
 from backend.dynamic_preroll import (
+    BUNDLED_FONTS,
     DynamicPrerollGenerator,
+    FONT_LIBRARY,
+    FONT_UPLOAD_EXTENSIONS,
+    available_builtin_fonts,
+    bundled_fonts_dir,
     resolve_dynamic_audio_mode,
     resolve_dynamic_font_scale,
     resolve_dynamic_text_color,
+    resolve_font_selection,
     resolve_render_settings,
     set_verbose_logger as set_dp_verbose_logger,
 )
@@ -281,6 +287,10 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_include_audio", "nexup_coming_soon_list_include_audio BOOLEAN DEFAULT 0"),
                 ("nexup_coming_soon_list_custom_audio_path", "nexup_coming_soon_list_custom_audio_path TEXT"),
                 ("nexup_coming_soon_list_custom_logo_path", "nexup_coming_soon_list_custom_logo_path TEXT"),
+                ("nexup_coming_soon_list_custom_backdrop_path", "nexup_coming_soon_list_custom_backdrop_path TEXT"),
+                ("nexup_coming_soon_list_backdrop_dim", "nexup_coming_soon_list_backdrop_dim INTEGER DEFAULT 45"),
+                ("nexup_dynamic_preroll_custom_backdrop_path", "nexup_dynamic_preroll_custom_backdrop_path TEXT"),
+                ("nexup_dynamic_preroll_backdrop_dim", "nexup_dynamic_preroll_backdrop_dim INTEGER DEFAULT 45"),
                 ("nexup_coming_soon_list_logo_mode", "nexup_coming_soon_list_logo_mode TEXT DEFAULT 'watermark'"),
                 ("nexup_coming_soon_list_language", "nexup_coming_soon_list_language TEXT DEFAULT 'en'"),
                 ("nexup_dynamic_preroll_language", "nexup_dynamic_preroll_language TEXT DEFAULT 'en'"),
@@ -288,6 +298,7 @@ def ensure_schema() -> None:
                 ("nexup_dynamic_preroll_frame_rate", "nexup_dynamic_preroll_frame_rate INTEGER DEFAULT 30"),
                 ("nexup_dynamic_preroll_render_quality", "nexup_dynamic_preroll_render_quality TEXT DEFAULT 'high'"),
                 ("nexup_dynamic_preroll_font_scale", "nexup_dynamic_preroll_font_scale REAL DEFAULT 1.0"),
+                ("nexup_dynamic_preroll_font_family", "nexup_dynamic_preroll_font_family TEXT"),
                 ("nexup_dynamic_preroll_title_color", "nexup_dynamic_preroll_title_color TEXT"),
                 ("nexup_dynamic_preroll_subject_color", "nexup_dynamic_preroll_subject_color TEXT"),
                 ("nexup_dynamic_preroll_audio_mode", "nexup_dynamic_preroll_audio_mode TEXT DEFAULT 'none'"),
@@ -302,6 +313,7 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_theme", "nexup_coming_soon_list_theme TEXT"),
                 ("nexup_coming_soon_list_qr_data", "nexup_coming_soon_list_qr_data TEXT"),
                 ("nexup_coming_soon_list_font_scale", "nexup_coming_soon_list_font_scale REAL DEFAULT 1.0"),
+                ("nexup_coming_soon_list_font_family", "nexup_coming_soon_list_font_family TEXT"),
                 ("nexup_coming_soon_list_title_color", "nexup_coming_soon_list_title_color TEXT"),
                 ("nexup_coming_soon_list_date_color", "nexup_coming_soon_list_date_color TEXT"),
                 ("nexup_coming_soon_list_available_color", "nexup_coming_soon_list_available_color TEXT"),
@@ -622,6 +634,7 @@ def ensure_schema() -> None:
             filler_columns = [
                 ("filler_enabled", "filler_enabled BOOLEAN DEFAULT 0"),
                 ("filler_type", "filler_type TEXT DEFAULT 'category'"),
+                ("filler_dynamic_filename", "filler_dynamic_filename TEXT"),
                 ("filler_category_id", "filler_category_id INTEGER"),
                 ("filler_sequence_id", "filler_sequence_id INTEGER"),
                 ("filler_coming_soon_layout", "filler_coming_soon_layout TEXT DEFAULT 'grid'"),
@@ -14593,22 +14606,19 @@ def _preview_payload_from_intent(setting, db) -> Optional[dict]:
                     p = db.query(models.Preroll).filter(models.Preroll.id == int(pid)).first()
                     if p:
                         rows.append(_row_for_preroll(p))
-            elif btype == "random":
-                # Plex resolves a "random" block by picking ONE preroll from the pool
-                # at playback time. Mirror that here so the dashboard preview matches
-                # actual playback — previously every preroll in the category was added
-                # to the preview list and played sequentially, contradicting what the
-                # user sees in Plex.
-                cid = block.get("category_id") or schedule.category_id
-                if cid:
-                    pool = db.query(models.Preroll).filter(
-                        or_(
-                            models.Preroll.category_id == cid,
-                            models.Preroll.categories.any(models.Category.id == cid),
-                        )
-                    ).distinct().all()
-                    if pool:
-                        rows.append(_row_for_preroll(random.choice(pool)))
+            elif btype in ("random", "sequential"):
+                # Resolve exactly the way playback does. This used to be a
+                # hand-rolled query that skipped the enabled filter, ignored
+                # missing files, always took one preroll regardless of the
+                # block's count, and dropped sequential blocks entirely — so
+                # the preview could list prerolls that never play. No rotation
+                # key: a preview must not consume the live rotation bag.
+                for preroll in resolve_category_sequence_block(
+                    block,
+                    db,
+                    fallback_category_id=schedule.category_id,
+                ):
+                    rows.append(_row_for_preroll(preroll))
             elif btype == "nexup_trailers":
                 # Mirror /sequences/resolve-preview-blocks so the dashboard preview
                 # includes trailer blocks instead of silently dropping them.
@@ -18800,7 +18810,8 @@ def get_filler_settings(db: Session = Depends(get_db)):
             "type": "category",
             "category_id": None,
             "sequence_id": None,
-            "coming_soon_layout": "grid"
+            "coming_soon_layout": "grid",
+            "dynamic_filename": None
         }
     
     return {
@@ -18808,7 +18819,8 @@ def get_filler_settings(db: Session = Depends(get_db)):
         "type": getattr(setting, 'filler_type', 'category'),
         "category_id": getattr(setting, 'filler_category_id', None),
         "sequence_id": getattr(setting, 'filler_sequence_id', None),
-        "coming_soon_layout": getattr(setting, 'filler_coming_soon_layout', 'grid')
+        "coming_soon_layout": getattr(setting, 'filler_coming_soon_layout', 'grid'),
+        "dynamic_filename": getattr(setting, 'filler_dynamic_filename', None)
     }
 
 @app.put("/settings/filler")
@@ -18818,6 +18830,7 @@ def update_filler_settings(
     category_id: int = None,
     sequence_id: int = None,
     coming_soon_layout: str = None,
+    dynamic_filename: str = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -18841,8 +18854,8 @@ def update_filler_settings(
     if enabled is not None:
         setting.filler_enabled = enabled
     if filler_type is not None:
-        if filler_type not in ['category', 'sequence', 'coming_soon']:
-            return {"error": f"Invalid filler type: {filler_type}. Must be 'category', 'sequence', or 'coming_soon'"}
+        if filler_type not in ['category', 'sequence', 'coming_soon', 'dynamic']:
+            return {"error": f"Invalid filler type: {filler_type}. Must be 'category', 'sequence', 'coming_soon', or 'dynamic'"}
         setting.filler_type = filler_type
     if category_id is not None:
         # Validate category exists
@@ -18860,6 +18873,16 @@ def update_filler_settings(
         if coming_soon_layout not in ['grid', 'list']:
             return {"error": f"Invalid coming_soon_layout: {coming_soon_layout}. Must be 'grid' or 'list'"}
         setting.filler_coming_soon_layout = coming_soon_layout
+    if dynamic_filename is not None:
+        # '' clears the choice; otherwise the file has to exist where the
+        # generator writes, or filler would silently do nothing at runtime.
+        cleaned = dynamic_filename.strip()
+        if cleaned:
+            storage = getattr(setting, 'nexup_storage_path', None)
+            candidate = os.path.join(storage, 'dynamic_prerolls', cleaned) if storage else None
+            if not candidate or not os.path.isfile(candidate):
+                return {"error": f"Generated preroll not found: {cleaned}"}
+        setting.filler_dynamic_filename = cleaned or None
     
     setting.updated_at = datetime.datetime.utcnow()
     db.commit()
@@ -18898,6 +18921,7 @@ def update_filler_settings(
         "category_id": setting.filler_category_id,
         "sequence_id": setting.filler_sequence_id,
         "coming_soon_layout": setting.filler_coming_soon_layout,
+        "dynamic_filename": setting.filler_dynamic_filename,
         "applied": applied
     }
 
@@ -19081,6 +19105,9 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_include_audio": getattr(setting, 'nexup_coming_soon_list_include_audio', False),
         "coming_soon_list_custom_audio_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_audio_path', '') or '') or None,
         "coming_soon_list_custom_logo_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_logo_path', '') or '') or None,
+        "coming_soon_list_custom_backdrop_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_backdrop_path', '') or '') or None,
+        "coming_soon_list_custom_backdrop_duration": _audio_duration_seconds(getattr(setting, 'nexup_coming_soon_list_custom_backdrop_path', None)),
+        "coming_soon_list_backdrop_dim": getattr(setting, 'nexup_coming_soon_list_backdrop_dim', 45),
         "coming_soon_list_logo_mode": getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark'),
         "coming_soon_list_language": getattr(setting, 'nexup_coming_soon_list_language', 'en'),
         "coming_soon_list_resolution": getattr(setting, 'nexup_coming_soon_list_resolution', '1080'),
@@ -19089,6 +19116,7 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_theme": getattr(setting, 'nexup_coming_soon_list_theme', None),
         "coming_soon_list_qr_data": getattr(setting, 'nexup_coming_soon_list_qr_data', None) or "",
         "coming_soon_list_font_scale": getattr(setting, 'nexup_coming_soon_list_font_scale', 1.0) or 1.0,
+        "coming_soon_list_font_family": getattr(setting, 'nexup_coming_soon_list_font_family', None),
         "coming_soon_list_title_color": getattr(setting, 'nexup_coming_soon_list_title_color', None),
         "coming_soon_list_date_color": getattr(setting, 'nexup_coming_soon_list_date_color', None),
         "coming_soon_list_available_color": getattr(setting, 'nexup_coming_soon_list_available_color', None),
@@ -19099,6 +19127,7 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "dynamic_preroll_frame_rate": getattr(setting, 'nexup_dynamic_preroll_frame_rate', 30),
         "dynamic_preroll_render_quality": getattr(setting, 'nexup_dynamic_preroll_render_quality', 'high'),
         "dynamic_preroll_font_scale": getattr(setting, 'nexup_dynamic_preroll_font_scale', 1.0),
+        "dynamic_preroll_font_family": getattr(setting, 'nexup_dynamic_preroll_font_family', None),
         "dynamic_preroll_title_color": getattr(setting, 'nexup_dynamic_preroll_title_color', None),
         "dynamic_preroll_subject_color": getattr(setting, 'nexup_dynamic_preroll_subject_color', None),
         "dynamic_preroll_audio_mode": resolve_dynamic_audio_mode(getattr(setting, 'nexup_dynamic_preroll_audio_mode', 'none')),
@@ -19146,9 +19175,11 @@ def update_nexup_settings(
     coming_soon_list_resolution: Optional[str] = None,
     coming_soon_list_frame_rate: Optional[int] = None,
     coming_soon_list_render_quality: Optional[str] = None,
+    coming_soon_list_backdrop_dim: Optional[int] = None,
     coming_soon_list_theme: Optional[str] = None,
     coming_soon_list_qr_data: Optional[str] = None,
     coming_soon_list_font_scale: Optional[float] = None,
+    coming_soon_list_font_family: Optional[str] = None,
     coming_soon_list_title_color: Optional[str] = None,
     coming_soon_list_date_color: Optional[str] = None,
     coming_soon_list_available_color: Optional[str] = None,
@@ -19162,9 +19193,18 @@ def update_nexup_settings(
     dynamic_preroll_frame_rate: Optional[int] = None,
     dynamic_preroll_render_quality: Optional[str] = None,
     dynamic_preroll_font_scale: Optional[float] = None,
+    dynamic_preroll_font_family: Optional[str] = None,
+    dynamic_preroll_backdrop_dim: Optional[int] = None,
     dynamic_preroll_title_color: Optional[str] = None,
     dynamic_preroll_subject_color: Optional[str] = None,
     dynamic_preroll_audio_mode: Optional[str] = None,
+    # The four fields the Custom Message and QR templates are entirely about.
+    # They were only ever written as a side effect of generating, so pressing
+    # "Save dynamic defaults" silently discarded them.
+    dynamic_preroll_custom_headline: Optional[str] = None,
+    dynamic_preroll_custom_subtext: Optional[str] = None,
+    dynamic_preroll_qr_data: Optional[str] = None,
+    dynamic_preroll_qr_caption: Optional[str] = None,
     release_date_preference: Optional[str] = None,
     coming_soon_available_days: Optional[int] = None,
     coming_soon_max_available_now: Optional[int] = None,
@@ -19320,6 +19360,9 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_frame_rate = resolve_render_settings(frame_rate=coming_soon_list_frame_rate)['frame_rate']
     if coming_soon_list_render_quality is not None:
         setting.nexup_coming_soon_list_render_quality = resolve_render_settings(quality=coming_soon_list_render_quality)['quality']
+    if coming_soon_list_backdrop_dim is not None:
+        # Clamped to match what the renderer will accept.
+        setting.nexup_coming_soon_list_backdrop_dim = max(0, min(90, int(coming_soon_list_backdrop_dim)))
     if coming_soon_list_theme is not None:
         # Empty string clears the theme and falls back to the manual colours.
         setting.nexup_coming_soon_list_theme = coming_soon_list_theme.strip() or None
@@ -19327,6 +19370,9 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_qr_data = coming_soon_list_qr_data.strip() or None
     if coming_soon_list_font_scale is not None:
         setting.nexup_coming_soon_list_font_scale = max(0.85, min(1.6, float(coming_soon_list_font_scale)))
+    if coming_soon_list_font_family is not None:
+        setting.nexup_coming_soon_list_font_family = _normalize_font_choice(
+            coming_soon_list_font_family, setting)
     # An empty string clears the override and restores the inherited colour.
     if coming_soon_list_title_color is not None:
         setting.nexup_coming_soon_list_title_color = coming_soon_list_title_color.strip() or None
@@ -19353,14 +19399,29 @@ def update_nexup_settings(
         setting.nexup_dynamic_preroll_frame_rate = resolve_render_settings(frame_rate=dynamic_preroll_frame_rate)['frame_rate']
     if dynamic_preroll_render_quality is not None:
         setting.nexup_dynamic_preroll_render_quality = resolve_render_settings(quality=dynamic_preroll_render_quality)['quality']
+    if dynamic_preroll_backdrop_dim is not None:
+        setting.nexup_dynamic_preroll_backdrop_dim = max(0, min(90, int(dynamic_preroll_backdrop_dim)))
     if dynamic_preroll_font_scale is not None:
         setting.nexup_dynamic_preroll_font_scale = resolve_dynamic_font_scale(dynamic_preroll_font_scale)
+    if dynamic_preroll_font_family is not None:
+        setting.nexup_dynamic_preroll_font_family = _normalize_font_choice(
+            dynamic_preroll_font_family, setting)
     if dynamic_preroll_title_color is not None:
         setting.nexup_dynamic_preroll_title_color = resolve_dynamic_text_color(dynamic_preroll_title_color)
     if dynamic_preroll_subject_color is not None:
         setting.nexup_dynamic_preroll_subject_color = resolve_dynamic_text_color(dynamic_preroll_subject_color)
     if dynamic_preroll_audio_mode is not None:
         setting.nexup_dynamic_preroll_audio_mode = resolve_dynamic_audio_mode(dynamic_preroll_audio_mode)
+    # An empty string clears the stored value, matching how the colour overrides
+    # behave, so a headline can be blanked rather than only replaced.
+    if dynamic_preroll_custom_headline is not None:
+        setting.nexup_dynamic_preroll_custom_headline = dynamic_preroll_custom_headline.strip() or None
+    if dynamic_preroll_custom_subtext is not None:
+        setting.nexup_dynamic_preroll_custom_subtext = dynamic_preroll_custom_subtext.strip() or None
+    if dynamic_preroll_qr_data is not None:
+        setting.nexup_dynamic_preroll_qr_data = dynamic_preroll_qr_data.strip() or None
+    if dynamic_preroll_qr_caption is not None:
+        setting.nexup_dynamic_preroll_qr_caption = dynamic_preroll_qr_caption.strip() or None
     # Release date preference
     if release_date_preference is not None:
         if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
@@ -20288,6 +20349,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         output_dir.mkdir(parents=True, exist_ok=True)
         
         generator = DynamicPrerollGenerator(str(output_dir))
+        _apply_font_choice(generator, setting, 'nexup_coming_soon_list_font_family')
         
         if not generator.check_ffmpeg_available():
             _file_log("Coming Soon List auto-regen: FFmpeg not available", level="WARNING")
@@ -20307,6 +20369,10 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         for layout in layouts_to_generate:
             output_filename = f"coming_soon_{layout}.mp4"
             
+            _auto_backdrop = getattr(setting, 'nexup_coming_soon_list_custom_backdrop_path', None)
+            if _auto_backdrop and not os.path.isfile(_auto_backdrop):
+                _auto_backdrop = None
+
             output_path = generator.generate_coming_soon_list(
                 items=items,
                 server_name=server_name,
@@ -20330,6 +20396,12 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 audio_bitrate=render['audio_bitrate'],
                 theme=list_theme,
                 qr_data=list_qr_data,
+                # An uploaded clip is the only backdrop that survives here: the
+                # themed one is recorded in a browser, and a sync has none, which
+                # is why auto-regenerated lists otherwise fall back to a still.
+                backdrop_video=_auto_backdrop,
+                backdrop_dim=(getattr(setting, 'nexup_coming_soon_list_backdrop_dim', 45)
+                              if _auto_backdrop else 0),
                 font_scale=getattr(setting, 'nexup_coming_soon_list_font_scale', 1.0) or 1.0,
                 title_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_title_color', None)),
                 date_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_date_color', None)),
@@ -22821,7 +22893,8 @@ async def generate_dynamic_preroll(
     output_dir.mkdir(parents=True, exist_ok=True)
     
     generator = DynamicPrerollGenerator(str(output_dir))
-    
+    _apply_font_choice(generator, setting, 'nexup_dynamic_preroll_font_family')
+
     if not generator.check_ffmpeg_available():
         raise HTTPException(status_code=500, detail="FFmpeg not found. Please install FFmpeg to generate dynamic prerolls.")
     
@@ -22969,6 +23042,268 @@ def _register_coming_soon_list_to_category(db: Session, output_path: Path, layou
             _file_log(f"Registered Coming Soon List to category: {output_path.name}")
     except Exception as e:
         _file_log(f"Error registering Coming Soon List to category: {e}")
+
+
+def _nexup_font_dir(setting) -> Optional[Path]:
+    """Where uploaded typefaces live. None when NeX-Up storage is unset."""
+    storage_path = getattr(setting, 'nexup_storage_path', None) if setting else None
+    if not storage_path:
+        return None
+    return Path(storage_path) / "fonts"
+
+
+def _uploaded_fonts(setting) -> List[dict]:
+    """Every uploaded face, newest first."""
+    font_dir = _nexup_font_dir(setting)
+    if not font_dir or not font_dir.is_dir():
+        return []
+    rows = []
+    for entry in font_dir.iterdir():
+        if not entry.is_file() or entry.suffix.lower() not in FONT_UPLOAD_EXTENSIONS:
+            continue
+        try:
+            stat = entry.stat()
+        except Exception:
+            continue
+        rows.append({
+            'id': f'custom:{entry.name}',
+            # The stem is what the user recognizes; the family name inside the
+            # file needs a parser we do not ship, and the filename is what they
+            # chose when uploading anyway.
+            'label': entry.stem.replace('_', ' ').replace('-', ' ').strip() or entry.name,
+            'category': 'Uploaded',
+            # The browser loads this through FontFace() under a generated family
+            # name, so the CSS stack is that name plus a sane fallback.
+            'css': None,
+            'source': 'custom',
+            'filename': entry.name,
+            'size_bytes': stat.st_size,
+            'url': f'/nexup/fonts/file/{entry.name}',
+        })
+    rows.sort(key=lambda row: row['label'].lower())
+    return rows
+
+
+def _normalize_font_choice(value, setting) -> Optional[str]:
+    """Keep only a choice that resolves to a real file on this machine.
+
+    An empty string clears the override back to the template default. Anything
+    that no longer resolves (an uninstalled face, a deleted upload) is also
+    cleared rather than stored, so the picker can never claim a font that would
+    silently fall back at render time.
+    """
+    text = str(value or '').strip()
+    if not text:
+        return None
+    font_dir = _nexup_font_dir(setting)
+    return text if resolve_font_selection(text, font_dir) else None
+
+
+def _apply_font_choice(generator, setting, attr: str) -> None:
+    """Point a generator at the chosen typeface for this render.
+
+    Silently leaves the template defaults in place when nothing is chosen or the
+    choice no longer resolves, which is the same outcome as before the picker
+    existed.
+    """
+    try:
+        path = resolve_font_selection(
+            getattr(setting, attr, None), _nexup_font_dir(setting)
+        )
+        if path:
+            generator.set_font_override(path)
+    except Exception as e:
+        _file_log(f"[Font] Could not apply font choice from {attr}: {e}", level="WARNING")
+
+
+@app.get("/nexup/fonts")
+def list_nexup_fonts(db: Session = Depends(get_db)):
+    """Typefaces the generators can actually use on this machine.
+
+    Built-ins are probed against the filesystem rather than simply listed: a
+    Docker host ships only DejaVu/Liberation, and offering Windows faces there
+    would promise a render that silently falls back.
+    """
+    setting = db.query(models.Setting).first()
+    builtin = available_builtin_fonts()
+    uploaded = _uploaded_fonts(setting)
+    return {
+        "fonts": builtin + uploaded,
+        "builtin_count": len(builtin),
+        "uploaded_count": len(uploaded),
+        "upload_extensions": list(FONT_UPLOAD_EXTENSIONS),
+        "storage_configured": _nexup_font_dir(setting) is not None,
+        # Surfaced so the UI can explain a short list instead of looking broken.
+        "bundled_count": sum(1 for row in builtin if row.get('source') == 'bundled'),
+        "unavailable_builtins": sorted(
+            entry['label'] for key, entry in FONT_LIBRARY.items()
+            if key not in BUNDLED_FONTS
+            and not any(row['id'] == f'builtin:{key}' for row in builtin)
+        ),
+    }
+
+
+@app.post("/nexup/fonts/upload")
+async def upload_nexup_font(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Add a typeface both renderers can use.
+
+    One file serves the browser canvas (via @font-face) and FFmpeg's drawtext,
+    so an uploaded face renders identically in the dynamic preview and in the
+    headless Coming Soon regeneration. Only formats both accept are allowed.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+
+    font_dir = _nexup_font_dir(setting)
+    if not font_dir:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+
+    raw_name = os.path.basename(file.filename or '')
+    ext = os.path.splitext(raw_name)[1].lower()
+    if ext not in FONT_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Unsupported font format. Allowed: {', '.join(FONT_UPLOAD_EXTENSIONS)}. "
+                    "Web formats (woff/woff2) are rejected because FFmpeg cannot read them, "
+                    "so the Coming Soon render would not match the preview."),
+        )
+
+    safe_stem = re.sub(r'[^A-Za-z0-9_-]+', '_', os.path.splitext(raw_name)[0]).strip('_')[:60]
+    if not safe_stem:
+        raise HTTPException(status_code=400, detail="Could not derive a filename from that upload")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded font is empty")
+    if len(content) > 30 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Font file is too large (30 MB limit)")
+
+    font_dir.mkdir(parents=True, exist_ok=True)
+    dest = font_dir / f"{safe_stem}{ext}"
+
+    # Stage first, then swap: a font FFmpeg cannot open must not replace a
+    # working one, and must not leave a broken file the picker would offer.
+    staging = font_dir / f".{safe_stem}{ext}.part"
+    try:
+        with open(staging, "wb") as handle:
+            handle.write(content)
+        if not _font_file_is_usable(str(staging)):
+            raise HTTPException(
+                status_code=400,
+                detail="That file could not be read as a font. Upload a TrueType or OpenType file.",
+            )
+        os.replace(staging, dest)
+    finally:
+        try:
+            if os.path.exists(staging):
+                os.remove(staging)
+        except Exception:
+            pass
+
+    _file_log(f"Custom font uploaded: {dest} ({len(content)} bytes)")
+    return {"success": True, "id": f"custom:{dest.name}", "filename": dest.name,
+            "label": dest.stem.replace('_', ' ').replace('-', ' '),
+            "size_bytes": len(content), "url": f"/nexup/fonts/file/{dest.name}"}
+
+
+def _font_file_is_usable(path: str) -> bool:
+    """Ask FFmpeg to draw one glyph with the font. Cheap, and it is the exact
+    check that matters: the Coming Soon render uses this same code path."""
+    try:
+        generator = DynamicPrerollGenerator()
+        if not generator.is_available():
+            # Without FFmpeg we cannot verify; accept on the header check alone
+            # rather than blocking the upload on a tool that is missing anyway.
+            with open(path, 'rb') as handle:
+                magic = handle.read(4)
+            return magic in (b'\x00\x01\x00\x00', b'OTTO', b'true', b'ttcf')
+        escaped = str(path).replace('\\', '/').replace(':', '\\:')
+        result = subprocess.run(
+            [generator.ffmpeg_path, '-hide_banner', '-loglevel', 'error',
+             '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1',
+             '-vf', f"drawtext=text='Ag':fontsize=24:fontcolor=white:fontfile='{escaped}'",
+             '-frames:v', '1', '-f', 'null', '-'],
+            capture_output=True, timeout=20,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+@app.get("/nexup/fonts/bundled/{filename}")
+def get_bundled_font_file(filename: str):
+    """Serve a typeface that ships with NeXroll so the canvas can draw with it.
+
+    No auth-sensitive data here, but the filename is still user-supplied: only
+    names present in the registry are served, which rules out traversal without
+    relying on path normalization.
+    """
+    safe = os.path.basename(filename or '')
+    known = {entry['file'] for entry in BUNDLED_FONTS.values()}
+    directory = bundled_fonts_dir()
+    if not directory or safe not in known:
+        raise HTTPException(status_code=404, detail="Font not found")
+    path = os.path.join(directory, safe)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Font not found")
+    media = {'.ttf': 'font/ttf', '.otf': 'font/otf', '.ttc': 'font/collection'}.get(
+        os.path.splitext(safe)[1].lower(), 'application/octet-stream')
+    return FileResponse(path, media_type=media)
+
+
+@app.get("/nexup/fonts/file/{filename}")
+def get_nexup_font_file(filename: str, db: Session = Depends(get_db)):
+    """Serve an uploaded face so the browser canvas can render with it."""
+    setting = db.query(models.Setting).first()
+    font_dir = _nexup_font_dir(setting)
+    if not font_dir:
+        raise HTTPException(status_code=404, detail="No font storage configured")
+    # Basename only: this path is user-supplied and must not escape the folder.
+    safe = os.path.basename(filename or '')
+    path = font_dir / safe
+    if not safe or not path.is_file() or path.suffix.lower() not in FONT_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=404, detail="Font not found")
+    media = {'.ttf': 'font/ttf', '.otf': 'font/otf', '.ttc': 'font/collection'}.get(
+        path.suffix.lower(), 'application/octet-stream')
+    return FileResponse(str(path), media_type=media)
+
+
+@app.delete("/nexup/fonts/{filename}")
+def delete_nexup_font(filename: str, db: Session = Depends(get_db)):
+    """Remove an uploaded face and drop any generator still pointing at it."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    font_dir = _nexup_font_dir(setting)
+    safe = os.path.basename(filename or '')
+    if not font_dir or not safe:
+        raise HTTPException(status_code=404, detail="Font not found")
+    path = font_dir / safe
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Font not found")
+
+    try:
+        os.remove(path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not delete font: {e}")
+
+    # A generator left pointing at a deleted file would fall back silently, so
+    # clear the reference and let it go back to the template default.
+    cleared = []
+    token = f"custom:{safe}"
+    for attr, label in (
+        ('nexup_coming_soon_list_font_family', 'Coming Soon'),
+        ('nexup_dynamic_preroll_font_family', 'Dynamic preroll'),
+    ):
+        if getattr(setting, attr, None) == token:
+            setattr(setting, attr, None)
+            cleared.append(label)
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    _file_log(f"Custom font deleted: {path}" + (f" (cleared from: {', '.join(cleared)})" if cleared else ""))
+    return {"success": True, "cleared_from": cleared}
 
 
 @app.post("/nexup/coming-soon-list/upload-audio")
@@ -23238,6 +23573,215 @@ async def upload_coming_soon_logo(
     
     _file_log(f"Custom Coming Soon logo uploaded: {dest} ({len(content)} bytes)")
     return {"success": True, "path": str(dest), "filename": file.filename, "size_bytes": len(content)}
+
+
+@app.post("/nexup/preroll/upload-backdrop")
+async def upload_dynamic_backdrop(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Upload your own footage to sit behind a dynamic preroll.
+
+    The Studio draws this into the same canvas it records, so the footage is
+    already baked into the frames FFmpeg receives -- there is no separate
+    server-side compositing step for dynamic prerolls.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+
+    allowed = ('.mp4', '.mov', '.mkv', '.webm', '.m4v')
+    ext = os.path.splitext(file.filename or '')[1].lower()
+    if ext not in allowed:
+        raise HTTPException(status_code=400,
+                            detail=f"Unsupported video format. Allowed: {', '.join(allowed)}")
+
+    assets_dir = Path(storage_path) / "dynamic_prerolls" / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded video is empty")
+
+    # Validate before touching what is already there. Writing to the final name
+    # first meant a rejected upload had already deleted the working backdrop.
+    staging = assets_dir / f"dynamic_backdrop.incoming{ext}"
+    with open(staging, "wb") as handle:
+        handle.write(content)
+
+    duration = None
+    try:
+        from backend.dynamic_preroll import DynamicPrerollGenerator
+        duration = DynamicPrerollGenerator().probe_media_duration(str(staging))
+    except Exception as e:
+        _file_log(f"[DYNAMIC-PREROLL] Backdrop probe failed: {e}")
+    if not duration:
+        try:
+            os.remove(staging)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400,
+                            detail="That file could not be read as a video. Try an MP4 exported at a standard resolution.")
+
+    # Only now replace the previous one. The extension can change between
+    # uploads, so clear every variant rather than leaving orphans behind.
+    for stale in assets_dir.glob("dynamic_backdrop.*"):
+        if stale == staging:
+            continue
+        try:
+            os.remove(stale)
+        except Exception:
+            pass
+
+    dest = assets_dir / f"dynamic_backdrop{ext}"
+    os.replace(staging, dest)
+
+    setting.nexup_dynamic_preroll_custom_backdrop_path = str(dest)
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    _file_log(f"Custom dynamic preroll backdrop uploaded: {dest} ({len(content)} bytes, {duration:.1f}s)")
+    return {"success": True, "path": str(dest), "filename": file.filename,
+            "size_bytes": len(content), "duration": round(float(duration), 1)}
+
+
+@app.delete("/nexup/preroll/upload-backdrop")
+def delete_dynamic_backdrop(db: Session = Depends(get_db)):
+    """Remove the custom backdrop and go back to the generated theme."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+
+    path = getattr(setting, 'nexup_dynamic_preroll_custom_backdrop_path', None)
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception as e:
+            _file_log(f"Could not delete backdrop {path}: {e}")
+
+    setting.nexup_dynamic_preroll_custom_backdrop_path = None
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"success": True}
+
+
+@app.get("/nexup/preroll/backdrop-video")
+def get_dynamic_backdrop(db: Session = Depends(get_db)):
+    """Serve the uploaded backdrop so the Studio can preview it."""
+    setting = db.query(models.Setting).first()
+    path = getattr(setting, 'nexup_dynamic_preroll_custom_backdrop_path', None) if setting else None
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="No custom backdrop uploaded")
+    media = {'.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime',
+             '.mkv': 'video/x-matroska', '.webm': 'video/webm'}.get(
+        os.path.splitext(path)[1].lower(), 'application/octet-stream')
+    return FileResponse(path, media_type=media)
+
+
+@app.post("/nexup/coming-soon-list/upload-backdrop")
+async def upload_coming_soon_backdrop(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Upload your own footage to sit behind a Coming Soon list.
+
+    Unlike the themed backdrop, which the browser records off a canvas and posts
+    per render, this is a file on disk. That matters for auto-regeneration after
+    a sync: there is no browser there, so a recorded theme degrades to a still,
+    while an uploaded clip keeps moving.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+
+    allowed = ('.mp4', '.mov', '.mkv', '.webm', '.m4v')
+    ext = os.path.splitext(file.filename or '')[1].lower()
+    if ext not in allowed:
+        raise HTTPException(status_code=400,
+                            detail=f"Unsupported video format. Allowed: {', '.join(allowed)}")
+
+    assets_dir = Path(storage_path) / "dynamic_prerolls" / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded video is empty")
+
+    # Validate before touching what is already there. Writing to the final name
+    # first meant a rejected upload had already deleted the working backdrop.
+    staging = assets_dir / f"custom_backdrop.incoming{ext}"
+    with open(staging, "wb") as handle:
+        handle.write(content)
+
+    duration = None
+    try:
+        from backend.dynamic_preroll import DynamicPrerollGenerator
+        duration = DynamicPrerollGenerator().probe_media_duration(str(staging))
+    except Exception as e:
+        _file_log(f"[COMING-SOON-LIST] Backdrop probe failed: {e}")
+    if not duration:
+        try:
+            os.remove(staging)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400,
+                            detail="That file could not be read as a video. Try an MP4 exported at a standard resolution.")
+
+    # Only now replace the previous one. The extension can change between
+    # uploads, so clear every variant rather than leaving orphans behind.
+    for stale in assets_dir.glob("custom_backdrop.*"):
+        if stale == staging:
+            continue
+        try:
+            os.remove(stale)
+        except Exception:
+            pass
+
+    dest = assets_dir / f"custom_backdrop{ext}"
+    os.replace(staging, dest)
+
+    setting.nexup_coming_soon_list_custom_backdrop_path = str(dest)
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    _file_log(f"Custom Coming Soon backdrop uploaded: {dest} ({len(content)} bytes, {duration:.1f}s)")
+    return {"success": True, "path": str(dest), "filename": file.filename,
+            "size_bytes": len(content), "duration": round(float(duration), 1)}
+
+
+@app.delete("/nexup/coming-soon-list/upload-backdrop")
+def delete_coming_soon_backdrop(db: Session = Depends(get_db)):
+    """Remove the custom backdrop and go back to the generated theme."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+
+    path = getattr(setting, 'nexup_coming_soon_list_custom_backdrop_path', None)
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception as e:
+            _file_log(f"Could not delete backdrop {path}: {e}")
+
+    setting.nexup_coming_soon_list_custom_backdrop_path = None
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"success": True}
+
+
+@app.get("/nexup/coming-soon-list/backdrop-video")
+def get_coming_soon_backdrop(db: Session = Depends(get_db)):
+    """Serve the uploaded backdrop so the Studio can preview it."""
+    setting = db.query(models.Setting).first()
+    path = getattr(setting, 'nexup_coming_soon_list_custom_backdrop_path', None) if setting else None
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="No custom backdrop uploaded")
+    media = {'.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime',
+             '.mkv': 'video/x-matroska', '.webm': 'video/webm'}.get(
+        os.path.splitext(path)[1].lower(), 'application/octet-stream')
+    return FileResponse(path, media_type=media)
 
 
 @app.delete("/nexup/coming-soon-list/upload-logo")
@@ -23519,7 +24063,8 @@ async def generate_coming_soon_list(
         )
 
     generator = DynamicPrerollGenerator(str(output_dir))
-    
+    _apply_font_choice(generator, setting, 'nexup_coming_soon_list_font_family')
+
     if not generator.check_ffmpeg_available():
         raise HTTPException(status_code=500, detail="FFmpeg not found. Please install FFmpeg to generate this video.")
     
@@ -23530,7 +24075,14 @@ async def generate_coming_soon_list(
     # after a sync has no browser and sends nothing, and the generator falls
     # back to the still it bakes itself.
     _backdrop_tmp = None
-    if backdrop_video:
+    _uploaded_backdrop = getattr(setting, 'nexup_coming_soon_list_custom_backdrop_path', None)
+    if _uploaded_backdrop and not os.path.isfile(_uploaded_backdrop):
+        _file_log(f"[COMING-SOON-LIST] Configured backdrop missing from disk: {_uploaded_backdrop}")
+        _uploaded_backdrop = None
+    if _uploaded_backdrop:
+        # Your own footage takes precedence over the recorded theme.
+        _file_log(f"[COMING-SOON-LIST] Using uploaded backdrop {_uploaded_backdrop}")
+    elif backdrop_video:
         try:
             import base64 as _b64
             import tempfile as _tempfile
@@ -23570,7 +24122,9 @@ async def generate_coming_soon_list(
             audio_bitrate=render['audio_bitrate'],
             theme=getattr(setting, 'nexup_coming_soon_list_theme', None),
             qr_data=getattr(setting, 'nexup_coming_soon_list_qr_data', None),
-            backdrop_video=_backdrop_tmp,
+            backdrop_video=_uploaded_backdrop or _backdrop_tmp,
+            backdrop_dim=(getattr(setting, 'nexup_coming_soon_list_backdrop_dim', 45)
+                          if _uploaded_backdrop else 0),
             font_scale=getattr(setting, 'nexup_coming_soon_list_font_scale', 1.0) or 1.0,
             title_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_title_color', None)),
             date_color=_csl_role_color(getattr(setting, 'nexup_coming_soon_list_date_color', None)),
@@ -24028,6 +24582,9 @@ def get_preroll_settings(db: Session = Depends(get_db)):
         "audio_mode": resolve_dynamic_audio_mode(getattr(setting, 'nexup_dynamic_preroll_audio_mode', 'none')),
         "preroll_path": preroll_path,
         "custom_logo_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', '') or '') or None,
+        "custom_backdrop_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_backdrop_path', '') or '') or None,
+        "custom_backdrop_duration": _audio_duration_seconds(getattr(setting, 'nexup_dynamic_preroll_custom_backdrop_path', None)),
+        "backdrop_dim": getattr(setting, 'nexup_dynamic_preroll_backdrop_dim', 45),
         "custom_audio_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', '') or '') or None,
         "custom_audio_duration": _audio_duration_seconds(getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', None)),
         "custom_headline": getattr(setting, 'nexup_dynamic_preroll_custom_headline', None) or "COMING SOON",
@@ -29161,7 +29718,8 @@ def _resolve_current_intros(db: Session) -> dict:
         return prerolls_for_category_query(db, cid).all()
 
     # --- Helper: resolve a list of sequence blocks into ordered paths ---
-    def _resolve_blocks(blocks: list, rotation_scope: tuple) -> list[str]:
+    def _resolve_blocks(blocks: list, rotation_scope: tuple,
+                        fallback_category_id: int | None = None) -> list[str]:
         paths: list[str] = []
         for block_index, block in enumerate(blocks):
             try:
@@ -29173,6 +29731,7 @@ def _resolve_current_intros(db: Session) -> dict:
                 for p in resolve_category_sequence_block(
                     block,
                     db,
+                    fallback_category_id=fallback_category_id,
                     rotation_key=rotation_key,
                 ):
                     paths.append(os.path.abspath(p.path))
@@ -29307,6 +29866,7 @@ def _resolve_current_intros(db: Session) -> dict:
                         seq_paths = _resolve_blocks(
                             raw_seq,
                             ("plugin", "schedule", sched.id),
+                            fallback_category_id=sched.category_id,
                         )
                         if seq_paths:
                             return {"paths": seq_paths, "mode": "sequential"}

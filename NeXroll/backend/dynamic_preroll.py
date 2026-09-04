@@ -55,6 +55,235 @@ DYNAMIC_FONT_SCALE_MAX = 1.30
 DYNAMIC_AUDIO_MODES = ('none', 'default', 'custom')
 
 
+# Typeface choices for the generators.
+#
+# The two generators render in different places: dynamic prerolls are drawn on a
+# canvas in the browser and uploaded as a recording, while Coming Soon lists are
+# drawn by FFmpeg on the server and regenerated headlessly after every sync. A
+# font therefore has to be resolvable *on the server* to be honest about what
+# will actually render, which is why the built-in list below is probed against
+# the filesystem rather than simply offered.
+#
+# Each entry maps a stable id to the candidate filenames for that face across
+# Windows, Debian/Ubuntu (DejaVu/Liberation) and macOS, plus the CSS stack the
+# browser canvas uses so the preview matches the server render as closely as the
+# installed fonts allow.
+FONT_LIBRARY = {
+    'arial': {
+        'label': 'Arial', 'category': 'Sans',
+        'css': 'Arial, Helvetica, "Liberation Sans", sans-serif',
+        'files': ['arial.ttf', 'ArialMT.ttf', 'Arial.ttf', 'LiberationSans-Regular.ttf'],
+    },
+    'segoe': {
+        'label': 'Segoe UI', 'category': 'Sans',
+        'css': '"Segoe UI", Selawik, "DejaVu Sans", sans-serif',
+        'files': ['segoeui.ttf', 'SegoeUI.ttf'],
+    },
+    'dejavu': {
+        'label': 'DejaVu Sans', 'category': 'Sans',
+        'css': '"DejaVu Sans", Verdana, sans-serif',
+        'files': ['DejaVuSans.ttf'],
+    },
+    'verdana': {
+        'label': 'Verdana', 'category': 'Sans',
+        'css': 'Verdana, "DejaVu Sans", sans-serif',
+        'files': ['verdana.ttf', 'Verdana.ttf'],
+    },
+    'tahoma': {
+        'label': 'Tahoma', 'category': 'Sans',
+        'css': 'Tahoma, "DejaVu Sans", sans-serif',
+        'files': ['tahoma.ttf', 'Tahoma.ttf'],
+    },
+    'impact': {
+        'label': 'Impact', 'category': 'Display',
+        'css': 'Impact, Haettenschweiler, "DejaVu Sans", sans-serif',
+        'files': ['impact.ttf', 'Impact.ttf'],
+    },
+    'times': {
+        'label': 'Times New Roman', 'category': 'Serif',
+        'css': '"Times New Roman", Times, "Liberation Serif", serif',
+        'files': ['times.ttf', 'TimesNewRomanPSMT.ttf', 'LiberationSerif-Regular.ttf'],
+    },
+    'georgia': {
+        'label': 'Georgia', 'category': 'Serif',
+        'css': 'Georgia, "DejaVu Serif", serif',
+        'files': ['georgia.ttf', 'Georgia.ttf'],
+    },
+    'dejavuserif': {
+        'label': 'DejaVu Serif', 'category': 'Serif',
+        'css': '"DejaVu Serif", Georgia, serif',
+        'files': ['DejaVuSerif.ttf'],
+    },
+    'consolas': {
+        'label': 'Consolas', 'category': 'Mono',
+        'css': 'Consolas, "DejaVu Sans Mono", monospace',
+        'files': ['consola.ttf', 'Consolas.ttf'],
+    },
+    'couriernew': {
+        'label': 'Courier New', 'category': 'Mono',
+        'css': '"Courier New", Courier, "Liberation Mono", monospace',
+        'files': ['cour.ttf', 'CourierNew.ttf', 'LiberationMono-Regular.ttf'],
+    },
+}
+
+# Typefaces that ship with NeXroll, so the picker offers the same set on every
+# install rather than whatever the host happens to have. Without these a Docker
+# user sees only DejaVu and Liberation. All are SIL OFL 1.1; see
+# assets/fonts/licenses/ for the text and assets/fonts/README.md for provenance.
+BUNDLED_FONTS = {
+    'bebasneue':      {'label': 'Bebas Neue',       'category': 'Display', 'file': 'BebasNeue-Regular.ttf'},
+    'anton':          {'label': 'Anton',            'category': 'Display', 'file': 'Anton-Regular.ttf'},
+    'archivoblack':   {'label': 'Archivo Black',    'category': 'Display', 'file': 'ArchivoBlack-Regular.ttf'},
+    'oswald':         {'label': 'Oswald',           'category': 'Sans',    'file': 'Oswald-Variable.ttf'},
+    'robotocondensed':{'label': 'Roboto Condensed', 'category': 'Sans',    'file': 'RobotoCondensed-Variable.ttf'},
+    'cinzel':         {'label': 'Cinzel',           'category': 'Serif',   'file': 'Cinzel-Variable.ttf'},
+    'playfairdisplay':{'label': 'Playfair Display', 'category': 'Serif',   'file': 'PlayfairDisplay-Variable.ttf'},
+    'lora':           {'label': 'Lora',             'category': 'Serif',   'file': 'Lora-Variable.ttf'},
+    'jetbrainsmono':  {'label': 'JetBrains Mono',   'category': 'Mono',    'file': 'JetBrainsMono-Variable.ttf'},
+}
+
+
+def bundled_fonts_dir() -> Optional[str]:
+    """Locate the shipped typefaces across dev, PyInstaller and Docker.
+
+    Mirrors how the bundled soundtrack is found: a frozen build unpacks to
+    _MEIPASS, everything else walks up from this module to the project root.
+    """
+    if getattr(sys, 'frozen', False):
+        base_dir = getattr(sys, '_MEIPASS', None)
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if not base_dir:
+        return None
+    path = os.path.join(base_dir, 'assets', 'fonts')
+    return path if os.path.isdir(path) else None
+
+
+def bundled_font_path(font_id: Any) -> Optional[str]:
+    """Absolute path to a shipped face, or None when it is not present."""
+    entry = BUNDLED_FONTS.get(str(font_id or '').strip().lower())
+    directory = bundled_fonts_dir()
+    if not entry or not directory:
+        return None
+    path = os.path.join(directory, entry['file'])
+    return path if os.path.isfile(path) else None
+
+
+# Where a face may live. Windows first, then the Debian/Ubuntu trees the Docker
+# image actually ships, then macOS.
+FONT_SEARCH_DIRS = (
+    os.environ.get('WINDIR', 'C:\\Windows') + os.sep + 'Fonts',
+    '/usr/share/fonts/truetype/dejavu',
+    '/usr/share/fonts/truetype/liberation',
+    '/usr/share/fonts/truetype/liberation2',
+    '/usr/share/fonts/truetype/msttcorefonts',
+    '/usr/share/fonts/dejavu',
+    '/usr/share/fonts',
+    '/usr/local/share/fonts',
+    '/Library/Fonts',
+    '/System/Library/Fonts',
+    os.path.expanduser('~/.fonts'),
+    os.path.expanduser('~/Library/Fonts'),
+)
+
+# Uploaded faces must work in BOTH renderers, so the accepted formats are the
+# intersection of what FFmpeg's drawtext can open and what a browser accepts
+# through @font-face. woff/woff2 are deliberately excluded: the canvas preview
+# would take them and the Coming Soon render would silently fall back to DejaVu.
+FONT_UPLOAD_EXTENSIONS = ('.ttf', '.otf', '.ttc')
+
+
+def find_font_file(font_id: Any) -> Optional[str]:
+    """Return the on-disk path for a built-in font id, or None if absent here.
+
+    Shipped faces win over host-installed ones: they are the same bytes on every
+    install, which is the whole reason they are bundled.
+    """
+    shipped = bundled_font_path(font_id)
+    if shipped:
+        return shipped
+    entry = FONT_LIBRARY.get(str(font_id or '').strip().lower())
+    if not entry:
+        return None
+    for candidate in entry['files']:
+        for directory in FONT_SEARCH_DIRS:
+            try:
+                path = os.path.join(directory, candidate)
+                if os.path.isfile(path):
+                    return path
+            except Exception:
+                continue
+    return None
+
+
+def available_builtin_fonts() -> List[Dict[str, Any]]:
+    """Built-in faces this machine can actually render with.
+
+    Probing rather than listing keeps the picker honest: on a Docker host this
+    returns the two or three DejaVu/Liberation faces the image ships, not a
+    dozen Windows fonts that would fall back to something else at render time.
+    """
+    found = []
+    for font_id, entry in BUNDLED_FONTS.items():
+        if not bundled_font_path(font_id):
+            continue
+        found.append({
+            'id': f'builtin:{font_id}',
+            'label': entry['label'],
+            'category': entry['category'],
+            # Shipped faces are not installed on the viewer's machine, so the
+            # browser loads them by URL the same way an upload is loaded.
+            'css': None,
+            'source': 'bundled',
+            'filename': entry['file'],
+            'url': f"/nexup/fonts/bundled/{entry['file']}",
+        })
+    for font_id, entry in FONT_LIBRARY.items():
+        # A shipped face of the same name already answered above; listing the
+        # host copy too would put a duplicate id in the picker.
+        if font_id in BUNDLED_FONTS:
+            continue
+        path = find_font_file(font_id)
+        if path:
+            found.append({
+                'id': f'builtin:{font_id}',
+                'label': entry['label'],
+                'category': entry['category'],
+                'css': entry['css'],
+                'source': 'builtin',
+            })
+    return found
+
+
+def resolve_font_selection(value: Any, custom_dir: Any = None) -> Optional[str]:
+    """Resolve a stored font choice to a file path on this machine.
+
+    Accepts 'builtin:<id>' or 'custom:<filename>'; a bare value is read as a
+    built-in id so any older stored value keeps working. Returns None to mean
+    "leave the template's own choice alone", which is the previous behavior.
+    """
+    text = str(value or '').strip()
+    if not text:
+        return None
+    if text.startswith('custom:'):
+        filename = os.path.basename(text[len('custom:'):].strip())
+        if not filename or not custom_dir:
+            return None
+        path = os.path.join(str(custom_dir), filename)
+        return path if os.path.isfile(path) else None
+    if text.startswith('builtin:'):
+        text = text[len('builtin:'):].strip()
+    return find_font_file(text)
+
+
+def ffmpeg_fontfile_param(font_path: Any) -> str:
+    """Build the drawtext fontfile fragment for a path, or '' when there is none."""
+    if not font_path or not os.path.isfile(str(font_path)):
+        return ""
+    escaped = str(font_path).replace('\\', '/').replace(':', '\\:')
+    return ":fontfile='" + escaped + "'"
+
+
 def resolve_dynamic_font_scale(value: Any = 1.0) -> float:
     """Normalize the shared preview/render typography scale."""
     try:
@@ -80,6 +309,32 @@ def resolve_dynamic_audio_mode(value: Any = 'none') -> str:
     """Normalize the user-facing soundtrack choice."""
     normalized = str(value or 'none').strip().lower()
     return normalized if normalized in DYNAMIC_AUDIO_MODES else 'none'
+
+
+def backdrop_video_chain(width: int, height: int, dim_percent: Any = 0) -> str:
+    """FFmpeg filter chain that fits arbitrary footage behind generated text.
+
+    Two things have to happen to someone else's video before text goes on top:
+
+    * Fit it without distorting. Scaling straight to WxH stretches a clip whose
+      aspect differs from the layout, so a phone video would come out squashed.
+      Scale to cover instead, then crop the overflow.
+    * Darken it. The generated themes are deliberately dim so titles stay
+      readable; bright, busy footage is what would make this feature look
+      broken. colorchannelmixer scales each channel, which is a true darkening
+      rather than a translucent overlay, and costs nothing measurable.
+    """
+    try:
+        dim = float(dim_percent or 0)
+    except (TypeError, ValueError):
+        dim = 0.0
+    dim = max(0.0, min(90.0, dim))
+    chain = (f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+             f"crop={width}:{height},setsar=1")
+    if dim > 0:
+        k = round(1.0 - (dim / 100.0), 4)
+        chain += f",colorchannelmixer=rr={k}:gg={k}:bb={k}"
+    return chain
 
 
 def resolve_render_settings(
@@ -273,6 +528,17 @@ class DynamicPrerollGenerator:
             self.output_dir = None
         self.ffmpeg_path = self._find_ffmpeg()
         self._font_cache = {}
+        # When set, every drawtext in every template uses this face instead of
+        # the per-template default. One file has one weight, so the bold styles
+        # collapse onto it too -- FFmpeg cannot synthesize a bold anyway.
+        self._font_override = None
+
+    def set_font_override(self, font_path: Any) -> bool:
+        """Use one font file for every text layer. Returns whether it took."""
+        path = str(font_path).strip() if font_path else ''
+        self._font_override = path if path and os.path.isfile(path) else None
+        self._font_cache = {}
+        return self._font_override is not None
     
     def _find_ffmpeg(self) -> Optional[str]:
         """Find FFmpeg executable"""
@@ -344,6 +610,15 @@ class DynamicPrerollGenerator:
         Liberation as a fallback. Each logical style maps to candidate filenames
         across platforms; we return the first that exists.
         """
+        # The override answers for every style, so cache it once rather than
+        # re-stat-ing the same file for each of arial/arial_bold/impact/...
+        if self._font_override:
+            cached = self._font_cache.get('__override__')
+            if cached is None:
+                cached = (self._font_override, ffmpeg_fontfile_param(self._font_override))
+                self._font_cache['__override__'] = cached
+            return cached
+
         if font_name in self._font_cache:
             return self._font_cache[font_name]
 
@@ -978,7 +1253,8 @@ class DynamicPrerollGenerator:
                            video_crf: int = 20,
                            audio_bitrate: str = '192k',
                            background_image: str = None,
-                           background_video: str = None) -> Optional[str]:
+                           background_video: str = None,
+                           backdrop_dim: Any = 0) -> Optional[str]:
         """Fallback: Run FFmpeg with simple vignette (no colored orbs).
         Supports optional custom logo (faded, centered, behind text) and
         custom audio with auto fade in/out.
@@ -1007,9 +1283,9 @@ class DynamicPrerollGenerator:
         # render; applying FFmpeg's on top darkens the corners twice and eats
         # the effect's detail at the edges.
         if background_video and os.path.isfile(str(background_video)):
-            # A recorded backdrop can arrive at a different resolution than the
-            # layout works in, so normalise it before the text is drawn on top.
-            vignette_filter = f"scale={width}:{height},setsar=1,{filter_str}"
+            # A backdrop can arrive at any resolution or aspect: a recorded theme
+            # matches the layout, someone's own footage very often does not.
+            vignette_filter = f"{backdrop_video_chain(width, height, backdrop_dim)},{filter_str}"
         elif background_image and os.path.isfile(str(background_image)):
             vignette_filter = filter_str
         else:
@@ -2210,6 +2486,7 @@ class DynamicPrerollGenerator:
         theme: str = None,
         qr_data: str = None,
         backdrop_video: str = None,
+        backdrop_dim: Any = 0,
         font_scale: float = 1.0,
         title_color: str = None,
         date_color: str = None,
@@ -2292,6 +2569,7 @@ class DynamicPrerollGenerator:
                 audio_bitrate=audio_bitrate,
                 background_image=str(backdrop_image) if backdrop_image else None,
                 background_video=backdrop_video,
+                backdrop_dim=backdrop_dim,
                 font_scale=font_scale,
                 title_color=title_color,
                 date_color=date_color,
@@ -2315,6 +2593,7 @@ class DynamicPrerollGenerator:
                 audio_bitrate=audio_bitrate,
                 background_image=str(backdrop_image) if backdrop_image else None,
                 background_video=backdrop_video,
+                backdrop_dim=backdrop_dim,
                 font_scale=font_scale,
                 title_color=title_color,
                 date_color=date_color,
@@ -2357,6 +2636,7 @@ class DynamicPrerollGenerator:
         audio_bitrate: str = '192k',
         background_image: str = None,
         background_video: str = None,
+        backdrop_dim: Any = 0,
         font_scale: float = 1.0,
         title_color: str = None,
         date_color: str = None,
@@ -2525,6 +2805,7 @@ class DynamicPrerollGenerator:
             audio_bitrate=audio_bitrate,
             background_image=background_image,
             background_video=background_video,
+            backdrop_dim=backdrop_dim,
         )
     
     def _generate_list_grid_layout(
@@ -2551,6 +2832,7 @@ class DynamicPrerollGenerator:
         audio_bitrate: str = '192k',
         background_image: str = None,
         background_video: str = None,
+        backdrop_dim: Any = 0,
         font_scale: float = 1.0,
         title_color: str = None,
         date_color: str = None,
@@ -2744,7 +3026,7 @@ class DynamicPrerollGenerator:
             # A recorded backdrop may not match the layout resolution, so
             # normalise it before posters are positioned on top.
             if background_video and os.path.isfile(str(background_video)):
-                filter_parts.append(f"[0:v]scale={width}:{height},setsar=1[base]")
+                filter_parts.append(f"[0:v]{backdrop_video_chain(width, height, backdrop_dim)}[base]")
             else:
                 filter_parts.append(f"[0:v]null[base]")
             
