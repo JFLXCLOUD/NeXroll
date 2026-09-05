@@ -29666,6 +29666,24 @@ def _resolve_current_intros(db: Session) -> dict:
                     vf = os.path.join(_storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
                     if os.path.exists(vf):
                         paths.append(os.path.abspath(vf))
+            elif btype == "separator":
+                # A timed black gap, generated the same way the Plex path does.
+                try:
+                    duration = float(block.get("duration") or 3)
+                except (TypeError, ValueError):
+                    duration = 3.0
+                _setting = db.query(models.Setting).first()
+                _storage = getattr(_setting, "nexup_storage_path", None) if _setting else None
+                if _storage:
+                    try:
+                        out_dir = os.path.join(_storage, "dynamic_prerolls")
+                        os.makedirs(out_dir, exist_ok=True)
+                        blank = DynamicPrerollGenerator(out_dir).generate_blank_video(duration)
+                        if blank:
+                            paths.append(os.path.abspath(blank))
+                    except Exception as e:
+                        _file_log(f"[PLUGIN] Could not generate pause block: {e}", level="WARNING")
+
             elif btype == "dynamic_preroll":
                 template = str(block.get("template", "")).lower()
                 theme = str(block.get("theme", "")).lower()
@@ -29724,6 +29742,16 @@ def _resolve_current_intros(db: Session) -> dict:
                 if storage:
                     video = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{filler_value}.mp4")
                     if os.path.exists(video):
+                        return {"paths": [os.path.abspath(video)], "mode": "single"}
+
+            elif filler_type == "dynamic":
+                # filler_active carries the generated filename; both Coming Soon
+                # lists and dynamic prerolls live in dynamic_prerolls/.
+                storage = getattr(setting, "nexup_storage_path", None)
+                if storage and filler_value:
+                    video = os.path.join(storage, "dynamic_prerolls",
+                                         os.path.basename(filler_value))
+                    if os.path.isfile(video):
                         return {"paths": [os.path.abspath(video)], "mode": "single"}
 
             elif filler_type == "sequence":
