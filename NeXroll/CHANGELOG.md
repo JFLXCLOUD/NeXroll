@@ -1,5 +1,43 @@
 # Changelog
 
+## [2.2.0-beta.6] - 09-04-2026 (beta)
+
+> The week and day calendar views never showed a monthly schedule at all, and
+> both calendar views are rebuilt around that fix. Both generators gain a
+> typeface picker with nine fonts that ship with NeXroll, plus custom video
+> backdrops. Three faults in how random sequence blocks picked prerolls are
+> fixed, including one that dropped blocks from a blended playlist entirely.
+> New settings migrate on first start.
+
+### Fixed
+
+- **The week and day calendar views never showed a monthly schedule.** Both read the hour from `start_date`, which monthly schedules deliberately store as the sentinel `2000-01-01`, so every schedule landed at midnight — and the grid began at 08:00 and drew nothing before it, sampling only five hours in between. Both views are rebuilt on a continuous 24-hour axis driven by the recurrence pattern, with overlapping schedules in side-by-side lanes, all-day schedules in their own row, and a current-time line.
+- **A Coming Soon list lost its animated background after a sync.** The moving themed backdrop exists only because the browser records it from the preview canvas and sends it with the render, and that recording was written to a temporary file and deleted. Auto-regeneration has no browser, so it fell back to the still the generator bakes itself. The recording is kept now, keyed by theme, and reused whenever no clip has been uploaded.
+- **"Match length to the soundtrack" would not stay switched on, and the duration reverted with it.** Saving clamped the duration to 30 seconds and a music bed usually runs for minutes, so the value came back changed and the toggle read as off. The dynamic generator had the same fault at 20 seconds. Both now allow a matched length through.
+- **A random sequence block whose count covered the whole category played in the same order every time**, falling through to the sequential path and returning prerolls in database id order.
+- **Blended schedules silently dropped sequential blocks.** Blend used its own resolver that only handled random blocks, so those prerolls never reached Plex, and it had no missing-file filter, so a preroll whose file was gone was still published.
+- **The dashboard preview could list prerolls that never play.** It used a third copy of the block resolver that ignored whether a preroll was enabled, ignored the block's count, and dropped sequential blocks.
+- **Uploaded fonts were missing from system backups**, so a restore left the generators pointing at a typeface that was not there and quietly fell back to the template default.
+- **The month calendar shifted every date by a column** once filler bars were added, because CSS grid positions explicit items before automatic ones and the day cells flowed around them.
+- **The dashboard's week tile started on Sunday while the calendar page started on Monday.** Both use the same helper now, and the same arithmetic for working out what filler covers.
+- **The simple schedule form's Playback selector never worked.** Choosing Sequential wrote a field nothing read and left the real one untouched, so playback stayed on random. A schedule could also be labelled Sequential while actually playing at random.
+- **Jellyfin and Emby ignored a sequence block that inherited its schedule's category**, which the Plex path had always honored.
+
+### Added
+
+- **Typeface choice for the dynamic and Coming Soon generators.** Nine fonts ship with NeXroll — Bebas Neue, Anton, Archivo Black, Oswald, Roboto Condensed, Cinzel, Playfair Display, Lora and JetBrains Mono — so the same set is available on every install rather than only what the host happens to have; a Docker container otherwise carries two. You can also upload your own TrueType or OpenType file, which works identically in the preview and in the finished video. Only fonts the server can actually render are offered, because Coming Soon lists are rebuilt without a browser.
+- **Custom video backdrops for both generators**, with a dimming control and a live preview, replacing the generated theme background with your own footage.
+- **Match a preroll's length to an uploaded video clip**, alongside the existing soundtrack matching.
+- **Filler is drawn on the calendar** as a continuous band across the hours it covers, a bar spanning consecutive uncovered days in month view, and its own lane on the dashboard tile — so it is clear what plays in the gaps.
+- **A dynamic preroll can be used as the fallback filler**, and My Schedules links to the setting when filler is off.
+- **Seasonal loading-screen quotes** that rotate through the year.
+
+### Changed
+
+- **Genre-based preroll mapping is gone from the documentation**, along with the code behind it. Nothing had called the resolver for some time, and the wiki still described a toggle and settings that were no longer in the app.
+- **A schedule's redundant shuffle flag is removed.** Playback mode has always been decided by the playlist setting, which selects the delimiter Plex uses; the shuffle field was written and returned but read by nothing.
+- **The endpoint that set NEXROLL_INTERCEPT environment variables is removed.** It required administrator rights to write four machine-level variables that nothing reads.
+
 ## [2.2.0-beta.5] - 09-01-2026 (beta)
 
 > Backups were missing every setting you had, so restoring one on a new machine
