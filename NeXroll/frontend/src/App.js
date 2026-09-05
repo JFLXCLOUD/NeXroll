@@ -19051,9 +19051,17 @@ const DashboardTiles = {
             Settings, so this page never mentioned it. Say what is covering the
             gaps, or point at where to turn it on. */}
         {fillerSettings.enabled ? (
-          <div className={`nx-filler-banner${fillerIsIncomplete() ? ' is-off' : ''}`}>
+          <div className={`nx-filler-banner${(fillerIsIncomplete() || fillerSuppressedBy()) ? ' is-off' : ''}`}>
             <Layers size={15} />
-            {fillerIsIncomplete() ? (
+            {fillerSuppressedBy() === 'coexistence' ? (
+              <span>
+                <strong>Filler will not run</strong> — Coexistence Mode leaves prerolls to another manager whenever no schedule is active, which is exactly when filler would play.
+              </span>
+            ) : fillerSuppressedBy() === 'clear' ? (
+              <span>
+                <strong>Filler will not run</strong> — "Clear Prerolls When Inactive" empties the preroll field whenever no schedule is active, which is exactly when filler would play.
+              </span>
+            ) : fillerIsIncomplete() ? (
               <span>
                 <strong>Filler is on but nothing is selected</strong> — gaps between schedules will play whatever was set last.
               </span>
@@ -19063,7 +19071,7 @@ const DashboardTiles = {
               </span>
             )}
             <button type="button" className="nx-linkbtn" onClick={() => setActiveTab('settings')}>
-              {fillerIsIncomplete() ? 'Finish setting it up' : 'Change'}
+              {fillerSuppressedBy() ? 'Review the conflict' : fillerIsIncomplete() ? 'Finish setting it up' : 'Change'}
             </button>
           </div>
         ) : (
@@ -23373,6 +23381,33 @@ const DashboardTiles = {
     )
   );
 
+  // Coexistence and Clear-when-inactive decide whether filler can run at all,
+  // and the calendar and dashboard need that answer wherever they are drawn --
+  // not only after someone has visited Settings.
+  React.useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetch(apiUrl('settings/passive-mode')).then(r => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(apiUrl('settings/clear-when-inactive')).then(r => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([passive, clear]) => {
+      if (cancelled) return;
+      if (passive) setPassiveMode(Boolean(passive.passive_mode));
+      if (clear) setClearWhenInactive(Boolean(clear.clear_when_inactive));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Filler only ever runs in the moment when no schedule is active, and two
+  // other settings claim that same moment. The scheduler resolves it silently
+  // in this order -- coexistence bails out entirely, then clear-when-inactive
+  // wipes the field -- so filler can be fully configured and never fire.
+  const fillerSuppressedBy = () => {
+    if (!fillerSettings.enabled) return null;
+    if (passiveMode) return 'coexistence';
+    if (clearWhenInactive) return 'clear';
+    return null;
+  };
+
   // Calendar date and filler-gap maths. These live at component scope so the
   // dashboard tile and the full calendar answer "when does filler play" the
   // same way; they used to be defined inside the calendar renderer only.
@@ -23467,7 +23502,8 @@ const DashboardTiles = {
   const fillerGapsForDay = day => {
     // Filler that is switched on but has nothing selected plays nothing, so
     // drawing it on the calendar would promise something that will not happen.
-    if (!fillerSettings.enabled || fillerIsIncomplete()) return [];
+    // The same goes for filler that another setting has quietly overruled.
+    if (!fillerSettings.enabled || fillerIsIncomplete() || fillerSuppressedBy()) return [];
     const busy = scheduleBusyIntervals(day);
     const gaps = [];
     let cursor = 0;
@@ -29861,6 +29897,19 @@ const DashboardTiles = {
           <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
             <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Check size={14} /> NeXroll will only apply prerolls during active schedules.
+            </p>
+          </div>
+        )}
+        {passiveMode && fillerSettings.enabled && (
+          <div style={{ marginTop: '0.5rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.35)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-color)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: '2px', color: '#f59e0b' }} />
+              <span>
+                Fallback Filler is also switched on, and the two ask for opposite things in the same moment:
+                filler plays when no schedule is active, and Coexistence Mode hands that moment to the other
+                manager. Coexistence wins, so filler will not play. Your filler setup is kept as-is for
+                whenever you turn this off.
+              </span>
             </p>
           </div>
         )}
