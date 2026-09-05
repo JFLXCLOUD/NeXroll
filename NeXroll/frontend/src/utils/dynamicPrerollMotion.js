@@ -535,19 +535,37 @@ export function drawDynamicPrerollFrame(canvas, options, elapsedSeconds) {
       drawGlowText(context, single, centerX, height * 0.50 + ((1 - state.titleReveal) * 15 * scale), titleColor, rgba(titleColor, 0.62, '#00d4ff'), 22 * scale, state.titleReveal, titleSpacing);
     }
   } else if (template === 'qr_share') {
-    // The code sits on a white plate regardless of theme: scanners need the
-    // quiet zone to stay high-contrast, and a tinted one can fail to read.
+    // The plate behind the code is the operator's to style, but the defaults
+    // stay white and opaque: a scanner needs the quiet zone to hold contrast,
+    // and a tinted or see-through plate can stop the code reading. Dropping the
+    // plate to zero opacity is allowed for a code that carries its own
+    // background colour.
     const plateSize = Math.min(width, height) * 0.52;
     const plateX = centerX - (plateSize / 2);
     const plateY = height * 0.14;
     const pad = plateSize * 0.05;
+    const plateColor = normalizeDynamicColor(settings.qrPlateColor, '#ffffff');
+    const plateAlpha = Math.max(0, Math.min(100,
+      settings.qrPlateOpacity === undefined ? 100 : Number(settings.qrPlateOpacity))) / 100;
+    const plateRadius = (Math.max(0, Math.min(50, Number(settings.qrPlateRadius) || 0)) / 100) * plateSize;
     context.save();
     context.globalAlpha *= state.subjectReveal;
-    context.fillStyle = '#ffffff';
-    context.shadowColor = rgba(primary, 0.45, '#00d4ff');
-    context.shadowBlur = 26 * scale;
-    context.fillRect(plateX, plateY, plateSize, plateSize);
-    context.shadowBlur = 0;
+    if (plateAlpha > 0) {
+      context.save();
+      context.globalAlpha *= plateAlpha;
+      context.fillStyle = plateColor;
+      context.shadowColor = rgba(primary, 0.45, '#00d4ff');
+      context.shadowBlur = 26 * scale;
+      if (plateRadius > 0 && typeof context.roundRect === 'function') {
+        context.beginPath();
+        context.roundRect(plateX, plateY, plateSize, plateSize, plateRadius);
+        context.fill();
+      } else {
+        context.fillRect(plateX, plateY, plateSize, plateSize);
+      }
+      context.shadowBlur = 0;
+      context.restore();
+    }
     if (options.qrImage?.naturalWidth) {
       context.imageSmoothingEnabled = false;
       context.drawImage(options.qrImage, plateX + pad, plateY + pad, plateSize - (pad * 2), plateSize - (pad * 2));

@@ -343,6 +343,13 @@ class Setting(Base):
     nexup_dynamic_preroll_custom_subtext = Column(String, nullable=True)  # Custom Message template: supporting line
     nexup_dynamic_preroll_qr_data = Column(String, nullable=True)  # QR Code template: URL or text to encode
     nexup_dynamic_preroll_qr_caption = Column(String, nullable=True)  # QR Code template: caption under the code
+    nexup_dynamic_preroll_qr_dark = Column(String, nullable=True)  # Module colour, #RRGGBB; null is black
+    nexup_dynamic_preroll_qr_light = Column(String, nullable=True)  # Code background; 'transparent' lets the theme through
+    nexup_dynamic_preroll_qr_style = Column(String, default='square')  # square, rounded or dots
+    nexup_dynamic_preroll_qr_logo = Column(Boolean, default=False)  # Overlay the uploaded logo in the middle
+    nexup_dynamic_preroll_qr_plate_color = Column(String, nullable=True)  # Plate behind the code; null is white
+    nexup_dynamic_preroll_qr_plate_opacity = Column(Integer, default=100)  # 0-100; 0 removes the plate entirely
+    nexup_dynamic_preroll_qr_plate_radius = Column(Integer, default=0)  # Corner rounding, 0-50 percent of the plate
 
     # Coming Soon List Auto-Regeneration Settings
     nexup_coming_soon_list_auto_regen = Column(Boolean, default=False)  # Auto-regenerate Coming Soon List after sync

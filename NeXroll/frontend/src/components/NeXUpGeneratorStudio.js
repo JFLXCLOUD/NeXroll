@@ -86,6 +86,113 @@ function SectionHeader({ step, title, copy, icon: Icon }) {
   );
 }
 
+const QR_STYLES = [
+  ['square', 'Square', 'The classic grid'],
+  ['rounded', 'Rounded', 'Softened corners'],
+  ['dots', 'Dots', 'Separated circles'],
+];
+
+function QrDesign({ settings, update, hasLogo }) {
+  const transparent = String(settings.qrLight || '').toLowerCase() === 'transparent';
+  const plateOpacity = settings.qrPlateOpacity === undefined ? 100 : Number(settings.qrPlateOpacity);
+  // The three position squares are always drawn solid and the quiet zone is
+  // always kept, whatever is chosen here, so styling cannot stop a scan on its
+  // own. Contrast still can, which is what the warning below watches.
+  const lowContrast = !transparent && contrastRatio(settings.qrDark, settings.qrLight) < 7;
+
+  return (
+    <div className="nx-gen-qr-design">
+      <div className="nx-gen-palette-head"><strong>Code style</strong><span>Shape, colour and what sits behind it</span></div>
+
+      <div className="nx-gen-choice-grid nx-gen-qr-styles">
+        {QR_STYLES.map(([id, label, copy]) => (
+          <button
+            type="button"
+            key={id}
+            className={(settings.qrStyle || 'square') === id ? 'active' : ''}
+            aria-pressed={(settings.qrStyle || 'square') === id}
+            onClick={() => update({ qrStyle: id })}
+          >
+            <strong>{label}</strong><span>{copy}</span>
+            {(settings.qrStyle || 'square') === id && <Check size={14} />}
+          </button>
+        ))}
+      </div>
+
+      <div className="nx-gen-color-grid">
+        <label>
+          <span>Code</span>
+          <div>
+            <input type="color" aria-label="QR code color" value={settings.qrDark || '#000000'}
+                   onChange={event => update({ qrDark: event.target.value })} />
+            <code>{settings.qrDark || '#000000'}</code>
+          </div>
+        </label>
+        <label>
+          <span>Code background</span>
+          <div>
+            <input type="color" aria-label="QR background color" disabled={transparent}
+                   value={transparent ? '#ffffff' : (settings.qrLight || '#ffffff')}
+                   onChange={event => update({ qrLight: event.target.value })} />
+            <code>{transparent ? 'transparent' : (settings.qrLight || '#ffffff')}</code>
+            <button type="button"
+                    onClick={() => update({ qrLight: transparent ? '#ffffff' : 'transparent' })}>
+              {transparent ? 'Use a colour' : 'Transparent'}
+            </button>
+          </div>
+        </label>
+      </div>
+
+      {lowContrast && (
+        <p className="nx-gen-qr-warn">
+          These two colours are close together. Scanners rely on contrast, so test this code with a phone before you rely on it.
+        </p>
+      )}
+
+      {hasLogo && (
+        <div className="nx-gen-toggle-row">
+          <i><Image size={18} /></i>
+          <div>
+            <strong>Logo in the middle</strong>
+            <span>Your uploaded logo, sized to stay inside what the code can repair.</span>
+          </div>
+          <StudioSwitch checked={Boolean(settings.qrLogo)}
+                        onChange={checked => update({ qrLogo: checked })}
+                        label="Overlay the logo on the QR code" />
+        </div>
+      )}
+
+      <div className="nx-gen-palette-head"><strong>Plate</strong><span>The panel the code sits on</span></div>
+      <div className="nx-gen-color-grid">
+        <label>
+          <span>Plate colour</span>
+          <div>
+            <input type="color" aria-label="QR plate color" value={settings.qrPlateColor || '#ffffff'}
+                   onChange={event => update({ qrPlateColor: event.target.value })} />
+            <code>{settings.qrPlateColor || '#ffffff'}</code>
+          </div>
+        </label>
+      </div>
+      <label className="nx-gen-slider">
+        <span>Plate opacity <em>{plateOpacity}%</em></span>
+        <input type="range" min="0" max="100" step="5" value={plateOpacity}
+               aria-label="QR plate opacity"
+               onChange={event => update({ qrPlateOpacity: Number(event.target.value) })} />
+        <small>{plateOpacity === 0
+          ? 'No plate at all - the code sits straight on the theme.'
+          : 'How much of the theme shows through behind the code.'}</small>
+      </label>
+      <label className="nx-gen-slider">
+        <span>Corner rounding <em>{Number(settings.qrPlateRadius) || 0}%</em></span>
+        <input type="range" min="0" max="50" step="2" value={Number(settings.qrPlateRadius) || 0}
+               aria-label="QR plate corner rounding"
+               onChange={event => update({ qrPlateRadius: Number(event.target.value) })} />
+        <small>Square through to a circle.</small>
+      </label>
+    </div>
+  );
+}
+
 function FontPicker({ fonts, value, onChange, onUpload, onDelete, uploading, ariaLabel, note }) {
   const grouped = React.useMemo(() => {
     const buckets = new Map();
@@ -194,6 +301,24 @@ function durationOptions(presets, current) {
   if (!Number.isFinite(value) || value <= 0 || presets.includes(value)) return presets;
   return [...presets, value].sort((a, b) => a - b);
 }
+
+// Mirrors the server's WCAG check so the warning appears as the colour is
+// dragged rather than after a render.
+const luminance = hex => {
+  const value = String(hex || '').replace('#', '');
+  if (value.length !== 6) return 1;
+  const channels = [0, 2, 4].map(index => {
+    const srgb = parseInt(value.slice(index, index + 2), 16) / 255;
+    return srgb <= 0.04045 ? srgb / 12.92 : Math.pow((srgb + 0.055) / 1.055, 2.4);
+  });
+  return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
+};
+
+const contrastRatio = (one, two) => {
+  const first = luminance(one);
+  const second = luminance(two);
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+};
 
 const formatSeconds = seconds => (
   seconds >= 60 ? `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`
@@ -545,6 +670,7 @@ export default function NeXUpGeneratorStudio(props) {
                   {isQrShare && <>
                     <label><span>Link or text to encode</span><input value={dynamicSettings.qrData || ''} onChange={event => updateDynamic({ qrData: event.target.value })} placeholder="https://example.com/watch-party" maxLength={2000} /><small>Anything scannable: a URL, a Wi-Fi guest note, a Discord invite. The preview shows the real code, so test it with your phone before rendering.</small></label>
                     <label><span>Caption <small>(optional)</small></span><input value={dynamicSettings.qrCaption || ''} onChange={event => updateDynamic({ qrCaption: event.target.value })} placeholder="SCAN TO LEARN MORE" maxLength={60} /></label>
+                    <QrDesign settings={dynamicSettings} update={updateDynamic} hasLogo={Boolean(dynamicSettings.customLogoFilename)} />
                   </>}
                   <label><span>Duration</span><select value={dynamicSettings.duration} onChange={event => updateDynamic({ duration: Number(event.target.value) })}>{durationOptions([3, 4, 5, 6, 7, 8, 10, 15, 20], dynamicSettings.duration).map(value => <option key={value} value={value}>{value} seconds</option>)}</select></label>
                   {usesServerName && <label><span>Text language</span><select value={dynamicSettings.language} onChange={event => updateDynamic({ language: event.target.value })}><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="de">German</option></select></label>}

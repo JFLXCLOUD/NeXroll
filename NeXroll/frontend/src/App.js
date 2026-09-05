@@ -1532,6 +1532,13 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     renderQuality: 'high',
     fontScale: 1,
     fontFamily: '', // '' keeps whatever face the template picked
+    qrDark: '#000000',
+    qrLight: '#ffffff', // 'transparent' lets the plate or theme show through
+    qrStyle: 'square',
+    qrLogo: false,
+    qrPlateColor: '#ffffff',
+    qrPlateOpacity: 100,
+    qrPlateRadius: 0,
     titleColor: null,
     subjectColor: null,
     audioMode: 'none',
@@ -1881,6 +1888,21 @@ useEffect(() => {
 ]);
 
 // Date/time helpers: treat backend datetimes as naive local times
+// Every QR the app shows comes from this one builder: the styling lives on the
+// server so the preview, the recorded video and any later re-render all encode
+// the same image.
+const buildQrUrl = (base, settings, size) => {
+  const data = String(settings?.qrData || '').trim();
+  if (!data) return '';
+  const params = new URLSearchParams({ data });
+  if (size) params.set('size', String(size));
+  if (settings.qrDark) params.set('dark', settings.qrDark);
+  if (settings.qrLight) params.set('light', settings.qrLight);
+  if (settings.qrStyle && settings.qrStyle !== 'square') params.set('style', settings.qrStyle);
+  if (settings.qrLogo) params.set('logo', '1');
+  return `${base}?${params.toString()}`;
+};
+
 // The backend stores dates exactly as entered by the user (no timezone conversion)
 // so we can use them directly without any timezone manipulation
 const toLocalInputValue = (isoOrNaive) => {
@@ -23518,6 +23540,13 @@ const DashboardTiles = {
         dynamic_preroll_backdrop_dim: dynamicPrerollSettings.backdropDim ?? 45,
         dynamic_preroll_font_scale: String(dynamicPrerollSettings.fontScale || 1),
         dynamic_preroll_font_family: dynamicPrerollSettings.fontFamily || '',
+        dynamic_preroll_qr_dark: dynamicPrerollSettings.qrDark || '#000000',
+        dynamic_preroll_qr_light: dynamicPrerollSettings.qrLight || '#ffffff',
+        dynamic_preroll_qr_style: dynamicPrerollSettings.qrStyle || 'square',
+        dynamic_preroll_qr_logo: String(Boolean(dynamicPrerollSettings.qrLogo)),
+        dynamic_preroll_qr_plate_color: dynamicPrerollSettings.qrPlateColor || '#ffffff',
+        dynamic_preroll_qr_plate_opacity: String(dynamicPrerollSettings.qrPlateOpacity ?? 100),
+        dynamic_preroll_qr_plate_radius: String(dynamicPrerollSettings.qrPlateRadius ?? 0),
         dynamic_preroll_title_color: dynamicPrerollSettings.titleColor || '',
         dynamic_preroll_subject_color: dynamicPrerollSettings.subjectColor || '',
         dynamic_preroll_audio_mode: dynamicPrerollSettings.audioMode || 'none',
@@ -24516,6 +24545,13 @@ const DashboardTiles = {
           renderQuality: data.render_quality || 'high',
           fontScale: data.font_scale || 1,
           fontFamily: data.font_family || '',
+          qrDark: data.qr_dark || '#000000',
+          qrLight: data.qr_light || '#ffffff',
+          qrStyle: data.qr_style || 'square',
+          qrLogo: Boolean(data.qr_logo),
+          qrPlateColor: data.qr_plate_color || '#ffffff',
+          qrPlateOpacity: data.qr_plate_opacity ?? 100,
+          qrPlateRadius: data.qr_plate_radius ?? 0,
           titleColor: data.title_color || null,
           subjectColor: data.subject_color || null,
           audioMode: data.audio_mode || 'none',
@@ -24620,7 +24656,7 @@ const DashboardTiles = {
         ? `${apiUrl('/nexup/preroll/logo-image')}?v=${encodeURIComponent(dynamicPrerollSettings.customLogoFilename)}`
         : null;
       const qrUrl = String(dynamicPrerollSettings.qrData || '').trim()
-        ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(dynamicPrerollSettings.qrData.trim())}`
+        ? buildQrUrl(apiUrl('/nexup/preroll/qr'), dynamicPrerollSettings)
         : null;
       const motionOptions = await prepareDynamicPrerollOptions({
         // The recording is what actually ships, so it has to use the chosen
@@ -25476,7 +25512,7 @@ const DashboardTiles = {
         onDeleteDynamic={handleDeleteSpecificPreroll}
         previewRef={previewContainerRef}
         dynamicLogoUrl={`${apiUrl('/nexup/preroll/logo-image')}?v=${encodeURIComponent(dynamicPrerollSettings.customLogoFilename || 'none')}`}
-        dynamicQrUrl={dynamicPrerollSettings.qrData?.trim() ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(dynamicPrerollSettings.qrData.trim())}` : ''}
+        dynamicQrUrl={buildQrUrl(apiUrl('/nexup/preroll/qr'), dynamicPrerollSettings)}
         comingLogoUrl={`${apiUrl('/nexup/coming-soon-list/logo-image')}?v=${encodeURIComponent(comingSoonListSettings.customLogoFilename || 'none')}`}
         comingQrUrl={comingSoonListSettings.qrData?.trim() ? `${apiUrl('/nexup/preroll/qr')}?data=${encodeURIComponent(comingSoonListSettings.qrData.trim())}&size=260` : ''}
         // Cache-busted on the filename so replacing the clip refreshes the preview.

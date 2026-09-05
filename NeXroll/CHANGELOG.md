@@ -22,11 +22,14 @@
 - **The dashboard's week tile started on Sunday while the calendar page started on Monday.** Both use the same helper now, and the same arithmetic for working out what filler covers.
 - **The simple schedule form's Playback selector never worked.** Choosing Sequential wrote a field nothing read and left the real one untouched, so playback stayed on random. A schedule could also be labelled Sequential while actually playing at random.
 - **Jellyfin and Emby ignored a sequence block that inherited its schedule's category**, which the Plex path had always honored.
+- **Jellyfin and Emby were served nothing when filler was a dynamic preroll.** The plugin resolver is a separate path from the one that writes Plex's preroll string and only understood category, sequence and Coming Soon fillers, so the branch fell through and no intro played while Plex played the preroll correctly.
+- **Separator blocks were skipped inside sequences on Jellyfin and Emby.** On Plex a separator becomes a generated black gap of the configured length; through the plugins the sequence played straight through without the pauses its author put in.
 
 ### Added
 
 - **Typeface choice for the dynamic and Coming Soon generators.** Nine fonts ship with NeXroll — Bebas Neue, Anton, Archivo Black, Oswald, Roboto Condensed, Cinzel, Playfair Display, Lora and JetBrains Mono — so the same set is available on every install rather than only what the host happens to have; a Docker container otherwise carries two. You can also upload your own TrueType or OpenType file, which works identically in the preview and in the finished video. Only fonts the server can actually render are offered, because Coming Soon lists are rebuilt without a browser.
 - **Custom video backdrops for both generators**, with a dimming control and a live preview, replacing the generated theme background with your own footage.
+- **The QR Code template can be styled.** Choose square, rounded or dotted modules, set the code and background colours, make the background transparent so the theme shows through, overlay your uploaded logo in the middle, and control the plate behind it with a colour, an opacity and corner rounding. The three position squares stay solid and the quiet zone is always kept, so styling on its own cannot stop a scan; a warning appears if the two colours are too close for a scanner to separate.
 - **Match a preroll's length to an uploaded video clip**, alongside the existing soundtrack matching.
 - **Filler is drawn on the calendar** as a continuous band across the hours it covers, a bar spanning consecutive uncovered days in month view, and its own lane on the dashboard tile — so it is clear what plays in the gaps.
 - **A dynamic preroll can be used as the fallback filler**, and My Schedules links to the setting when filler is off.

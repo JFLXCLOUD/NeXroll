@@ -58,6 +58,7 @@ from backend.scheduler import (
     _localized_now,
 )
 from backend import secure_store
+from backend.qr_render import QR_MODULE_STYLES
 from backend.dynamic_preroll import (
     BUNDLED_FONTS,
     DynamicPrerollGenerator,
@@ -299,6 +300,13 @@ def ensure_schema() -> None:
                 ("nexup_dynamic_preroll_render_quality", "nexup_dynamic_preroll_render_quality TEXT DEFAULT 'high'"),
                 ("nexup_dynamic_preroll_font_scale", "nexup_dynamic_preroll_font_scale REAL DEFAULT 1.0"),
                 ("nexup_dynamic_preroll_font_family", "nexup_dynamic_preroll_font_family TEXT"),
+                ("nexup_dynamic_preroll_qr_dark", "nexup_dynamic_preroll_qr_dark TEXT"),
+                ("nexup_dynamic_preroll_qr_light", "nexup_dynamic_preroll_qr_light TEXT"),
+                ("nexup_dynamic_preroll_qr_style", "nexup_dynamic_preroll_qr_style TEXT DEFAULT 'square'"),
+                ("nexup_dynamic_preroll_qr_logo", "nexup_dynamic_preroll_qr_logo BOOLEAN DEFAULT 0"),
+                ("nexup_dynamic_preroll_qr_plate_color", "nexup_dynamic_preroll_qr_plate_color TEXT"),
+                ("nexup_dynamic_preroll_qr_plate_opacity", "nexup_dynamic_preroll_qr_plate_opacity INTEGER DEFAULT 100"),
+                ("nexup_dynamic_preroll_qr_plate_radius", "nexup_dynamic_preroll_qr_plate_radius INTEGER DEFAULT 0"),
                 ("nexup_dynamic_preroll_title_color", "nexup_dynamic_preroll_title_color TEXT"),
                 ("nexup_dynamic_preroll_subject_color", "nexup_dynamic_preroll_subject_color TEXT"),
                 ("nexup_dynamic_preroll_audio_mode", "nexup_dynamic_preroll_audio_mode TEXT DEFAULT 'none'"),
@@ -19054,6 +19062,13 @@ def update_nexup_settings(
     dynamic_preroll_custom_subtext: Optional[str] = None,
     dynamic_preroll_qr_data: Optional[str] = None,
     dynamic_preroll_qr_caption: Optional[str] = None,
+    dynamic_preroll_qr_dark: Optional[str] = None,
+    dynamic_preroll_qr_light: Optional[str] = None,
+    dynamic_preroll_qr_style: Optional[str] = None,
+    dynamic_preroll_qr_logo: Optional[bool] = None,
+    dynamic_preroll_qr_plate_color: Optional[str] = None,
+    dynamic_preroll_qr_plate_opacity: Optional[int] = None,
+    dynamic_preroll_qr_plate_radius: Optional[int] = None,
     release_date_preference: Optional[str] = None,
     coming_soon_available_days: Optional[int] = None,
     coming_soon_max_available_now: Optional[int] = None,
@@ -19277,6 +19292,25 @@ def update_nexup_settings(
         setting.nexup_dynamic_preroll_qr_data = dynamic_preroll_qr_data.strip() or None
     if dynamic_preroll_qr_caption is not None:
         setting.nexup_dynamic_preroll_qr_caption = dynamic_preroll_qr_caption.strip() or None
+    # QR styling. Colours are stored only when they parse, so a malformed value
+    # falls back to the default rather than being written and rendering oddly.
+    if dynamic_preroll_qr_dark is not None:
+        setting.nexup_dynamic_preroll_qr_dark = resolve_dynamic_text_color(dynamic_preroll_qr_dark)
+    if dynamic_preroll_qr_light is not None:
+        _light = (dynamic_preroll_qr_light or '').strip().lower()
+        setting.nexup_dynamic_preroll_qr_light = (
+            'transparent' if _light == 'transparent' else resolve_dynamic_text_color(dynamic_preroll_qr_light))
+    if dynamic_preroll_qr_style is not None:
+        _style = (dynamic_preroll_qr_style or '').strip().lower()
+        setting.nexup_dynamic_preroll_qr_style = _style if _style in QR_MODULE_STYLES else 'square'
+    if dynamic_preroll_qr_logo is not None:
+        setting.nexup_dynamic_preroll_qr_logo = bool(dynamic_preroll_qr_logo)
+    if dynamic_preroll_qr_plate_color is not None:
+        setting.nexup_dynamic_preroll_qr_plate_color = resolve_dynamic_text_color(dynamic_preroll_qr_plate_color)
+    if dynamic_preroll_qr_plate_opacity is not None:
+        setting.nexup_dynamic_preroll_qr_plate_opacity = max(0, min(100, int(dynamic_preroll_qr_plate_opacity)))
+    if dynamic_preroll_qr_plate_radius is not None:
+        setting.nexup_dynamic_preroll_qr_plate_radius = max(0, min(50, int(dynamic_preroll_qr_plate_radius)))
     # Release date preference
     if release_date_preference is not None:
         if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
@@ -24402,34 +24436,61 @@ async def generate_preroll_from_preview(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/nexup/preroll/qr")
-def render_preroll_qr(data: str, size: int = 620):
-    """Render `data` as a QR PNG for the generator preview.
+def render_preroll_qr(
+    data: str,
+    size: int = 620,
+    dark: Optional[str] = None,
+    light: Optional[str] = None,
+    style: Optional[str] = None,
+    logo: int = 0,
+    db: Session = Depends(get_db),
+):
+    """Render `data` as a QR PNG for the generator preview and the render.
 
-    The preview canvas draws the same code the backend would encode, so what the
-    operator scans while designing is what ends up in the rendered preroll.
+    The preview canvas draws the same code the backend encodes, so what the
+    operator scans while designing is what ends up in the rendered preroll --
+    which is why the styling options live here rather than in the canvas.
     """
     payload = (data or '').strip()
     if not payload:
         raise HTTPException(status_code=400, detail="No data to encode")
     if len(payload) > 2000:
         raise HTTPException(status_code=400, detail="QR payload too long (2000 character limit)")
+
+    logo_bytes = None
+    if logo:
+        setting = db.query(models.Setting).first()
+        logo_path = getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', None) if setting else None
+        if logo_path and os.path.isfile(logo_path):
+            try:
+                with open(logo_path, 'rb') as handle:
+                    logo_bytes = handle.read()
+            except Exception as e:
+                _file_log(f"[QR] Could not read logo for overlay: {e}", level="WARNING")
+
     try:
-        import segno
-    except ImportError:
-        raise HTTPException(status_code=500, detail="QR support requires the 'segno' package")
-    try:
-        target = max(120, min(1200, int(size)))
-        qr = segno.make(payload, error='h')
-        modules = qr.symbol_size(border=4)[0]
-        scale = max(2, int(target / max(1, modules)))
-        buf = io.BytesIO()
-        qr.save(buf, kind='png', scale=scale, border=4, dark='#000000', light='#ffffff')
-        return Response(content=buf.getvalue(), media_type="image/png",
+        from backend.qr_render import render_qr_png
+        png = render_qr_png(
+            payload,
+            size=max(120, min(1600, int(size))),
+            dark=dark or '#000000',
+            light='transparent' if (light or '').strip().lower() == 'transparent' else (light or '#ffffff'),
+            style=style or 'square',
+            logo_bytes=logo_bytes,
+        )
+        return Response(content=png, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=300"})
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"QR render failed: {e}")
+
+
+@app.get("/nexup/preroll/qr/contrast")
+def preroll_qr_contrast(dark: Optional[str] = None, light: Optional[str] = None):
+    """Say whether a colour pairing is safe to scan, so the UI can warn early."""
+    from backend.qr_render import describe_contrast
+    return describe_contrast(dark or '#000000', light or '#ffffff')
 
 
 @app.get("/nexup/preroll/settings")
@@ -24494,6 +24555,14 @@ def get_preroll_settings(db: Session = Depends(get_db)):
         "custom_subtext": getattr(setting, 'nexup_dynamic_preroll_custom_subtext', None) or "",
         "qr_data": getattr(setting, 'nexup_dynamic_preroll_qr_data', None) or "",
         "qr_caption": getattr(setting, 'nexup_dynamic_preroll_qr_caption', None) or "SCAN TO LEARN MORE",
+        "qr_dark": getattr(setting, 'nexup_dynamic_preroll_qr_dark', None) or "#000000",
+        "qr_light": getattr(setting, 'nexup_dynamic_preroll_qr_light', None) or "#ffffff",
+        "qr_style": getattr(setting, 'nexup_dynamic_preroll_qr_style', None) or "square",
+        "qr_logo": bool(getattr(setting, 'nexup_dynamic_preroll_qr_logo', False)),
+        "qr_plate_color": getattr(setting, 'nexup_dynamic_preroll_qr_plate_color', None) or "#ffffff",
+        "qr_plate_opacity": getattr(setting, 'nexup_dynamic_preroll_qr_plate_opacity', 100)
+        if getattr(setting, 'nexup_dynamic_preroll_qr_plate_opacity', None) is not None else 100,
+        "qr_plate_radius": getattr(setting, 'nexup_dynamic_preroll_qr_plate_radius', 0) or 0,
     }
 
 @app.get("/nexup/preroll/list")

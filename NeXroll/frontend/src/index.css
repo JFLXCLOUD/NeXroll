@@ -10596,6 +10596,27 @@ body.light .nx-draft-cal-event { color: #157a55; }
 
 /* Coming Soon preview: mirror where the renderer composites the QR so what the
    operator lays out matches the finished video. */
+/* QR design panel. Sits inside the QR template's fields, so it inherits the
+   card's rhythm and only widens where a slider needs the room. */
+.nx-gen-qr-design {
+  grid-column: 1 / -1;
+  display: flex; flex-direction: column; gap: 12px;
+  padding-top: 4px;
+}
+.nx-gen-qr-styles { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.nx-gen-qr-warn {
+  margin: 0; padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning-color) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning-color) 12%, var(--card-bg));
+  color: var(--text-color); font-size: 12px; line-height: 1.45;
+}
+.nx-gen-slider { display: flex; flex-direction: column; gap: 5px; }
+.nx-gen-slider > span { display: flex; justify-content: space-between; align-items: baseline; }
+.nx-gen-slider em { font-style: normal; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.nx-gen-slider input[type=range] { width: 100%; accent-color: var(--accent-color); }
+.nx-gen-slider small { color: var(--text-muted); font-size: 11.5px; }
+
 /* Typeface picker. The select lives in the normal field grid beside Font size;
    everything that supports it spans the full row so the two-column rhythm above
    is not stretched by a tall cell. The sample line is the point of it: it shows
