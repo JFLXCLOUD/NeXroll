@@ -92,7 +92,7 @@ const QR_STYLES = [
   ['dots', 'Dots', 'Separated circles'],
 ];
 
-function QrDesign({ settings, update, hasLogo }) {
+function QrDesign({ settings, update, hasLogo, qrUrl }) {
   const transparent = String(settings.qrLight || '').toLowerCase() === 'transparent';
   const plateOpacity = settings.qrPlateOpacity === undefined ? 100 : Number(settings.qrPlateOpacity);
   // The three position squares are always drawn solid and the quiet zone is
@@ -100,9 +100,35 @@ function QrDesign({ settings, update, hasLogo }) {
   // own. Contrast still can, which is what the warning below watches.
   const lowContrast = !transparent && contrastRatio(settings.qrDark, settings.qrLight) < 7;
 
+  const plateOpacityPct = plateOpacity / 100;
+  const transparentCode = transparent;
+
   return (
     <div className="nx-gen-qr-design">
       <div className="nx-gen-palette-head"><strong>Code style</strong><span>Shape, colour and what sits behind it</span></div>
+
+      <div className="nx-gen-qr-sample">
+        <div
+          className="nx-gen-qr-sample-plate"
+          style={{
+            // The plate as it will actually render: its colour at its opacity,
+            // with the same corner rounding, over the stage's dark ground.
+            backgroundColor: settings.qrPlateColor || '#ffffff',
+            opacity: plateOpacityPct === 0 ? 0 : 1,
+            borderRadius: `${Math.max(0, Math.min(50, Number(settings.qrPlateRadius) || 0))}%`,
+          }}
+          aria-hidden="true"
+        />
+        {qrUrl
+          ? <img src={qrUrl} alt="Preview of the styled QR code"
+                 style={{ borderRadius: `${Math.max(0, (Math.min(50, Number(settings.qrPlateRadius) || 0)) * 0.82)}%` }} />
+          : <span className="nx-gen-qr-sample-empty">Add a link to preview the code</span>}
+        <p>
+          {transparentCode
+            ? 'The code has no background of its own, so the plate colour shows through it.'
+            : 'The code carries its own background. Set it to transparent to let the plate colour show through.'}
+        </p>
+      </div>
 
       <div className="nx-gen-choice-grid nx-gen-qr-styles">
         {QR_STYLES.map(([id, label, copy]) => (
@@ -670,7 +696,7 @@ export default function NeXUpGeneratorStudio(props) {
                   {isQrShare && <>
                     <label><span>Link or text to encode</span><input value={dynamicSettings.qrData || ''} onChange={event => updateDynamic({ qrData: event.target.value })} placeholder="https://example.com/watch-party" maxLength={2000} /><small>Anything scannable: a URL, a Wi-Fi guest note, a Discord invite. The preview shows the real code, so test it with your phone before rendering.</small></label>
                     <label><span>Caption <small>(optional)</small></span><input value={dynamicSettings.qrCaption || ''} onChange={event => updateDynamic({ qrCaption: event.target.value })} placeholder="SCAN TO LEARN MORE" maxLength={60} /></label>
-                    <QrDesign settings={dynamicSettings} update={updateDynamic} hasLogo={Boolean(dynamicSettings.customLogoFilename)} />
+                    <QrDesign settings={dynamicSettings} update={updateDynamic} hasLogo={Boolean(dynamicSettings.customLogoFilename)} qrUrl={dynamicQrUrl} />
                   </>}
                   <label><span>Duration</span><select value={dynamicSettings.duration} onChange={event => updateDynamic({ duration: Number(event.target.value) })}>{durationOptions([3, 4, 5, 6, 7, 8, 10, 15, 20], dynamicSettings.duration).map(value => <option key={value} value={value}>{value} seconds</option>)}</select></label>
                   {usesServerName && <label><span>Text language</span><select value={dynamicSettings.language} onChange={event => updateDynamic({ language: event.target.value })}><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="de">German</option></select></label>}

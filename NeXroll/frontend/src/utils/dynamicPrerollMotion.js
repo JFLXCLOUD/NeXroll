@@ -567,8 +567,25 @@ export function drawDynamicPrerollFrame(canvas, options, elapsedSeconds) {
       context.restore();
     }
     if (options.qrImage?.naturalWidth) {
+      // The code is clipped to the plate's own shape. Without this the square
+      // image sat on top of a rounded plate and squared the corners straight
+      // back off, which made the rounding control look broken.
+      const codeSize = plateSize - (pad * 2);
+      // Clipping the code follows the plate, but only so far. The quiet zone is
+      // four modules and the position markers start right behind it, so a corner
+      // arc past roughly 47 percent of the code would start eating them. Cap
+      // well short of that: the plate still reaches a full circle, the code just
+      // stops rounding before it costs a scan.
+      const codeRadius = Math.min(Math.max(0, plateRadius - pad), (plateSize - (pad * 2)) * 0.40);
+      context.save();
+      if (codeRadius > 0 && typeof context.roundRect === 'function') {
+        context.beginPath();
+        context.roundRect(plateX + pad, plateY + pad, codeSize, codeSize, codeRadius);
+        context.clip();
+      }
       context.imageSmoothingEnabled = false;
-      context.drawImage(options.qrImage, plateX + pad, plateY + pad, plateSize - (pad * 2), plateSize - (pad * 2));
+      context.drawImage(options.qrImage, plateX + pad, plateY + pad, codeSize, codeSize);
+      context.restore();
     } else {
       // Nothing encoded yet: say so on the plate instead of showing a blank
       // white square the operator would read as a broken preview.

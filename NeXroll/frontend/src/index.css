@@ -10604,6 +10604,57 @@ body.light .nx-draft-cal-event { color: #157a55; }
   padding-top: 4px;
 }
 .nx-gen-qr-styles { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+/* Live sample of the finished code. The stage draws it at about three pixels
+   per module, where the shape choices are indistinguishable, so show it here at
+   a size where they read -- over the plate colour, at the plate's opacity and
+   rounding, so all three controls are judged together. */
+.nx-gen-qr-sample {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(0,0,0,.28), rgba(0,0,0,.12)),
+    var(--raised-bg);
+}
+.nx-gen-qr-sample-plate {
+  grid-area: 1 / 1;
+  width: 132px; height: 132px;
+  transition: background-color .15s, border-radius .15s, opacity .15s;
+}
+.nx-gen-qr-sample img {
+  grid-area: 1 / 1;
+  width: 128px; height: 128px;
+  margin: 10px;
+  /* The source is far larger than this, so let the browser resample it. Pixel
+     snapping here would flatten exactly the module shapes this sample exists
+     to show. */
+  image-rendering: auto;
+  transition: border-radius .15s;
+}
+.nx-gen-qr-sample-plate { width: 148px; height: 148px; }
+.nx-gen-qr-sample-empty { width: 148px; height: 148px; }
+.nx-gen-qr-sample-empty {
+  grid-area: 1 / 1;
+  width: 132px; height: 132px;
+  display: grid; place-items: center;
+  padding: 0 12px;
+  border: 1px dashed var(--border-color); border-radius: 8px;
+  color: var(--text-muted); font-size: 11px; text-align: center;
+}
+.nx-gen-qr-sample p {
+  grid-area: 1 / 2;
+  margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.5;
+}
+@media (max-width: 620px) {
+  .nx-gen-qr-sample { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+  .nx-gen-qr-sample p { grid-area: auto; text-align: center; }
+}
 .nx-gen-qr-warn {
   margin: 0; padding: 9px 12px;
   border: 1px solid color-mix(in srgb, var(--warning-color) 45%, transparent);
