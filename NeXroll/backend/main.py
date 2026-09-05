@@ -16618,7 +16618,10 @@ def backup_files():
         except Exception:
             nexup_root = None
         if nexup_root:
-            for sub in ("dynamic_prerolls", "assets"):
+            # "fonts" holds typefaces the user uploaded for the generators. A
+            # font choice is stored as custom:<filename>, so without the file the
+            # restored install silently falls back to the template default.
+            for sub in ("dynamic_prerolls", "assets", "fonts"):
                 sub_dir = os.path.join(nexup_root, sub)
                 if not os.path.isdir(sub_dir):
                     continue
