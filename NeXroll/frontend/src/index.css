@@ -10343,6 +10343,22 @@ p.nx-draft-field-hint { margin: 10px 0; color: var(--text-secondary); font-size:
 @media (prefers-reduced-motion: reduce) {
   .nx-month-fillerbar { background-image: none; }
 }
+/* A day cell is a target now, so it needs to look like one. */
+.nx-draft-month-day.is-openable { cursor: pointer; }
+.nx-draft-month-day.is-openable:hover { background: color-mix(in srgb, var(--accent-color) 7%, var(--card-bg)); }
+.nx-draft-month-day.is-openable:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
+.nx-draft-month-more { cursor: pointer; }
+
+/* Week day headers jump to that day. */
+.nx-cal-dayjump {
+  border: 0; background: none; color: inherit; font: inherit;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 4px; cursor: pointer; border-radius: 8px;
+}
+.nx-cal-dayjump:hover { background: color-mix(in srgb, var(--accent-color) 10%, transparent); }
+.nx-cal-dayjump:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
+.nx-cal-daycol.is-openable { cursor: pointer; }
+
 .nx-draft-month-events button { width: 100%; padding: 4px 5px; overflow: hidden; border: 0; border-left: 2px solid #31c48d; border-radius: 4px; background: rgba(49,196,141,.11); color: #9be4c6; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .nx-draft-month-events span { padding-left: 6px; color: var(--text-muted); font-size: 12px; }
 

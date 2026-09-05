@@ -1285,11 +1285,14 @@ class DynamicPrerollGenerator:
         if background_video and os.path.isfile(str(background_video)):
             # A backdrop can arrive at any resolution or aspect: a recorded theme
             # matches the layout, someone's own footage very often does not.
-            vignette_filter = f"{backdrop_video_chain(width, height, backdrop_dim)},{filter_str}"
+            background_chain = backdrop_video_chain(width, height, backdrop_dim)
         elif background_image and os.path.isfile(str(background_image)):
-            vignette_filter = filter_str
+            background_chain = None
         else:
-            vignette_filter = f"vignette=PI/3.5:0.6,{filter_str}"
+            background_chain = "vignette=PI/3.5:0.6"
+        # Kept separable so a watermark can be composited between the background
+        # and the text, which is the one placement that makes it a watermark.
+        vignette_filter = f"{background_chain},{filter_str}" if background_chain else filter_str
         
         # Determine audio source
         audio_file = None
@@ -1337,10 +1340,34 @@ class DynamicPrerollGenerator:
         # Build filter_complex
         filter_parts = []
         
-        # Apply vignette + text to background
-        filter_parts.append(f"[0:v]{vignette_filter}[vout]")
+        # A watermark belongs under the text. It used to be overlaid after it,
+        # at fifteen percent, which left it both invisible and very slightly
+        # washing over the words -- read by everyone who tried it as the logo
+        # simply not appearing.
+        watermark_behind = has_logo and logo_mode not in ('right', 'below', 'replace')
+        if watermark_behind:
+            logo_w = int(width * 0.34)
+            # It sits under the text now rather than over it, so it can carry
+            # enough presence to actually be seen.
+            logo_opacity = 0.22
+            filter_parts.append(
+                f"[0:v]{background_chain}[bg]" if background_chain else "[0:v]null[bg]")
+            filter_parts.append(
+                f"[{logo_index}:v]scale={logo_w}:-1,format=rgba,"
+                f"colorchannelmixer=aa={logo_opacity}[logo]")
+            filter_parts.append("[bg][logo]overlay=(W-w)/2:(H-h)/2[wm]")
+            filter_parts.append(f"[wm]{filter_str}[vcomp]")
+            if fade_duration > 0:
+                filter_parts.append(
+                    f"[vcomp]fade=t=in:st=0:d={fade_duration},"
+                    f"fade=t=out:st={duration-fade_duration}:d={fade_duration}[vfinal]")
+                video_label = "[vfinal]"
+            else:
+                video_label = "[vcomp]"
+        else:
+            filter_parts.append(f"[0:v]{vignette_filter}[vout]")
 
-        if has_logo:
+        if has_logo and not watermark_behind:
             if logo_mode == 'right':
                 # Right mode: the logo sits in the right quarter and the heading
                 # is centred in the left two thirds (see the drawtext x below),
@@ -1360,10 +1387,11 @@ class DynamicPrerollGenerator:
                 logo_x_expr = '(W-w)/2'  # Centered
                 _verbose_log(f"Logo BELOW mode: width={logo_w}, opacity={logo_opacity}, y={logo_y_pos}")
             else:
-                # Watermark mode: faded centered behind text
-                logo_w = int(width * 0.30)
-                logo_opacity = 0.15
-                logo_y_pos = None  # Will use centered overlay
+                # Only right/below/replace reach here; watermark is composited
+                # earlier, underneath the text.
+                logo_w = int(width * 0.25)
+                logo_opacity = 0.85
+                logo_y_pos = 175
                 logo_x_expr = '(W-w)/2'
             filter_parts.append(
                 f"[{logo_index}:v]scale={logo_w}:-1,format=rgba,"
@@ -1379,7 +1407,7 @@ class DynamicPrerollGenerator:
                 video_label = "[vfinal]"
             else:
                 video_label = "[vcomp]"
-        else:
+        elif not watermark_behind:
             # No logo — apply fade directly to vout if needed
             if fade_duration > 0:
                 filter_parts.append(f"[vout]fade=t=in:st=0:d={fade_duration},fade=t=out:st={duration-fade_duration}:d={fade_duration}[vfinal]")
@@ -3151,9 +3179,14 @@ class DynamicPrerollGenerator:
                     )
                     logo_filter += f"[out][logo]overlay={logo_x}:{logo_y}[outcomp]"
                 else:
-                    # Watermark mode: faded centered behind text
-                    logo_w = int(width * 0.30)
-                    logo_opacity = 0.15
+                    # Watermark mode. The poster grid is composited before this,
+                    # and the logo input is declared after the posters, so this
+                    # one genuinely does sit on top -- which is why fifteen
+                    # percent read as nothing at all. A faded mark over the grid
+                    # is the honest reading of the option, so give it enough
+                    # presence to be seen without competing with the artwork.
+                    logo_w = int(width * 0.36)
+                    logo_opacity = 0.28
                     logo_filter = (
                         f"[{logo_input_index}:v]scale={logo_w}:-1,format=rgba,"
                         f"colorchannelmixer=aa={logo_opacity}[logo];"

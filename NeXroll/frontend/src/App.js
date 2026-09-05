@@ -19472,7 +19472,10 @@ const DashboardTiles = {
       const spans = withColumns(scheduleSpansForDay(day).filter(span => !span.allDay));
       const isToday = dateKey(day) === dateKey(dashboardNow);
       return (
-        <div className="nx-cal-daycol">
+        <div
+          className={`nx-cal-daycol${compact ? ' is-openable' : ''}`}
+          onClick={compact ? () => openCalendarDay(day) : undefined}
+        >
           {AXIS_HOURS.map(hour => (
             <div key={hour} className="nx-cal-gridline" style={{ top: pct(hour * 60) }} aria-hidden="true" />
           ))}
@@ -19495,7 +19498,7 @@ const DashboardTiles = {
                 left: `${(span.lane / span.laneCount) * 100}%`,
                 width: `${(1 / span.laneCount) * 100}%`,
               }}
-              onClick={() => handleEditSchedule(span.schedule)}
+              onClick={event => { event.stopPropagation(); handleEditSchedule(span.schedule); }}
               title={`${span.schedule.name} — ${formatGapTime(span.start)} to ${formatGapTime(span.end)}`}
             >
               <strong>{span.schedule.name}</strong>
@@ -19529,6 +19532,13 @@ const DashboardTiles = {
           ))}
         </div>
       );
+    };
+
+    // Opening a day is the same action from every view, so it lives in one
+    // place: month cells, week headers and week columns all call this.
+    const openCalendarDay = day => {
+      syncCalendarDate(day);
+      setCalendarMode('day');
     };
 
     const renderCalendarLegend = ({ tones = true } = {}) => (
@@ -19578,9 +19588,15 @@ const DashboardTiles = {
         <div className="nx-cal-weekhead" style={{ gridTemplateColumns: '64px repeat(7, minmax(0, 1fr))' }}>
           <span />
           {weekDaysView.map(day => (
-            <div key={dateKey(day)} className={dateKey(day) === dateKey(today) ? 'today' : ''}>
+            <button
+              type="button"
+              key={dateKey(day)}
+              className={`nx-cal-dayjump${dateKey(day) === dateKey(today) ? ' today' : ''}`}
+              onClick={() => openCalendarDay(day)}
+              title={`Open ${day.toLocaleDateString()}`}
+            >
               {day.toLocaleDateString([], { weekday: 'short' })}<strong>{day.getDate()}</strong>
-            </div>
+            </button>
           ))}
         </div>
         {renderAllDayRow(weekDaysView)}
@@ -19624,15 +19640,26 @@ const DashboardTiles = {
             return (
               <div
                 key={dateKey(day)}
-                className={`nx-draft-month-day${isOutsideMonth ? ' outside' : ''}${isToday ? ' today' : ''}`}
+                role="button"
+                tabIndex={0}
+                className={`nx-draft-month-day is-openable${isOutsideMonth ? ' outside' : ''}${isToday ? ' today' : ''}`}
                 style={{ gridRow: Math.floor(index / 7) + 2, gridColumn: (index % 7) + 1 }}
+                // The whole cell opens the day, not just the little date number.
+                onClick={() => openCalendarDay(day)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCalendarDay(day); }
+                }}
+                aria-label={`Open ${day.toLocaleDateString()}`}
               >
-                <button type="button" className="nx-draft-month-date" onClick={() => { syncCalendarDate(day); setCalendarMode('day'); }} aria-label={`Open ${day.toLocaleDateString()}`}>{day.getDate()}</button>
+                <span className="nx-draft-month-date">{day.getDate()}</span>
                 <div className="nx-draft-month-events">
                   {daySchedulesForView.slice(0, 2).map(schedule => (
-                    <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} title={`${schedule.name}${schedule.exclusive ? ' — exclusive, wins any overlap' : schedule.blend_enabled ? ' — blends with overlapping schedules' : ''}`}>{schedule.name}</button>
+                    // Editing a schedule must not also navigate the calendar.
+                    <button type="button" key={schedule.id} onClick={event => { event.stopPropagation(); handleEditSchedule(schedule); }} title={`${schedule.name}${schedule.exclusive ? ' — exclusive, wins any overlap' : schedule.blend_enabled ? ' — blends with overlapping schedules' : ''}`}>{schedule.name}</button>
                   ))}
-                  {daySchedulesForView.length > 2 && <span>+{daySchedulesForView.length - 2} more</span>}
+                  {daySchedulesForView.length > 2 && (
+                    <span className="nx-draft-month-more">+{daySchedulesForView.length - 2} more</span>
+                  )}
                 </div>
               </div>
             );
