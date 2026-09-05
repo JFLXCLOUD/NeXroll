@@ -10343,6 +10343,8 @@ p.nx-draft-field-hint { margin: 10px 0; color: var(--text-secondary); font-size:
 @media (prefers-reduced-motion: reduce) {
   .nx-month-fillerbar { background-image: none; }
 }
+.nx-focus-window { opacity: .8; font-variant-numeric: tabular-nums; }
+
 /* A day cell is a target now, so it needs to look like one. */
 .nx-draft-month-day.is-openable { cursor: pointer; }
 .nx-draft-month-day.is-openable:hover { background: color-mix(in srgb, var(--accent-color) 7%, var(--card-bg)); }

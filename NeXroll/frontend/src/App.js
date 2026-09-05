@@ -93,6 +93,24 @@ const usableScheduleDate = (value) => {
   return date.getFullYear() <= SCHEDULE_DATE_SENTINEL_YEAR ? null : date;
 };
 
+// "19:30" as minutes past midnight. Blank is not zero: an absent time range
+// means the schedule runs all day, and Number('') would read that as midnight.
+const parseClockMinutes = (value) => {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const parts = text.split(':');
+  const hour = Number(parts[0]);
+  const minute = parts.length > 1 ? Number(parts[1]) : 0;
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return (hour * 60) + minute;
+};
+
+const formatClockMinutes = (minutes) => {
+  const clamped = Math.min((24 * 60) - 1, Math.max(0, Number(minutes) || 0));
+  return new Date(2026, 0, 1, Math.floor(clamped / 60), clamped % 60)
+    .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+};
+
 // Help button target per page. Longest matching prefix wins, so a sub-page
 // inherits its section's page unless it names a better one. Keys are activeTab
 // values; values are wiki page names (and optional #anchor).
@@ -7146,9 +7164,35 @@ const DashboardTiles = {
       .map(s => {
         const start = s.start_date ? new Date(s.start_date) : null;
         const end = s.end_date ? new Date(s.end_date) : null;
+        // "Active now" used to mean start_date <= now, which is true for every
+        // recurring schedule: monthly, weekly and yearly ones store the
+        // 2000-01-01 sentinel there and keep their real timing in the
+        // recurrence pattern. With no end date the second half never bit
+        // either, so the whole list read "Now". Ask the recurrence instead.
+        const todayTime = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const runsToday = isScheduleActiveOnDay(s, todayTime, toDayTime);
+        const range = getScheduleTimeRange(s) || {};
+        const startMinutes = parseClockMinutes(range.start);
+        const endMinutes = parseClockMinutes(range.end);
+        const allDay = startMinutes === null;
+        const nowMinutes = (now.getHours() * 60) + now.getMinutes();
+        let withinWindow = true;
+        if (!allDay) {
+          const finish = endMinutes === null ? 24 * 60 : endMinutes;
+          withinWindow = finish < startMinutes
+            // Runs past midnight, so it covers both ends of the day.
+            ? (nowMinutes >= startMinutes || nowMinutes < finish)
+            : (nowMinutes >= startMinutes && nowMinutes < finish);
+        }
+        const notFinished = !end || end > now;
         return {
           ...s,
-          isActiveNow: !!(start && start <= now && (!end || end > now)),
+          isActiveNow: runsToday && withinWindow && notFinished,
+          allDay,
+          windowLabel: allDay
+            ? 'All day'
+            : `${formatClockMinutes(startMinutes)} - ${formatClockMinutes(endMinutes === null ? 24 * 60 - 1 : endMinutes)}`,
+          startMinutes,
           when: usableScheduleDate(s.next_run) || start || now,
         };
       })
@@ -7181,13 +7225,25 @@ const DashboardTiles = {
                 return (
                   <div className="nx-focus-timeline-row" key={s.id}>
                     <span className="nx-focus-when">
-                      {s.isActiveNow ? 'Now' : s.when.toLocaleString(undefined, {
-                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-                      })}
+                      {s.isActiveNow
+                        ? 'Now'
+                        : (() => {
+                          // next_run carries the date; the hour it will actually
+                          // fire at comes from the recurrence, so prefer that
+                          // over whatever time happens to sit on next_run.
+                          const day = s.when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                          if (s.allDay) return day;
+                          const at = new Date(s.when);
+                          at.setHours(Math.floor(s.startMinutes / 60), s.startMinutes % 60, 0, 0);
+                          return `${day}, ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+                        })()}
                     </span>
                     <span className="nx-focus-timeline-body">
                       <span className="nx-focus-timeline-name">{s.name}</span>
-                      <span className="nx-focus-sub">{cat?.name || 'Sequence'}</span>
+                      <span className="nx-focus-sub">
+                        {cat?.name || 'Sequence'}
+                        <span className="nx-focus-window"> &middot; {s.windowLabel}</span>
+                      </span>
                     </span>
                     <span className={`nx-chip nx-status ${s.isActiveNow ? 'ok' : ''}`}>{badge}</span>
                   </div>
