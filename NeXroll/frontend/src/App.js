@@ -4590,12 +4590,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // conflict rows) avoids reporting every clash twice.
   const dashboardConflictCount = React.useMemo(() => {
     try {
+      // Keys must be built with the same helper the ignore list is stored
+      // under. This used to sort numerically and join with a colon, so an
+      // ignored pair could never match and the tile counted it forever.
+      const ignoredSet = new Set(ignoredConflicts || []);
       const pairs = new Set();
       (schedules || []).forEach(schedule => {
         (getScheduleConflicts(schedule) || []).forEach(conflict => {
-          const otherId = conflict?.schedule?.id;
-          if (otherId != null && schedule?.id != null) {
-            pairs.add([schedule.id, otherId].sort((a, b) => a - b).join(':'));
+          const other = conflict?.schedule;
+          if (other?.id != null && schedule?.id != null) {
+            const key = getSchedulePairKey(schedule, other);
+            if (!ignoredSet.has(key)) pairs.add(key);
           }
         });
       });
@@ -4604,7 +4609,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       return null; // Unknown beats a wrong number; the backend leaves it unscored.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schedules]);
+  }, [schedules, ignoredConflicts]);
 
   // Refresh the health summary whenever the inputs it scores actually change.
   React.useEffect(() => {
@@ -5053,6 +5058,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   // Load ignored conflicts from backend
+  // Load once at startup. Without this the list stays empty until the conflicts
+  // tab is opened, which is why ignored conflicts reappeared after a reload and
+  // the counts on the dashboard disagreed with the ones behind the button.
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch(apiUrl('conflicts/ignored'))
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (!cancelled && data) setIgnoredConflicts(data.ignored || []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const loadIgnoredConflicts = async () => {
     try {
       const res = await fetch(apiUrl('conflicts/ignored'));

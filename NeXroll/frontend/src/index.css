@@ -10609,6 +10609,16 @@ body.light .nx-draft-cal-event { color: #157a55; }
    per module, where the shape choices are indistinguishable, so show it here at
    a size where they read -- over the plate colour, at the plate's opacity and
    rounding, so all three controls are judged together. */
+/* When a generated video was last written. An automatic regeneration is called
+   out, because that is the one you cannot infer from the file itself. */
+.nx-gen-output-time {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.nx-gen-output-time.is-auto { color: var(--accent-color); }
+.nx-gen-output-time svg { opacity: .85; }
+
 .nx-gen-qr-sample {
   position: relative;
   display: grid;

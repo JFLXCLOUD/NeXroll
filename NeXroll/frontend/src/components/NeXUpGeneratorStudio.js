@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   AlertTriangle, Check, Film, Gauge, Image, Layers, Loader2, Music,
-  Play, Sparkles, Trash2, Type, Upload, Video, X
+  Play, RefreshCw, Sparkles, Trash2, Type, Upload, Video, X
 } from 'lucide-react';
 import { fontStackFor, prepareDynamicPrerollOptions, startDynamicPrerollPreview, startThemeBackdropPreview } from '../utils/dynamicPrerollMotion';
 
@@ -585,12 +585,44 @@ function ComingSoonStage(props) {
   );
 }
 
+// "3 minutes ago" is what you actually want to read on a card; the exact time
+// goes in the tooltip for when it matters.
+const relativeTime = epochSeconds => {
+  const value = Number(epochSeconds);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const seconds = Math.max(0, Math.round((Date.now() / 1000) - value));
+  if (seconds < 90) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days} days ago`;
+};
+
+const absoluteTime = epochSeconds => {
+  const value = Number(epochSeconds);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  return new Date(value * 1000).toLocaleString([], {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+};
+
 function RecentOutputs({ mode, items, onPreview, onDelete }) {
   if (!items.length) return null;
   return (
     <section className="nx-gen-card nx-gen-recent">
       <header className="nx-gen-recent-head"><div><h3>Recent generated {mode === 'dynamic' ? 'prerolls' : 'lists'}</h3><p>Saved to the NeXroll library and ready for sequences.</p></div><StudioBadge>{items.length} files</StudioBadge></header>
-      <div className="nx-gen-recent-grid">{items.slice(0, 6).map((item, index) => <article key={item.filename || index}><button type="button" className={`nx-gen-output-art art-${index % 3}`} onClick={() => onPreview(item)}><Play size={18} /><span>{mode === 'dynamic' ? 'SERVER IDENT' : 'COMING SOON'}</span></button><div><strong>{item.name || item.filename || 'Generated video'}</strong><span>{item.size_bytes ? `${(Number(item.size_bytes) / 1048576).toFixed(1)} MB` : 'MP4 video'}</span><button type="button" title="Delete generated video" onClick={() => onDelete(item.filename)}><Trash2 size={14} /></button></div></article>)}</div>
+      <div className="nx-gen-recent-grid">{items.slice(0, 6).map((item, index) => <article key={item.filename || index}><button type="button" className={`nx-gen-output-art art-${index % 3}`} onClick={() => onPreview(item)}><Play size={18} /><span>{mode === 'dynamic' ? 'SERVER IDENT' : 'COMING SOON'}</span></button><div><strong>{item.name || item.filename || 'Generated video'}</strong><span>{item.size_bytes ? `${(Number(item.size_bytes) / 1048576).toFixed(1)} MB` : 'MP4 video'}</span>{item.created_at ? (
+        <time
+          className={`nx-gen-output-time${item.auto_regenerated_at ? ' is-auto' : ''}`}
+          dateTime={new Date(Number(item.created_at) * 1000).toISOString()}
+          title={`${item.auto_regenerated_at ? 'Regenerated automatically' : 'Generated'} ${absoluteTime(item.created_at)}`}
+        >
+          {item.auto_regenerated_at && <RefreshCw size={11} />}
+          {item.auto_regenerated_at ? 'Auto ' : ''}{relativeTime(item.created_at)}
+        </time>
+      ) : null}<button type="button" title="Delete generated video" onClick={() => onDelete(item.filename)}><Trash2 size={14} /></button></div></article>)}</div>
     </section>
   );
 }

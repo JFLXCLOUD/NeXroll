@@ -385,6 +385,7 @@ class Setting(Base):
     nexup_coming_soon_list_qr_data = Column(String, nullable=True)  # Optional link encoded as a QR in the corner
     nexup_coming_soon_list_font_scale = Column(Float, default=1.0)  # Item text scale, 0.85 to 1.60; row pitch follows it
     nexup_coming_soon_list_font_family = Column(String, nullable=True)  # 'builtin:<id>' or 'custom:<file>'; null keeps the template default
+    nexup_coming_soon_list_auto_regen_log = Column(String, nullable=True)  # JSON {layout: ISO time} of the last automatic regeneration
     nexup_coming_soon_list_title_color = Column(String, nullable=True)  # Title text; null inherits the Text colour
     nexup_coming_soon_list_date_color = Column(String, nullable=True)  # Release dates; null inherits the Accent colour
     nexup_coming_soon_list_available_color = Column(String, nullable=True)  # "Available Now!"; null keeps the default green
