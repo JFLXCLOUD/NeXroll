@@ -92,7 +92,6 @@ class Schedule(Base):
     end_date = Column(DateTime, nullable=True)  # Optional for ongoing schedules
     category_id = Column(Integer, ForeignKey("categories.id"))
     fallback_category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Fallback category
-    shuffle = Column(Boolean, default=False)
     playlist = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     last_run = Column(DateTime, nullable=True)

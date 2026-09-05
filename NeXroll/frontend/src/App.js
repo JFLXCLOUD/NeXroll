@@ -1709,9 +1709,6 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [showNotifications, setShowNotifications] = useState(() => {
     try { return JSON.parse(localStorage.getItem('showNotifications') || 'true'); } catch { return true; }
   });
-  const [weekStartsOnSunday, setWeekStartsOnSunday] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('weekStartsOnSunday') || 'true'); } catch { return true; }
-  });
   
   // Custom confirm/alert dialog state
   const [confirmDialog, setConfirmDialog] = useState({
@@ -1995,7 +1992,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     start_date: '',
     end_date: '',
     category_id: '',
-    shuffle: true,
     playlist: false,
     fallback_category_id: '',
     color: '',
@@ -2063,7 +2059,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       setEditingSchedule(null);
       setScheduleForm({
         name: '', type: 'monthly', start_date: '', end_date: '',
-        category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+        category_id: '', playlist: false, fallback_category_id: '', color: '',
         holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
       });
       setScheduleMode('simple');
@@ -2268,10 +2264,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   useEffect(() => {
     try { localStorage.setItem('showNotifications', JSON.stringify(showNotifications)); } catch {}
   }, [showNotifications]);
-
-  useEffect(() => {
-    try { localStorage.setItem('weekStartsOnSunday', JSON.stringify(weekStartsOnSunday)); } catch {}
-  }, [weekStartsOnSunday]);
 
   // Helper functions that respect user preferences
   // Resolves to a boolean, or to { confirmed, checked } when options.checkbox is
@@ -2764,7 +2756,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         start_date: formatDateForBackend(schedule.start_date),
         end_date: formatDateForBackend(schedule.end_date),
         category_id: schedule.category_id,
-        shuffle: schedule.shuffle || false,
         playlist: schedule.playlist || false,
         recurrence_pattern: schedule.recurrence_pattern || '',
         preroll_ids: schedule.preroll_ids || '',
@@ -3724,7 +3715,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       name: scheduleForm.name.trim(),
       type: scheduleForm.type,
       start_date: normalizedStartDate,
-      shuffle: scheduleForm.shuffle,
       playlist: scheduleForm.playlist,
       blend_enabled: scheduleForm.blend_enabled,
       priority: scheduleForm.priority,
@@ -3891,7 +3881,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         localStorage.removeItem('nx_schedule_draft');
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
-          category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+          category_id: '', playlist: false, fallback_category_id: '', color: '',
           holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
         });
         setScheduleMode('simple');
@@ -4938,7 +4928,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         start_date: sched.start_date,
         end_date: sched.end_date || null,
         category_id: sched.category_id,
-        shuffle: sched.shuffle,
         playlist: sched.playlist,
         recurrence_pattern: sched.recurrence_pattern || null,
         preroll_ids: sched.preroll_ids || null,
@@ -5580,7 +5569,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       start_date: toLocalInputValue(schedule.start_date),
       end_date: toLocalInputValue(schedule.end_date),
       category_id: schedule.category_id || '',
-      shuffle: schedule.shuffle,
       playlist: schedule.playlist,
       fallback_category_id: schedule.fallback_category_id || '',
       color: schedule.color || '',
@@ -5655,7 +5643,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     setEditingSchedule(null);
     setScheduleForm({
       name: '', type: 'monthly', start_date: '', end_date: '',
-      category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+      category_id: '', playlist: false, fallback_category_id: '', color: '',
       holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
     });
     setScheduleMode('simple');
@@ -5759,7 +5747,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setEditingSchedule(null);
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
-          category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+          category_id: '', playlist: false, fallback_category_id: '', color: '',
           holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
         });
         setScheduleMode('simple');
@@ -17581,20 +17569,19 @@ const DashboardTiles = {
                       flexDirection: 'column',
                       cursor: 'pointer',
                       padding: '1rem',
-                      backgroundColor: (scheduleForm.shuffle || (!scheduleForm.shuffle && !scheduleForm.playlist)) ? 'var(--button-bg)' : 'var(--bg-color)',
-                      color: (scheduleForm.shuffle || (!scheduleForm.shuffle && !scheduleForm.playlist)) ? 'white' : 'var(--text-color)',
+                      backgroundColor: !scheduleForm.playlist ? 'var(--button-bg)' : 'var(--bg-color)',
+                      color: !scheduleForm.playlist ? 'white' : 'var(--text-color)',
                       borderRadius: '8px',
-                      border: '3px solid ' + ((scheduleForm.shuffle || (!scheduleForm.shuffle && !scheduleForm.playlist)) ? 'var(--button-bg)' : 'var(--border-color)'),
+                      border: '3px solid ' + (!scheduleForm.playlist ? 'var(--button-bg)' : 'var(--border-color)'),
                       transition: 'all 0.2s'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
                         <input
                           type="radio"
                           name="playback"
-                          checked={scheduleForm.shuffle || (!scheduleForm.shuffle && !scheduleForm.playlist)}
+                          checked={!scheduleForm.playlist}
                           onChange={() => setScheduleForm({
                             ...scheduleForm,
-                            shuffle: true,
                             playlist: false
                           })}
                           style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
@@ -17625,7 +17612,6 @@ const DashboardTiles = {
                           checked={scheduleForm.playlist}
                           onChange={() => setScheduleForm({
                             ...scheduleForm,
-                            shuffle: false,
                             playlist: true
                           })}
                           style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
@@ -17903,7 +17889,7 @@ const DashboardTiles = {
               onClick={() => {
                 setScheduleForm({
                   name: '', type: 'monthly', start_date: '', end_date: '',
-                  category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+                  category_id: '', playlist: false, fallback_category_id: '', color: '',
                   holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
                 });
                 setScheduleMode('simple');
@@ -18544,7 +18530,7 @@ const DashboardTiles = {
                     )}
 
                     {/* Playback Mode Badge */}
-                    {schedule.shuffle && (
+                    {!schedule.playlist && (
                       <span style={{
                         backgroundColor: '#14B8A6',
                         color: 'white',
@@ -18844,7 +18830,7 @@ const DashboardTiles = {
         if (Array.isArray(sequence) && sequence.length) return 'Sequence';
       } catch (_) {}
       if (schedule.playlist) return 'Playlist';
-      return schedule.shuffle === false ? 'Sequential' : 'Shuffle';
+      return 'Shuffle';
     };
 
     const scheduleBehavior = schedule => schedule.exclusive ? 'exclusive' : schedule.blend_enabled ? 'blend' : 'standard';
@@ -19277,7 +19263,7 @@ const DashboardTiles = {
                     <label><span>Category</span><select value={scheduleForm.category_id} onChange={event => setScheduleForm({ ...scheduleForm, category_id: event.target.value })} required>
                       <option value="">Choose a category</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
                     </select></label>
-                    <label><span>Playback</span><select value={scheduleForm.shuffle ? 'shuffle' : 'sequential'} onChange={event => setScheduleForm({ ...scheduleForm, shuffle: event.target.value === 'shuffle', playlist: false })}>
+                    <label><span>Playback</span><select value={scheduleForm.playlist ? 'sequential' : 'shuffle'} onChange={event => setScheduleForm({ ...scheduleForm, playlist: event.target.value === 'sequential' })}>
                       <option value="shuffle">Shuffle</option><option value="sequential">Sequential</option>
                     </select></label>
                   </div>
@@ -19328,7 +19314,7 @@ const DashboardTiles = {
               <dl className="nx-draft-info-list">
                 <div><dt>When</dt><dd>{recurrenceLabel}</dd></div>
                 <div><dt>Content</dt><dd>{scheduleMode === 'advanced' ? selectedSequence?.name || `${sequenceBlocks.length || 0} blocks` : selectedCategory?.name || 'Not selected'}</dd></div>
-                <div><dt>Playback</dt><dd>{scheduleMode === 'advanced' ? 'Sequence' : scheduleForm.playlist ? 'Playlist' : scheduleForm.shuffle ? 'Shuffle' : 'Sequential'}</dd></div>
+                <div><dt>Playback</dt><dd>{scheduleMode === 'advanced' ? 'Sequence' : scheduleForm.playlist ? 'Playlist' : 'Shuffle'}</dd></div>
                 <div><dt>Priority</dt><dd>{scheduleForm.priority} / {behaviorLabel}</dd></div>
               </dl>
               <div className="nx-draft-mini-card"><div><strong>Conflict check</strong><span className={`nx-draft-badge${draftConflicts.length ? ' warn' : ''}`}>{draftConflicts.length} likely</span></div><p>{draftConflicts.length > 0 ? `Overlaps: ${draftConflicts.map(c => c.schedule.name).join(', ')}` : 'No overlaps detected with this schedule’s current settings.'}</p></div>

@@ -40,7 +40,6 @@ Provide the server URL and an API key created under **Settings → Advanced → 
 The page shows the connected server, its name and version, and a live status dot. NeXroll can now:
 
 - Apply the active schedule's prerolls to the server
-- Read your libraries for genre-based scheduling
 - Verify that the paths it sends are ones the server can open
 
 ### Verify playback

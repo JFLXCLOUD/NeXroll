@@ -172,36 +172,6 @@ Return NeXroll to a fresh-install state from **Settings → System → Factory R
 
 ## Plex Settings
 
-### Genre-based Preroll Mapping
-
-**Experimental Feature**: Automatically apply prerolls based on the genre of what you're watching.
-
-#### Enable Genre Mapping
-
-1. Toggle **Enable Genre-based Preroll Mapping**
-2. Create mappings (e.g., Horror → Halloween category)
-3. When you play a horror movie, Halloween prerolls apply
-
-#### Genre Settings
-
-| Setting | Description |
-|---------|-------------|
-| **Genre Auto-Apply** | Master toggle for the feature |
-| **Allow genres to override schedules** | Genre prerolls play even if a schedule is active |
-| **Genre Override TTL** | Seconds to wait before re-applying the same genre |
-
-#### Creating Genre Mappings
-
-1. Enter a **Plex Genre** (e.g., "Horror", "Comedy", "Christmas")
-2. Select the **Target Category**
-3. Click **Create Mapping**
-
-#### Testing Genre Mappings
-
-- Enter genres in the test field
-- Click **Resolve** to see which category would match
-- Click **Apply Now** to immediately apply the matched category
-
 ### Path Mappings
 
 Configure path translation between NeXroll and Plex. Essential when they see files at different paths (common with Docker, NAS, or remote servers).

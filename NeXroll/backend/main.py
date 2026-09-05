@@ -1749,7 +1749,6 @@ class ScheduleCreate(BaseModel):
     start_date: str  # Accept as string from frontend
     end_date: Optional[str] = None  # Accept as string from frontend
     category_id: Optional[int] = None  # Optional for sequence-based schedules
-    shuffle: bool = False
     playlist: bool = False
     recurrence_pattern: Optional[str] = None
     preroll_ids: Optional[str] = None
@@ -1771,7 +1770,6 @@ class ScheduleResponse(BaseModel):
     start_date: datetime.datetime
     end_date: Optional[datetime.datetime] = None
     category_id: Optional[int] = None
-    shuffle: bool
     playlist: bool
     is_active: bool
     last_run: Optional[datetime.datetime] = None
@@ -2303,9 +2301,6 @@ def test_build_verification():
 # In-memory store for Plex.tv OAuth sessions
 OAUTH_SESSIONS: dict[str, dict] = {}
 
-# Recent genre applications for UI feedback (last 10, in-memory)
-RECENT_GENRE_APPLICATIONS: list[dict] = []
-
 # Stable client identifier for Plex integrations (persisted in settings when possible)
 CLIENT_ID_CACHE: str | None = None
 def _get_or_create_plex_client_id() -> str:
@@ -2510,7 +2505,7 @@ async def _request_logging_mw(request: Request, call_next):
     # These are called frequently for UI updates and don't add debugging value
     skip_polling = (
         '/plex/status', '/jellyfin/status', '/settings/active-category',
-        '/scheduler/active-schedule-ids', '/genres/recent-applications',
+        '/scheduler/active-schedule-ids',
         '/system/version', '/system/dependencies', '/system/ffmpeg-info',
         '/update/settings', '/community-prerolls/index-status',
         '/community-prerolls/downloaded-ids', '/auth/status'
@@ -4445,33 +4440,6 @@ def require_auth(request: Request, db: Session = Depends(get_db)) -> models.User
     return user
 
 
-@app.post("/system/apply-env-vars")
-def apply_env_vars(request: Request, user: models.User = Depends(require_auth)):
-    """
-    Apply Windows environment variables required for genre-based preroll intercept functionality.
-    Requires administrator privileges to set machine-level environment variables.
-    """
-    try:
-        commands = [
-            "[System.Environment]::SetEnvironmentVariable('NEXROLL_INTERCEPT_ALWAYS','1','Machine')",
-            "[System.Environment]::SetEnvironmentVariable('NEXROLL_INTERCEPT_THRESHOLD_MS','15000','Machine')",
-            "[System.Environment]::SetEnvironmentVariable('NEXROLL_INTERCEPT_DELAY_MS','1000','Machine')",
-            "[System.Environment]::SetEnvironmentVariable('NEXROLL_FORCE_INTERCEPT','1','Machine')"
-        ]
-
-        for cmd in commands:
-            result = _run_subprocess(["powershell", "-Command", cmd], capture_output=True, text=True)
-            if result.returncode != 0:
-                raise Exception(f"Failed to set environment variable: {cmd}, error: {result.stderr}")
-
-        return {"success": True, "message": "Environment variables applied successfully"}
-
-    except Exception as e:
-        _file_log(f"Failed to apply environment variables: {str(e)}", level="ERROR")
-        log_event('ERROR', 'system', f'Failed to apply environment variables: {e}', source='apply_env_vars')
-        raise HTTPException(status_code=500, detail="Failed to apply environment variables")
-
-# Minimal built-in Dashboard with a Reinitialize Thumbnails button
 @app.get("/dashboard")
 def dashboard():
     html = """<!doctype html>
@@ -11262,7 +11230,6 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         end_date=end_date,
         category_id=schedule.category_id,
         fallback_category_id=schedule.fallback_category_id,
-        shuffle=schedule.shuffle,
         playlist=schedule.playlist,
         is_active=schedule.is_active,
         recurrence_pattern=schedule.recurrence_pattern,
@@ -11308,7 +11275,6 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         "end_date": created_schedule.end_date.isoformat() if created_schedule.end_date else None,
         "category_id": created_schedule.category_id,
         "category": {"id": created_schedule.category.id, "name": created_schedule.category.name} if created_schedule.category else None,
-        "shuffle": created_schedule.shuffle,
         "playlist": created_schedule.playlist,
         "is_active": created_schedule.is_active,
         "last_run": created_schedule.last_run.isoformat() if created_schedule.last_run else None,
@@ -11344,7 +11310,6 @@ def get_schedules(db: Session = Depends(get_db)):
             "end_date": end_iso,
             "category_id": s.category_id,
             "category": {"id": s.category.id, "name": s.category.name} if s.category else None,
-            "shuffle": s.shuffle,
             "playlist": s.playlist,
             "is_active": s.is_active,
             "last_run": s.last_run.isoformat() if s.last_run else None,
@@ -11443,7 +11408,6 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     db_schedule.start_date = start_date
     db_schedule.end_date = end_date
     db_schedule.category_id = schedule.category_id
-    db_schedule.shuffle = schedule.shuffle
     db_schedule.playlist = schedule.playlist
     db_schedule.recurrence_pattern = schedule.recurrence_pattern
     db_schedule.preroll_ids = schedule.preroll_ids
@@ -14018,7 +13982,6 @@ def create_community_template(
                 "start_date": s.start_date.isoformat() if s.start_date else None,
                 "end_date": s.end_date.isoformat() if s.end_date else None,
                 "category_id": s.category_id,
-                "shuffle": s.shuffle,
                 "playlist": s.playlist,
                 "recurrence_pattern": s.recurrence_pattern,
                 "preroll_ids": s.preroll_ids
@@ -14073,7 +14036,6 @@ def import_community_template(template_id: int, db: Session = Depends(get_db)):
                 start_date=datetime.datetime.fromisoformat(schedule_data["start_date"]) if schedule_data.get("start_date") else None,
                 end_date=datetime.datetime.fromisoformat(schedule_data["end_date"]) if schedule_data.get("end_date") else None,
                 category_id=schedule_data.get("category_id"),
-                shuffle=schedule_data.get("shuffle", False),
                 playlist=schedule_data.get("playlist", False),
                 recurrence_pattern=schedule_data.get("recurrence_pattern"),
                 preroll_ids=schedule_data.get("preroll_ids")
@@ -16436,7 +16398,6 @@ def backup_database(db: Session = Depends(get_db)):
                     "end_date": s.end_date.isoformat() if s.end_date else None,
                     "category_id": s.category_id,
                     "fallback_category_id": getattr(s, "fallback_category_id", None),
-                    "shuffle": s.shuffle,
                     "playlist": s.playlist,
                     "is_active": s.is_active,
                     "recurrence_pattern": s.recurrence_pattern,
@@ -16900,7 +16861,6 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                         end_date=end_date,
                         category_id=new_cat_id,
                         fallback_category_id=new_fallback_id,
-                        shuffle=schedule_data.get("shuffle", False),
                         playlist=schedule_data.get("playlist", False),
                         is_active=schedule_data.get("is_active", True),
                         recurrence_pattern=schedule_data.get("recurrence_pattern"),
@@ -18208,120 +18168,6 @@ def static_css_fallback(fname: str):
     raise HTTPException(status_code=404, detail="Not found")
 
 # --- Genre-based Pre-Roll Mapping APIs ---
-
-def _norm_genre(s):
-    """
-    Normalize a genre string for case-insensitive, punctuation-tolerant matching.
-    - Unicode NFKC normalization
-    - Replace common separators (&, /, - and underscores) with single spaces
-    - Collapse repeated whitespace and lowercase
-    """
-    try:
-        import unicodedata, re
-        t = unicodedata.normalize("NFKC", str(s or ""))
-        # normalize separators
-        t = t.replace("&", " and ")
-        t = re.sub(r"[/_]", " ", t)
-        t = re.sub(r"-+", " ", t)
-        # collapse whitespace and lowercase
-        t = " ".join(t.split()).strip().lower()
-        return t
-    except Exception:
-        return ""
-
-def _canonical_genre_key(s: str) -> str:
-    """
-    Apply synonym normalization on top of _norm_genre.
-    Keeps mapping keys intuitive but tolerant to Plex naming variants.
-    """
-    g = _norm_genre(s)
-    if not g:
-        return ""
-    # lightweight synonyms informed by Plex genre variants
-    synonyms = {
-        "sci fi": "science fiction",
-        "scifi": "science fiction",
-        "sci-fi": "science fiction",  # in case normalization changes later
-        "kids and family": "family",
-        "kids family": "family",
-    }
-    return synonyms.get(g, g)
-
-def _genre_candidate_keys(s: str) -> list[str]:
-    """
-    Generate candidate normalized keys for a raw genre tag:
-      1) canonical normalized form
-      2) split components for composites like "action and adventure"
-    """
-    import re
-    out: list[str] = []
-    base = _canonical_genre_key(s)
-    if base:
-        out.append(base)
-        # split composite tags into parts and try each
-        parts = [p.strip() for p in re.split(r"(?:\s+and\s+|,|\||/)", base) if p and p.strip()]
-        for p in parts:
-            if p and p not in out:
-                out.append(p)
-    # unique while preserving order
-    seen = set()
-    uniq = [x for x in out if not (x in seen or seen.add(x))]
-    return uniq
-
-def _find_genre_map_case_insensitive(db, genre_norm):
-    """
-    Find a GenreMap by canonical key. Prefers genre_norm column; falls back to
-    computing canonical on existing rows for legacy DBs (no column/backfill).
-    """
-    try:
-        key = _canonical_genre_key(genre_norm)
-        if not key:
-            return None
-        # Try direct match on canonical column (if present)
-        try:
-            gm = db.query(models.GenreMap).filter(models.GenreMap.genre_norm == key).first()
-            if gm:
-                return gm
-        except Exception:
-            gm = None
-        # Fallback: scan rows and compare canonicalized raw genre (legacy rows)
-        try:
-            rows = db.query(models.GenreMap).all()
-        except Exception:
-            rows = []
-        for r in rows or []:
-            try:
-                raw = getattr(r, "genre", None)
-                if raw and _canonical_genre_key(raw) == key:
-                    return r
-            except Exception:
-                continue
-        return None
-    except Exception:
-        return None
-
-def _resolve_genre_mapping(db, raw_genres):
-    """
-    Return (matched: bool, matched_genre: str | None, category: models.Category | None, mapping: models.GenreMap | None)
-    Tries the provided genres in order; first match wins (case-insensitive).
-    Also:
-      - handles composite tags like "Action & Adventure" by trying "action" and "adventure"
-      - applies light synonym normalization (e.g., "sci-fi" -> "science fiction")
-      - collapses punctuation and Unicode variants per Plex MediaTag behavior
-    """
-    if not raw_genres:
-        return (False, None, None, None)
-    for raw in raw_genres:
-        candidates = _genre_candidate_keys(raw)
-        for key in candidates:
-            if not key:
-                continue
-            gm = _find_genre_map_case_insensitive(db, key)
-            if gm:
-                cat = db.query(models.Category).filter(models.Category.id == gm.category_id).first()
-                if cat:
-                    return (True, raw, cat, gm)
-    return (False, None, None, None)
 
 def _apply_category_to_plex_and_track(db: Session, category_id: int, ttl: int = 15) -> bool:
     """
