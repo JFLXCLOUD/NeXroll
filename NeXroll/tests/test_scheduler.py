@@ -233,6 +233,70 @@ class NextRunTests(unittest.TestCase):
         self.assertIsNone(next_run)
 
 
+class DeferredWriteReportingTests(unittest.TestCase):
+    """A write held back by the playback guard is a wait, not a failure.
+
+    One evening's viewing produced 246 WARNING lines reading "Failed to apply
+    sequence" while the guard was doing exactly its job, and nothing anywhere
+    told the user a change was queued.
+    """
+
+    def setUp(self):
+        self.scheduler = scheduler_module.Scheduler()
+
+    def test_a_deferral_is_not_logged_as_a_failure(self):
+        self.scheduler._deferred_write_since = datetime.datetime(2026, 9, 5, 5, 0)
+
+        with patch.object(scheduler_module, "_scheduler_log") as failure_log, \
+             patch.object(scheduler_module, "_scheduler_verbose") as wait_log:
+            self.scheduler._log_apply_outcome(
+                "MIX BLEND: Failed to apply sequence 'Default'",
+                "blended sequence 'Default'", level="WARNING")
+
+        failure_log.assert_not_called()
+        wait_log.assert_called_once()
+        self.assertIn("Waiting for playback", wait_log.call_args[0][0])
+
+    def test_a_real_failure_is_still_logged_as_one(self):
+        self.scheduler._deferred_write_since = None
+
+        with patch.object(scheduler_module, "_scheduler_log") as failure_log, \
+             patch.object(scheduler_module, "_scheduler_verbose") as wait_log:
+            self.scheduler._log_apply_outcome(
+                "MIX BLEND: Failed to apply sequence 'Default'",
+                "blended sequence 'Default'", level="WARNING")
+
+        wait_log.assert_not_called()
+        failure_log.assert_called_once_with(
+            "MIX BLEND: Failed to apply sequence 'Default'", level="WARNING")
+
+    def test_nothing_is_reported_as_waiting_when_no_write_is_held(self):
+        self.assertIsNone(self.scheduler.deferred_write_state())
+
+    def test_a_held_write_reports_what_it_is_waiting_on(self):
+        self.scheduler._deferred_write_since = (
+            datetime.datetime.now() - datetime.timedelta(minutes=42))
+        self.scheduler._deferred_write_context = "sequence schedule 32"
+
+        state = self.scheduler.deferred_write_state()
+
+        self.assertEqual(state["context"], "sequence schedule 32")
+        self.assertGreaterEqual(state["seconds"], 42 * 60)
+        self.assertTrue(state["since"])
+
+    def test_the_guard_records_and_clears_its_context(self):
+        setting = SimpleNamespace()
+
+        with patch.object(self.scheduler, "_plex_active_session_count", return_value=1):
+            self.assertTrue(self.scheduler._defer_preroll_write(setting, "sequence schedule 32"))
+        self.assertEqual(self.scheduler.deferred_write_state()["context"], "sequence schedule 32")
+
+        # Playback stops: the wait is over and nothing is left advertised.
+        with patch.object(self.scheduler, "_plex_active_session_count", return_value=0):
+            self.assertFalse(self.scheduler._defer_preroll_write(setting, "sequence schedule 32"))
+        self.assertIsNone(self.scheduler.deferred_write_state())
+
+
 class SequentialSequenceResolutionTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(

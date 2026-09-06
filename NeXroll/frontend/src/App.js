@@ -7070,6 +7070,16 @@ const DashboardTiles = {
       ? seq.name
       : (cat?.name || activeCategory?.name || (seq ? 'Sequence' : 'No active category'));
     const running = !!schedulerStatus?.running;
+    const waiting = schedulerStatus?.waiting_for_playback || null;
+    const waitedFor = (() => {
+      const seconds = Number(waiting?.seconds);
+      if (!Number.isFinite(seconds) || seconds < 60) return null;
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) return `${minutes} min`;
+      const hours = Math.floor(minutes / 60);
+      const rest = minutes % 60;
+      return rest ? `${hours}h ${rest}m` : `${hours}h`;
+    })();
     const count = cat
       ? prerolls.filter(p =>
           p.category_id === cat.id || (p.categories || []).some(c => c.id === cat.id)
@@ -7143,8 +7153,20 @@ const DashboardTiles = {
               <span>Currently showing</span>
               <span className={running ? 'is-live' : 'is-paused'}>{running ? '• Live' : 'Paused'}</span>
             </div>
-            <h3>{title || 'Nothing applied'}</h3>
-            <p>{title ? subtitle : 'No category or sequence is currently active.'}</p>
+            <h3>{title || (waiting ? 'Waiting for playback' : 'Nothing applied')}</h3>
+            <p>{title ? subtitle : (waiting
+              ? 'A preroll change is queued until playback finishes.'
+              : 'No category or sequence is currently active.')}</p>
+            {waiting && (
+              <p className="nx-schedule-waiting">
+                <Clock size={13} />
+                <span>
+                  The next preroll change is held until playback finishes
+                  {waitedFor ? ` (waiting ${waitedFor})` : ''}. Changing it mid-playback
+                  makes Plex hang.
+                </span>
+              </p>
+            )}
             {detail === 'detailed' && (
               <div className="nx-schedule-facts">
                 <span>{mode || (seq ? 'Sequence' : 'Category')}</span>

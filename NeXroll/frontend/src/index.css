@@ -6152,6 +6152,31 @@ body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 
   color: var(--text-secondary);
   font-size: 0.62rem;
 }
+/* Why a preroll change has not landed yet. Amber rather than red: the
+   scheduler is waiting on purpose, and it will apply on its own. This is a
+   <p>, and .nx-schedule-state p truncates to one line with an ellipsis, so
+   these selectors have to carry that rule's specificity to beat it. */
+.nx-schedule-state p.nx-schedule-waiting {
+  display: flex;
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+.nx-schedule-state p.nx-schedule-waiting svg { flex-shrink: 0; margin-top: 1px; color: #f59e0b; }
+/* A flex item will not shrink below its content by default, so without this
+   the sentence runs off the edge of the tile instead of wrapping. */
+.nx-schedule-state p.nx-schedule-waiting span { min-width: 0; }
+
 .nx-schedule-arrow { display: grid; place-items: center; color: var(--text-muted); }
 
 /* Health */

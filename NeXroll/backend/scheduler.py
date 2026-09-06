@@ -307,6 +307,7 @@ class Scheduler:
         self._session_probe_count: Optional[int] = None
         self._session_probe_ttl_seconds: float = 15.0
         self._deferred_write_since: Optional[datetime.datetime] = None
+        self._deferred_write_context: Optional[str] = None
         # Paths currently published to Plex, so retention never deletes a file
         # that is sitting in the active preroll list.
         self._applied_local_paths: set = set()
@@ -407,7 +408,9 @@ class Scheduler:
                         _scheduler_log(f"Filler category {filler_category_id} applied immediately")
                         return True
                     else:
-                        _scheduler_log(f"Failed to apply filler category {filler_category_id}", level="ERROR")
+                        self._log_apply_outcome(
+                            f"Failed to apply filler category {filler_category_id}",
+                            f"filler category {filler_category_id}")
                         return False
                 else:
                     _scheduler_log("Filler type is category but no category selected", level="WARNING")
@@ -425,7 +428,9 @@ class Scheduler:
                         _scheduler_log(f"Filler sequence {filler_sequence_id} applied immediately")
                         return True
                     else:
-                        _scheduler_log(f"Failed to apply filler sequence {filler_sequence_id}", level="ERROR")
+                        self._log_apply_outcome(
+                            f"Failed to apply filler sequence {filler_sequence_id}",
+                            f"filler sequence {filler_sequence_id}")
                         return False
                 else:
                     _scheduler_log("Filler type is sequence but no sequence selected", level="WARNING")
@@ -442,7 +447,9 @@ class Scheduler:
                     _scheduler_log(f"Filler Coming Soon List ({filler_layout}) applied immediately")
                     return True
                 else:
-                    _scheduler_log(f"Failed to apply filler Coming Soon List", level="ERROR")
+                    self._log_apply_outcome(
+                        "Failed to apply filler Coming Soon List",
+                        "the filler Coming Soon List")
                     return False
             elif filler_type == "dynamic":
                 filler_filename = getattr(setting, "filler_dynamic_filename", None)
@@ -458,7 +465,9 @@ class Scheduler:
                     _scheduler_log(f"Filler dynamic preroll ({filler_filename}) applied immediately")
                     return True
                 else:
-                    _scheduler_log("Failed to apply filler dynamic preroll", level="ERROR")
+                    self._log_apply_outcome(
+                        "Failed to apply filler dynamic preroll",
+                        "the filler dynamic preroll")
                     return False
             else:
                 _scheduler_log(f"Unknown filler type: {filler_type}", level="ERROR")
@@ -1446,8 +1455,10 @@ class Scheduler:
                     f"after waiting {int(waited)}s"
                 )
                 self._deferred_write_since = None
+                self._deferred_write_context = None
             return False
 
+        self._deferred_write_context = context
         if self._deferred_write_since is None:
             self._deferred_write_since = datetime.datetime.now()
             _scheduler_log(
@@ -1457,6 +1468,35 @@ class Scheduler:
         else:
             _scheduler_verbose(f"Still deferring preroll change ({context}); {count} session(s) playing")
         return True
+
+    def deferred_write_state(self) -> Optional[dict]:
+        """What a preroll write is currently waiting on, for the UI to explain.
+
+        The guard is deliberate and correct, but it is entirely invisible: the
+        dashboard reads applied state, sees nothing change, and reports whatever
+        it last knew. Handing it the reason lets it say so instead.
+        """
+        since = self._deferred_write_since
+        if since is None:
+            return None
+        return {
+            "since": since.isoformat(),
+            "seconds": int((datetime.datetime.now() - since).total_seconds()),
+            "context": self._deferred_write_context,
+        }
+
+    def _log_apply_outcome(self, failure_message: str, subject: str, level: str = "ERROR") -> None:
+        """Report an apply that did not happen, saying which of the two it was.
+
+        The playback guard holds preroll writes back while Plex is playing, and
+        the retry lands them in the gap before the next playback, so a deferral
+        is not a failure. Logging it as one turned a single evening's viewing
+        into 246 warnings about a guard working exactly as designed.
+        """
+        if self._deferred_write_since is not None:
+            _scheduler_verbose(f"Waiting for playback to finish before applying {subject}")
+        else:
+            _scheduler_log(failure_message, level=level)
 
     def _refresh_linked_holiday_dates_if_needed(self, db: Session, now: datetime.datetime) -> None:
         """Persist current-year variable holiday dates once per local day."""
@@ -1667,7 +1707,9 @@ class Scheduler:
                                         db.commit()
                                         _scheduler_log(f"MIX BLEND: Applied sequence '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
                                     else:
-                                        _scheduler_log(f"MIX BLEND: Failed to apply sequence '{chosen.name}'", level="WARNING")
+                                        self._log_apply_outcome(
+                                            f"MIX BLEND: Failed to apply sequence '{chosen.name}'",
+                                            f"blended sequence '{chosen.name}'", level="WARNING")
                                 else:
                                     # Same sequence chosen again — still refresh last_run
                                     for sched in blend_schedules:
@@ -1686,7 +1728,9 @@ class Scheduler:
                                         db.commit()
                                         _scheduler_log(f"MIX BLEND: Applied category '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
                                     else:
-                                        _scheduler_log(f"MIX BLEND: Failed to apply category from '{chosen.name}'", level="WARNING")
+                                        self._log_apply_outcome(
+                                            f"MIX BLEND: Failed to apply category from '{chosen.name}'",
+                                            f"blended category from '{chosen.name}'", level="WARNING")
                                 else:
                                     # Same category chosen again — still refresh last_run
                                     for sched in blend_schedules:
@@ -1718,7 +1762,9 @@ class Scheduler:
                                     db.commit()
                                     _scheduler_log(f"CAT BLEND: Applied category '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
                                 else:
-                                    _scheduler_log(f"CAT BLEND: Failed to apply category from '{chosen.name}'", level="WARNING")
+                                    self._log_apply_outcome(
+                                        f"CAT BLEND: Failed to apply category from '{chosen.name}'",
+                                        f"blended category from '{chosen.name}'", level="WARNING")
                             else:
                                 # Same category chosen again — still refresh last_run
                                 for sched in blend_schedules:
@@ -3225,7 +3271,9 @@ class Scheduler:
             self._blend_mode_active = True
             self._blend_expected_preroll = combined
         else:
-            _scheduler_log(f"BLEND: Failed to apply blended preroll list to Plex", level="ERROR")
+            self._log_apply_outcome(
+                "BLEND: Failed to apply blended preroll list to Plex",
+                "the blended preroll list")
         
         return ok
 
@@ -3424,7 +3472,9 @@ class Scheduler:
             if ok:
                 _scheduler_log(f"FILLER: Sequence '{saved_seq.name}' applied successfully")
             else:
-                _scheduler_log(f"FILLER: Failed to apply sequence to Plex", level="ERROR")
+                self._log_apply_outcome(
+                    "FILLER: Failed to apply sequence to Plex",
+                    "the filler sequence")
             
             return ok
         except Exception as e:
@@ -3522,7 +3572,8 @@ class Scheduler:
             if ok:
                 _scheduler_log(f"FILLER: {label} applied successfully")
             else:
-                _scheduler_log(f"FILLER: Failed to apply {label} to Plex", level="ERROR")
+                self._log_apply_outcome(
+                    f"FILLER: Failed to apply {label} to Plex", label)
             
             return ok
         except Exception as e:

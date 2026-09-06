@@ -14160,7 +14160,15 @@ def get_scheduler_status():
         active = len(scheduler._get_active_schedules()) if hasattr(scheduler, '_get_active_schedules') else 0
     except Exception:
         active = 0
-    return {"running": running, "active_schedules": active}
+    # A preroll change can be correct, queued, and invisible. Plex resolves the
+    # next preroll from its preference as playback advances, so the scheduler
+    # holds writes back while anything is playing -- which for a busy server can
+    # be hours. Without this the dashboard just sees applied state not changing.
+    try:
+        waiting = scheduler.deferred_write_state() if hasattr(scheduler, "deferred_write_state") else None
+    except Exception:
+        waiting = None
+    return {"running": running, "active_schedules": active, "waiting_for_playback": waiting}
 
 @app.get("/scheduler/active-schedule-ids")
 def get_active_schedule_ids():

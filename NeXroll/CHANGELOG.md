@@ -8,10 +8,14 @@
 > actually renders. Daily and weekly schedules work out when they next run.
 > The Upcoming tile stops saying everything is playing now. Coexistence Mode
 > says when it has switched filler off instead of leaving it silently
-> outranked, and the faded watermark is visible again.
+> outranked, and the faded watermark is visible again. A preroll change held
+> back while Plex is playing now says so, rather than filling the log with
+> warnings about a guard that is working.
 
 ### Fixed
 
+- **A preroll change held back during playback was logged as a failure, 246 times in one evening.** Plex resolves the next preroll from its preference as playback advances, so rewriting that preference mid-playback makes it hang; the scheduler deliberately waits for playback to finish. Every apply site reported that wait as "Failed to apply", which made a guard doing exactly its job look like a broken scheduler. A deferral is now reported as a wait, and a genuine failure still reads as one.
+- **Nothing told you a preroll change was queued behind playback.** For most of two hours the dashboard alternated between "Blending" and "Nothing applied" while the truth was neither: the blend indicator is driven by `last_run`, which is only stamped on the ticks where the blend's random pick lands on the schedule already applied. The Current and next schedule tile now says a change is held until playback finishes, and how long it has been waiting.
 - **The dashboard reported conflicts that the Conflicts page had nothing to open.** Four places counted conflicts using two different detectors: one analyses a whole recurrence year and only compares schedules of the same type, the other looks thirty days ahead and pairs every type. The tiles counted overlaps outside the page's window, so clicking through showed "No unresolved conflicts". Every count now comes from one list, and it is exactly what the page lists.
 - **The schedules page header could read "7 schedule conflicts" while the dashboard read one.** Three summary counts included rows the Conflicts page classes as notes rather than conflicts — deterministic outcomes where one schedule always wins — and counted them as things needing attention.
 - **Conflict badges stayed on schedules after the counts said zero.** The per-schedule badges were still asking the year-long detector. Nine call sites that ask about a saved schedule now read the shared list; the two that ask about a schedule being typed into the form still run detection directly, because a draft has no id and is not in the saved list yet.
