@@ -93,6 +93,20 @@ const usableScheduleDate = (value) => {
   return date.getFullYear() <= SCHEDULE_DATE_SENTINEL_YEAR ? null : date;
 };
 
+// What to show as a schedule's next run. next_run is the schedule's own
+// answer and can lag by a few minutes while the scheduler recomputes, so today
+// still counts; anything before today does not. start_date only stands in for
+// a schedule that has not started yet -- on a recurring schedule it is simply
+// the day it was created, which is never a run date.
+const upcomingScheduleDate = (schedule) => {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const next = usableScheduleDate(schedule?.next_run);
+  if (next && next >= startOfToday) return next;
+  const start = usableScheduleDate(schedule?.start_date);
+  return start && start >= startOfToday ? start : null;
+};
+
 // "19:30" as minutes past midnight. Blank is not zero: an absent time range
 // means the schedule runs all day, and Number('') would read that as midnight.
 const parseClockMinutes = (value) => {
@@ -18979,7 +18993,7 @@ const DashboardTiles = {
     const conflictCount = (actionableConflicts || []).length;
 
     const nextDate = schedule => {
-      const date = usableScheduleDate(schedule.next_run) || usableScheduleDate(schedule.start_date);
+      const date = upcomingScheduleDate(schedule);
       if (!date) return 'Not scheduled';
       const today = new Date();
       const sameDay = date.toDateString() === today.toDateString();
@@ -19057,8 +19071,7 @@ const DashboardTiles = {
     );
 
     const todayQueue = [...runningSchedules, ...enabledSchedules]
-      .sort((a, b) => (usableScheduleDate(a.next_run) || usableScheduleDate(a.start_date) || 0)
-                    - (usableScheduleDate(b.next_run) || usableScheduleDate(b.start_date) || 0))
+      .sort((a, b) => (upcomingScheduleDate(a) || 0) - (upcomingScheduleDate(b) || 0))
       .slice(0, 5);
 
     return (

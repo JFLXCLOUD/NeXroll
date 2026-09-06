@@ -3591,7 +3591,7 @@ class Scheduler:
             return None
 
     def _calculate_next_run(self, schedule: models.Schedule) -> Optional[datetime.datetime]:
-        """Calculate the next monthly/yearly/holiday activation safely.
+        """Calculate a schedule's next activation safely.
 
         Monthly schedules are driven by recurrence_pattern (the UI deliberately
         stores their start_date as 2000-01-01), so using start_date.day produced
@@ -3638,6 +3638,50 @@ class Scheduler:
                     result.add(number)
             return sorted(result)
 
+        # A schedule that has already finished has no next run, whatever its
+        # recurrence says. Without this a daily schedule kept advertising a
+        # date past its own end.
+        end_date = getattr(schedule, "end_date", None)
+
+        def _within_end(candidate):
+            return end_date is None or candidate <= end_date
+
+        if schedule_type == "daily":
+            # Today at the configured time if that has not passed, otherwise
+            # tomorrow. The window may also not have opened yet, in which case
+            # the first run is on start_date's own day.
+            first_day = max(now.date(), schedule.start_date.date())
+            for day_offset in range(0, 400):
+                candidate = datetime.datetime.combine(
+                    first_day + datetime.timedelta(days=day_offset),
+                    datetime.time(run_hour, run_minute))
+                if candidate <= now:
+                    continue
+                if not _within_end(candidate):
+                    return None
+                return candidate
+            return None
+
+        if schedule_type == "weekly":
+            # Same day names the activity check matches on, so the date shown
+            # is the date it will actually fire.
+            day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday",
+                       4: "friday", 5: "saturday", 6: "sunday"}
+            week_days = pattern.get("weekDays")
+            wanted = {str(d).strip().lower() for d in week_days} if isinstance(week_days, list) else set()
+            first_day = max(now.date(), schedule.start_date.date())
+            for day_offset in range(0, 400):
+                day = first_day + datetime.timedelta(days=day_offset)
+                if wanted and day_map[day.weekday()] not in wanted:
+                    continue
+                candidate = datetime.datetime.combine(day, datetime.time(run_hour, run_minute))
+                if candidate <= now:
+                    continue
+                if not _within_end(candidate):
+                    return None
+                return candidate
+            return None
+
         if schedule_type == "monthly":
             months = _valid_numbers(pattern.get("months"), 1, 12) or list(range(1, 13))
             month_days = _valid_numbers(pattern.get("monthDays"), 1, 31) or [schedule.start_date.day]
@@ -3659,7 +3703,8 @@ class Scheduler:
                     if candidate > now:
                         candidates.append(candidate)
                 if candidates:
-                    return min(candidates)
+                    soonest = min(candidates)
+                    return soonest if _within_end(soonest) else None
             return None
 
         if schedule_type in ("yearly", "holiday"):
@@ -3680,7 +3725,7 @@ class Scheduler:
                 except ValueError:
                     continue
                 if candidate > now:
-                    return candidate
+                    return candidate if _within_end(candidate) else None
             return None
 
         return None

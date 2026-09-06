@@ -170,6 +170,68 @@ class NextRunTests(unittest.TestCase):
 
         self.assertEqual(next_run, datetime.datetime(2028, 2, 29, 18, 0))
 
+    def test_daily_next_run_is_today_when_its_time_has_not_passed(self):
+        schedule = make_schedule(
+            type="daily",
+            start_date=datetime.datetime(2026, 9, 4, 11, 25),
+            recurrence_pattern=json.dumps({"timeRange": {"start": "11:08", "end": "14:25"}}),
+        )
+
+        with patch.object(
+            scheduler_module, "_localized_now", return_value=datetime.datetime(2026, 9, 6, 6, 20)
+        ):
+            next_run = self.scheduler._calculate_next_run(schedule)
+
+        self.assertEqual(next_run, datetime.datetime(2026, 9, 6, 11, 8))
+
+    def test_daily_next_run_rolls_over_once_todays_time_has_passed(self):
+        schedule = make_schedule(
+            type="daily",
+            start_date=datetime.datetime(2026, 9, 4, 11, 25),
+            recurrence_pattern=json.dumps({"timeRange": {"start": "11:08", "end": "14:25"}}),
+        )
+
+        with patch.object(
+            scheduler_module, "_localized_now", return_value=datetime.datetime(2026, 9, 6, 15, 0)
+        ):
+            next_run = self.scheduler._calculate_next_run(schedule)
+
+        self.assertEqual(next_run, datetime.datetime(2026, 9, 7, 11, 8))
+
+    def test_weekly_next_run_lands_on_a_configured_weekday(self):
+        schedule = make_schedule(
+            type="weekly",
+            start_date=datetime.datetime(2026, 1, 1),
+            recurrence_pattern=json.dumps({
+                "weekDays": ["tuesday", "friday"],
+                "timeRange": {"start": "20:00"},
+            }),
+        )
+
+        # A Sunday, so the next configured day is the Tuesday after it.
+        with patch.object(
+            scheduler_module, "_localized_now", return_value=datetime.datetime(2026, 9, 6, 6, 20)
+        ):
+            next_run = self.scheduler._calculate_next_run(schedule)
+
+        self.assertEqual(next_run, datetime.datetime(2026, 9, 8, 20, 0))
+        self.assertEqual(next_run.strftime("%A"), "Tuesday")
+
+    def test_a_schedule_past_its_end_date_has_no_next_run(self):
+        schedule = make_schedule(
+            type="daily",
+            start_date=datetime.datetime(2026, 9, 4, 11, 25),
+            end_date=datetime.datetime(2026, 9, 5, 11, 25),
+            recurrence_pattern=json.dumps({"timeRange": {"start": "11:08"}}),
+        )
+
+        with patch.object(
+            scheduler_module, "_localized_now", return_value=datetime.datetime(2026, 9, 6, 6, 20)
+        ):
+            next_run = self.scheduler._calculate_next_run(schedule)
+
+        self.assertIsNone(next_run)
+
 
 class SequentialSequenceResolutionTests(unittest.TestCase):
     def setUp(self):
