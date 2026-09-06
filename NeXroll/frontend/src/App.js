@@ -4605,40 +4605,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // Distinct conflicting schedule PAIRS, for the System health tile. Conflict
   // detection lives here rather than in the backend, so the health endpoint
   // takes this as an input instead of guessing. Counting pairs (not per-schedule
-  // conflict rows) avoids reporting every clash twice.
-  const dashboardConflictCount = React.useMemo(() => {
-    try {
-      // Keys must be built with the same helper the ignore list is stored
-      // under. This used to sort numerically and join with a colon, so an
-      // ignored pair could never match and the tile counted it forever.
-      const ignoredSet = new Set(ignoredConflicts || []);
-      const pairs = new Set();
-      (schedules || []).forEach(schedule => {
-        (getScheduleConflicts(schedule) || []).forEach(conflict => {
-          const other = conflict?.schedule;
-          if (other?.id != null && schedule?.id != null) {
-            const key = getSchedulePairKey(schedule, other);
-            if (!ignoredSet.has(key)) pairs.add(key);
-          }
-        });
-      });
-      return pairs.size;
-    } catch {
-      return null; // Unknown beats a wrong number; the backend leaves it unscored.
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schedules, ignoredConflicts]);
-
-  // Refresh the health summary whenever the inputs it scores actually change.
-  React.useEffect(() => {
-    let cancelled = false;
-    const query = dashboardConflictCount == null ? '' : `?conflicts=${dashboardConflictCount}`;
-    fetch(apiUrl(`system/health/summary${query}`))
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => { if (!cancelled && data) setHealthSummary(data); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [dashboardConflictCount, schedulerStatus.running, prerolls.length, activeCategory]);
 
   // Analyze ALL schedule conflicts across the entire configuration
   // Returns structured conflict objects with suggested auto-resolutions
@@ -4949,6 +4915,49 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   // Apply a single conflict resolution fix
+  // Every conflict count on the dashboard comes from here, and this is exactly
+  // what the Conflicts page lists. Anything counted can therefore be opened and
+  // acted on, which was not true when the tiles ran their own detector over a
+  // different time window.
+  const actionableConflicts = React.useMemo(() => {
+    try {
+      const ignoredSet = new Set(ignoredConflicts || []);
+      // 'info' rows describe a deterministic outcome -- one schedule always
+      // wins -- and the Conflicts page counts them separately for that reason.
+      // Counting them as conflicts told people seven things needed attention
+      // when one did.
+      return (analyzeAllConflicts(30) || [])
+        .filter(conflict => !ignoredSet.has(conflict.id) && conflict.severity !== 'info');
+    } catch {
+      return null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schedules, categories, ignoredConflicts]);
+
+  // Pairs, for the health tile.
+  const dashboardConflictCount = actionableConflicts ? actionableConflicts.length : null;
+
+  // The individual schedules caught up in those pairs, for the Schedules tile.
+  // Refresh the health summary whenever the inputs it scores actually change.
+  React.useEffect(() => {
+    let cancelled = false;
+    const query = dashboardConflictCount == null ? '' : `?conflicts=${dashboardConflictCount}`;
+    fetch(apiUrl(`system/health/summary${query}`))
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (!cancelled && data) setHealthSummary(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [dashboardConflictCount, schedulerStatus.running, prerolls.length, activeCategory]);
+
+  const conflictingScheduleIds = React.useMemo(() => {
+    const ids = new Set();
+    (actionableConflicts || []).forEach(conflict => {
+      if (conflict?.scheduleA?.id != null) ids.add(conflict.scheduleA.id);
+      if (conflict?.scheduleB?.id != null) ids.add(conflict.scheduleB.id);
+    });
+    return ids;
+  }, [actionableConflicts]);
+
   const applyConflictFix = async (changes, workingSchedules) => {
     const results = [];
     // Group changes by scheduleId
@@ -7532,7 +7541,7 @@ const DashboardTiles = {
   schedules: () => {
     const enabled = schedules.filter(s => s.is_active);
     const disabled = schedules.filter(s => !s.is_active);
-    const withConflicts = enabled.filter(s => getScheduleConflicts(s).length > 0);
+    const withConflicts = enabled.filter(s => conflictingScheduleIds.has(s.id));
     return (
       <div className="card">
         <div className="nx-tile-head">
@@ -8494,7 +8503,7 @@ const DashboardTiles = {
       items = [];
     } else if (activeTab.startsWith('schedules')) {
       const enabled = schedules.filter(schedule => schedule.is_active).length;
-      const conflicts = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id)).length;
+      const conflicts = (actionableConflicts || []).length;
       items = [
         { label: 'Total schedules', value: schedules.length },
         { label: 'Enabled', value: enabled, tone: 'success' },
@@ -9998,10 +10007,14 @@ const DashboardTiles = {
           })
         ).map(s => s.id)).size;
 
-        const hasAnyConflicts = Array.from(dayData.values()).some(d => d.hasConflict);
+        // The per-day tinting below still marks days where schedules overlap,
+        // which is a fair thing to show. The pill and its Fix button are a
+        // different claim -- that there is something to go and resolve -- so
+        // they read the same actionable list as every other conflict count.
+        const hasAnyConflicts = (actionableConflicts || []).length > 0;
         const hasAnyBlends = Array.from(dayData.values()).some(d => d.hasBlend);
         const hasAnyExclusives = Array.from(dayData.values()).some(d => d.hasExclusive);
-        const conflictDayCount = Array.from(dayData.values()).filter(d => d.hasConflict).length;
+        const conflictDayCount = (actionableConflicts || []).length;
 
         // Schedule type badge colors
         const typeBadgeColors = {
