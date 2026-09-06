@@ -4949,6 +4949,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     return () => { cancelled = true; };
   }, [dashboardConflictCount, schedulerStatus.running, prerolls.length, activeCategory]);
 
+  // The conflicts one saved schedule is caught in, taken from the same list the
+  // Conflicts page renders. getScheduleConflicts stays for drafts: a schedule
+  // being typed into the form is not saved yet, so it still needs detection run
+  // against it directly.
+  const conflictsForSchedule = (schedule) => {
+    if (!schedule?.id) return [];
+    return (actionableConflicts || []).filter(conflict => (
+      conflict?.scheduleA?.id === schedule.id || conflict?.scheduleB?.id === schedule.id
+    ));
+  };
+
   const conflictingScheduleIds = React.useMemo(() => {
     const ids = new Set();
     (actionableConflicts || []).forEach(conflict => {
@@ -14510,7 +14521,7 @@ const DashboardTiles = {
                 const range = getTimeRange(sched);
                 const isAllDay = range.start === 0 && range.end === 24;
                 const timeStr = isAllDay ? 'All Day' : `${formatHour(Math.floor(range.start))} - ${range.wrapsOvernight ? formatHour(Math.floor(range.rawEnd)) + ' (next day)' : formatHour(Math.floor(range.end))}`;
-                const samePriorityConflicts = getScheduleConflicts(sched);
+                const samePriorityConflicts = conflictsForSchedule(sched);
                 const hasSamePriorityConflict = samePriorityConflicts.length > 0;
                 const chipBg = sched.color || sched.cat.color;
                 const chipText = contrastTextFor(chipBg);
@@ -14621,7 +14632,7 @@ const DashboardTiles = {
                     const isBlending = hourData.hasBlend && sched.blend_enabled;
                     
                     // Check for same-priority conflicts resolved by backend tie-break order
-                    const samePriorityConflicts = getScheduleConflicts(sched);
+                    const samePriorityConflicts = conflictsForSchedule(sched);
                     const hasSamePriorityConflict = samePriorityConflicts.length > 0;
                     
                     // An exclusive schedule is a "loser" if it's not the winner AND there's another exclusive with higher priority
@@ -15169,7 +15180,7 @@ const DashboardTiles = {
             }
             
             // Check for same-priority exclusive conflicts
-            const samePriorityConflicts = getScheduleConflicts(sched);
+            const samePriorityConflicts = conflictsForSchedule(sched);
             const hasSamePriorityConflict = samePriorityConflicts.length > 0;
 
             // Determine the status icon and label for the schedule row
@@ -15553,7 +15564,7 @@ const DashboardTiles = {
             if (spans.length === 0) return null;
             
             // Check for same-priority exclusive conflicts
-            const samePriorityConflicts = getScheduleConflicts(sched);
+            const samePriorityConflicts = conflictsForSchedule(sched);
             const hasSamePriorityConflict = samePriorityConflicts.length > 0;
             
             return (
@@ -16246,7 +16257,7 @@ const DashboardTiles = {
                     const isExclusive = dayData.hasExclusive && data.schedObjs.some(s => s.exclusive);
                     
                     // Check for same-priority exclusive conflicts
-                    const samePriorityConflicts = data.schedObjs.filter(s => s.exclusive).flatMap(s => getScheduleConflicts(s));
+                    const samePriorityConflicts = data.schedObjs.filter(s => s.exclusive).flatMap(s => conflictsForSchedule(s));
                     const hasSamePriorityConflict = samePriorityConflicts.length > 0;
                     
                     // Check if this exclusive schedule has a time range (not full-day exclusive)
@@ -18444,7 +18455,7 @@ const DashboardTiles = {
                         )}
                         {/* Schedule Conflict Warning */}
                         {schedule.exclusive && (() => {
-                          const conflicts = getScheduleConflicts(schedule);
+                          const conflicts = conflictsForSchedule(schedule);
                           if (conflicts.length > 0) {
                             return (
                               <span 
@@ -18699,7 +18710,7 @@ const DashboardTiles = {
                     
                     {/* Schedule Conflict Warning (Detailed View) */}
                     {schedule.exclusive && (() => {
-                      const conflicts = getScheduleConflicts(schedule);
+                      const conflicts = conflictsForSchedule(schedule);
                       if (conflicts.length > 0) {
                         return (
                           <span 
@@ -18957,7 +18968,7 @@ const DashboardTiles = {
         || schedulePlayback(schedule).toLowerCase() === scheduleFilterPlayback;
       const matchesBehavior = scheduleFilterBehavior === 'all'
         || scheduleBehavior(schedule) === scheduleFilterBehavior;
-      const matchesConflicts = !scheduleFilterConflictsOnly || getScheduleConflicts(schedule).length > 0;
+      const matchesConflicts = !scheduleFilterConflictsOnly || conflictsForSchedule(schedule).length > 0;
       return name.includes(scheduleSearchQuery.toLowerCase())
         && (scheduleFilterType === 'all' || schedule.type === scheduleFilterType)
         && matchesStatus && matchesPlayback && matchesBehavior && matchesConflicts;
@@ -18965,7 +18976,7 @@ const DashboardTiles = {
     const runningSchedules = filteredSchedules.filter(schedule => activeScheduleIds.includes(schedule.id));
     const enabledSchedules = filteredSchedules.filter(schedule => schedule.is_active && !activeScheduleIds.includes(schedule.id));
     const pausedSchedules = filteredSchedules.filter(schedule => !schedule.is_active);
-    const conflictCount = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id)).length;
+    const conflictCount = (actionableConflicts || []).length;
 
     const nextDate = schedule => {
       const date = usableScheduleDate(schedule.next_run) || usableScheduleDate(schedule.start_date);
@@ -19002,7 +19013,7 @@ const DashboardTiles = {
 
     const renderCommandRow = schedule => {
       const running = activeScheduleIds.includes(schedule.id);
-      const conflicts = getScheduleConflicts(schedule).length;
+      const conflicts = conflictsForSchedule(schedule).length;
       const content = schedule.category?.name || schedule.fallback_category?.name || 'Sequence content';
       const accent = schedule.color || schedule.category?.color || (running ? '#35d06f' : '#7667ff');
       return (
@@ -19816,7 +19827,7 @@ const DashboardTiles = {
           // The calendar draws overlapping schedules without saying they
           // overlap, so a clash only surfaced on the Conflicts page. Surface the
           // count here and link straight to it.
-          const openConflicts = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id));
+          const openConflicts = (actionableConflicts || []);
           if (openConflicts.length === 0) return null;
           const names = [...new Set(openConflicts.flatMap(conflict => [conflict.scheduleA?.name, conflict.scheduleB?.name].filter(Boolean)))];
           return (
@@ -20127,7 +20138,7 @@ const DashboardTiles = {
   };
 
   const renderApprovedScheduleConflicts = () => {
-    const unresolved = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id));
+    const unresolved = (actionableConflicts || []);
     const selected = unresolved.find(conflict => conflict.id === selectedScheduleConflictId) || unresolved[0] || null;
     return (
       <div className="nx-schedule-draft nx-draft-conflicts-page">
