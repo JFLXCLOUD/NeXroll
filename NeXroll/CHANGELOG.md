@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.2.0-beta.7] - 09-06-2026 (beta)
+
+> Almost every number and date the interface showed about your schedules was
+> arrived at a different way in each place that showed it, and several of them
+> were wrong. Conflicts are counted once, from the list the Conflicts page
+> actually renders. Daily and weekly schedules work out when they next run.
+> The Upcoming tile stops saying everything is playing now. Coexistence Mode
+> says when it has switched filler off instead of leaving it silently
+> outranked, and the faded watermark is visible again.
+
+### Fixed
+
+- **The dashboard reported conflicts that the Conflicts page had nothing to open.** Four places counted conflicts using two different detectors: one analyses a whole recurrence year and only compares schedules of the same type, the other looks thirty days ahead and pairs every type. The tiles counted overlaps outside the page's window, so clicking through showed "No unresolved conflicts". Every count now comes from one list, and it is exactly what the page lists.
+- **The schedules page header could read "7 schedule conflicts" while the dashboard read one.** Three summary counts included rows the Conflicts page classes as notes rather than conflicts — deterministic outcomes where one schedule always wins — and counted them as things needing attention.
+- **Conflict badges stayed on schedules after the counts said zero.** The per-schedule badges were still asking the year-long detector. Nine call sites that ask about a saved schedule now read the shared list; the two that ask about a schedule being typed into the form still run detection directly, because a draft has no id and is not in the saved list yet.
+- **Ignored conflicts came back on every page load.** The ignore list was only fetched when the Conflicts tab was opened through one of its buttons, so a fresh page started with an empty list, counted every ignored conflict again, and showed nothing under Ignored. It loads at startup now.
+- **The System health tile never consulted the ignore list at all**, and built its pair key by sorting numerically and joining with a colon while the list is stored under the shared helper's string sort joined with a dash — so an ignored pair could not have matched even if it had looked.
+- **Daily and weekly schedules never worked out when they next run.** The calculation only handled monthly, yearly and holiday types; the others fell through and returned nothing, so `next_run` stayed empty and the rows fell back to `start_date` — which on a recurring schedule is just the day it was created. A daily schedule could advertise a next run two days in the past.
+- **A schedule past its end date could still name a date it would never run on.** No branch of the calculation checked `end_date`. All of them do now, and nothing in the past is displayed as a next run regardless.
+- **The Upcoming schedules tile said every schedule was running now.** It decided a schedule was active by asking whether its `start_date` had passed and its `end_date` had not. Monthly, weekly and yearly schedules keep the `2000-01-01` sentinel in `start_date`, so the first half was true for all of them, and with no end date the second half never bit either. It asks the recurrence now, including ranges that run past midnight.
+- **Filler could be fully configured, shown as enabled everywhere, and never play.** Filler runs in the moment no schedule is active, and Coexistence Mode claims that same moment for the other preroll manager, so the scheduler returns early. The calendar stops drawing filler it will not play, My Schedules says filler will not run and why, and the Coexistence setting explains the clash where the choice is made. Clear Prerolls When Inactive has the same relationship and is handled the same way. Filler is deliberately left switched on rather than forced off — it is outranked, not wrong.
+- **The Faded Watermark option looked like it removed the logo.** The mark was overlaid after the text at fifteen percent opacity, so it was invisible while very slightly washing over the words, and choosing it also switched the header from the single-line "COMING SOON TO" back to two lines for no visible reason. The list layout now composites the watermark between the background and the text, which is where the option has always claimed it goes.
+- **QR corner rounding squared itself back off.** The plate was rounded and the square code drawn straight over the top of it. The code is clipped to the plate's shape now, capped short of where a corner arc would start eating the position markers, so the plate can reach a full circle without costing a scan.
+
+### Changed
+
+- **Clicking a day on the calendar opens it.** The month view only responded on the small date number and the week view not at all. The whole month cell opens that day, week day headers are buttons that do the same, and empty space in a week column does too. Schedule chips still open the schedule.
+- **The Upcoming tile shows when a schedule fires, not just which day.** The hour comes from the recurrence rather than from `next_run`, which carries the right date but not necessarily the right time, and each row shows its window so "All day" and "7:30 PM - 11:00 PM" are told apart at a glance.
+- **Recent generated cards show when each file was last written**, relative on the face and exact in the tooltip. A regeneration that came from a sync is marked as automatic — the filesystem cannot tell you that on its own, since the modification time is the same whether a sync wrote the file or someone pressed Generate.
+- **The QR panel carries a live sample of the real code**, large enough for the module style to read. The three styles looked identical because at roughly three screen pixels per module on the stage, a square, a squircle and a circle are the same shape. The sample also draws the code over the plate colour at its opacity and rounding, so it is clear that an opaque code background covers all but a rim of the plate.
+
 ## [2.2.0-beta.6] - 09-04-2026 (beta)
 
 > The week and day calendar views never showed a monthly schedule at all, and
