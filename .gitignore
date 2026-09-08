@@ -140,7 +140,6 @@ V1.*.md
 *.md.old
 SAVED_SEQUENCES_*.md
 SEQUENCES_LAYOUT_*.md
-NeXroll/RELEASE_NOTES_v1.8.12.md
 
 # Temp test files
 *.nexseq
