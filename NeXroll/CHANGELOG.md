@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 ## [Unreleased]
 
@@ -6,13 +6,15 @@
 > rendered without opening the interface. Two External API endpoints that raised 500 on
 > every call are fixed. The Library's quick filters now show what clicking them will
 > actually return, and Community Browse says when its filters are loading or why they
-> cannot load at all.
+> cannot load at all. The header no longer breaks apart on a folded phone, and NeXroll
+> now ships a real app icon at every size a launcher, browser tab or home screen asks for.
 
 ### Added
 
 - **The NeX-Up generators are reachable from the External API.** `POST /external/nexup/dynamic` and `POST /external/nexup/coming-soon` render server-side through FFmpeg, so they work headless. Rendering a five second preroll takes around two minutes, well past most client and proxy timeouts, so these return `202` with a job id and `GET /external/nexup/jobs/{id}` reports progress. On success the job carries the `preroll_id` of the registered file, ready to pass to `POST /external/schedules`. `GET /external/nexup/capabilities` lists the templates, themes and limits the render endpoints accept, and `GET /external/nexup/generated` lists what has been produced.
 - **One render runs at a time.** The generators write a fixed filename per template and per layout, so concurrent renders would fight over the same output file.
 - **Generating over the API no longer changes the interface's saved generator settings.** The values are restored after the render unless `save_as_default=true` is passed; clicking Generate in the interface still saves them, as before.
+- **A proper app icon set.** The manifest previously advertised the wide NeXroll wordmark as a square marked `any maskable`, so launchers cropped it, and the Apple touch icon tags named sizes the files did not have. The set is now exported from a glyph master: `any` and `maskable` are declared separately, the maskable art stays inside the W3C safe zone, there is a 180px Apple touch icon, and a multi-resolution ICO covers browser tabs and Windows shortcuts. Existing installed shortcuts may need removing and adding again to clear the operating system's icon cache.
 - **`/docs`, `/redoc` and `/openapi.json` group the supported endpoints.** All 284 routes previously sat undifferentiated under a bare title, with the ones meant for integrators buried among the interface's own. The External API and API Keys endpoints are now tagged and described.
 
 ### Fixed
@@ -24,6 +26,7 @@
 - **"All" did not mean all.** The search box feeds the same filter state the chips do, but All neither cleared it nor accounted for it, so a search with no matches left "All" highlighted over an empty grid with nothing to say why.
 - **Community Browse showed no filters until you interacted with the page.** They were loaded as a side effect of the Fair Use check, which runs at most once per page load and only if that check is still pending when Community is first opened; anything that made it miss left the card absent for the session. They now load whenever the page is open, and the card says whether it is loading, or why it cannot load — a community index past its refresh age cannot be read, which previously removed the card silently.
 - **The Matched quick filter did not reset the others**, so its count described the whole library while the grid showed the intersection. It now behaves like every other chip in the row and carries a count.
+- **The header came apart on a folded phone.** On a cover screen around 320 to 344 pixels wide, the account controls grew taller than the fixed header and the avatar wrapped onto a line below it, overlapping the page. The header now grows to fit on narrow screens, its controls meet the 44 pixel minimum touch target, and below 480 pixels the health badge moves to its own row with its text intact rather than being reduced to a coloured dot. Library and NeX-Up summary tiles drop to two columns on narrow screens instead of forcing the page wider than the screen.
 - **"1 prerolls".**
 
 ### Changed
