@@ -23,6 +23,7 @@ import uuid
 import time
 import re
 import asyncio
+import collections
 import secrets
 import bcrypt
 
@@ -2123,7 +2124,39 @@ except ImportError:
     except (ImportError, AttributeError):
         pass  # Use fallback version
 
-app = FastAPI(title="NeXroll Backend", version=app_version)
+API_DESCRIPTION = """\
+The HTTP interface to NeXroll.
+
+Most endpoints here exist for NeXroll's own web interface and can change between
+releases. **If you are building against NeXroll, use the `External API` group** —
+those are versioned, authenticated with an API key, and intended to stay stable.
+
+### Using the External API
+
+Create a key under **Settings, API Keys**, then send it on every request as the
+`X-Api-Key` header (or an `api_key` query parameter):
+
+    curl -H "X-Api-Key: nx_your_key_here" http://localhost:9393/external/status
+
+Keys carry one of two permission levels. `read` keys may call the GET endpoints;
+`full` keys may also call the ones that change something. A key that lacks the
+permission for an endpoint is refused.
+"""
+
+OPENAPI_TAGS = [
+    {"name": "External API",
+     "description": "Stable, API-key authenticated endpoints for integrating with NeXroll."},
+    {"name": "API Keys",
+     "description": "Create and manage the keys that authenticate the External API. "
+                    "These are called by the NeXroll UI and need a signed-in session."},
+]
+
+app = FastAPI(
+    title="NeXroll API",
+    version=app_version,
+    description=API_DESCRIPTION,
+    openapi_tags=OPENAPI_TAGS,
+)
 
 # Rate limiter for community prerolls to avoid triggering Cloudflare DDoS protection
 # Typical Nerds requested this to keep their site accessible
@@ -4805,7 +4838,7 @@ def _get_key_prefix(key: str) -> str:
     return key[:8] if len(key) >= 8 else key
 
 
-@app.get("/api/keys")
+@app.get("/api/keys", tags=["API Keys"])
 def list_api_keys(user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """List all API keys (without showing full key values)"""
     keys = db.query(models.APIKey).order_by(models.APIKey.created_at.desc()).all()
@@ -4827,7 +4860,7 @@ def list_api_keys(user: models.User = Depends(require_auth), db: Session = Depen
     }
 
 
-@app.post("/api/keys")
+@app.post("/api/keys", tags=["API Keys"])
 def create_api_key(
     name: str = Query(..., description="Friendly name for the API key"),
     permissions: str = Query("full", description="Permissions: 'read' or 'full'"),
@@ -4879,7 +4912,7 @@ def create_api_key(
     }
 
 
-@app.put("/api/keys/{key_id}")
+@app.put("/api/keys/{key_id}", tags=["API Keys"])
 def update_api_key(
     key_id: int,
     name: Optional[str] = Query(None),
@@ -4910,7 +4943,7 @@ def update_api_key(
     return {"success": True, "message": "API key updated"}
 
 
-@app.delete("/api/keys/{key_id}")
+@app.delete("/api/keys/{key_id}", tags=["API Keys"])
 def delete_api_key(key_id: int, user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """Permanently delete an API key"""
     api_key = db.query(models.APIKey).filter(models.APIKey.id == key_id).first()
@@ -4932,7 +4965,7 @@ class BulkDeleteKeysRequest(BaseModel):
     ids: List[int]
 
 
-@app.post("/api/keys/bulk-delete")
+@app.post("/api/keys/bulk-delete", tags=["API Keys"])
 def bulk_delete_api_keys(req: BulkDeleteKeysRequest, user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """Delete multiple API keys at once"""
     if not req.ids:
@@ -4984,7 +5017,7 @@ def validate_api_key(api_key: str, required_permission: str = "read", db: Sessio
     return key_record
 
 
-@app.get("/api/keys/validate")
+@app.get("/api/keys/validate", tags=["API Keys"])
 def validate_api_key_endpoint(
     api_key: str = Query(..., description="The API key to validate"),
     db: Session = Depends(get_db)
@@ -5085,7 +5118,7 @@ async def optional_api_key(
 # External API Endpoints (require API key authentication)
 # ============================================================================
 
-@app.get("/external/status")
+@app.get("/external/status", tags=["External API"])
 async def external_status(
     api_key_record: models.APIKey = Depends(require_api_key),
     db: Session = Depends(get_db)
@@ -5112,7 +5145,7 @@ async def external_status(
     }
 
 
-@app.get("/external/prerolls")
+@app.get("/external/prerolls", tags=["External API"])
 async def external_list_prerolls(
     api_key_record: models.APIKey = Depends(require_api_key),
     db: Session = Depends(get_db)
@@ -5138,7 +5171,7 @@ async def external_list_prerolls(
     }
 
 
-@app.get("/external/schedules")
+@app.get("/external/schedules", tags=["External API"])
 async def external_list_schedules(
     api_key_record: models.APIKey = Depends(require_api_key),
     db: Session = Depends(get_db)
@@ -5154,8 +5187,8 @@ async def external_list_schedules(
             {
                 "id": s.id,
                 "name": s.name,
-                "schedule_type": s.schedule_type,
-                "enabled": s.enabled,
+                "schedule_type": s.type,
+                "enabled": s.is_active,
                 "start_date": s.start_date.isoformat() if s.start_date else None,
                 "end_date": s.end_date.isoformat() if s.end_date else None
             }
@@ -5164,7 +5197,7 @@ async def external_list_schedules(
     }
 
 
-@app.post("/external/sync-plex")
+@app.post("/external/sync-plex", tags=["External API"])
 async def external_sync_plex(
     api_key_record: models.APIKey = Depends(require_api_key_full),
     db: Session = Depends(get_db)
@@ -5186,7 +5219,7 @@ async def external_sync_plex(
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
 
-@app.get("/external/now-showing")
+@app.get("/external/now-showing", tags=["External API"])
 async def external_now_showing(
     api_key_record: models.APIKey = Depends(require_api_key),
     db: Session = Depends(get_db)
@@ -5246,7 +5279,7 @@ async def external_now_showing(
     }
 
 
-@app.get("/external/active-schedules")
+@app.get("/external/active-schedules", tags=["External API"])
 async def external_active_schedules(
     api_key_record: models.APIKey = Depends(require_api_key),
     db: Session = Depends(get_db)
@@ -5268,11 +5301,11 @@ async def external_active_schedules(
                 active_schedules.append({
                     "id": s.id,
                     "name": s.name,
-                    "schedule_type": s.schedule_type,
+                    "schedule_type": s.type,
                     "category": category_info,
                     "start_date": s.start_date.isoformat() if s.start_date else None,
                     "end_date": s.end_date.isoformat() if s.end_date else None,
-                    "enabled": s.enabled
+                    "enabled": s.is_active
                 })
     except Exception as e:
         log_event('ERROR', 'api', f'External API: Error fetching schedules: {e}', source='external_schedules')
@@ -5284,7 +5317,7 @@ async def external_active_schedules(
     }
 
 
-@app.get("/external/categories")
+@app.get("/external/categories", tags=["External API"])
 async def external_categories(
     api_key_record: models.APIKey = Depends(require_api_key),
     db: Session = Depends(get_db)
@@ -5310,7 +5343,7 @@ async def external_categories(
     return {"categories": result, "count": len(result)}
 
 
-@app.get("/external/coming-soon")
+@app.get("/external/coming-soon", tags=["External API"])
 async def external_coming_soon(
     source: str = "both",
     limit: int = 10,
@@ -5380,7 +5413,7 @@ async def external_coming_soon(
     }
 
 
-@app.get("/external/sequences")
+@app.get("/external/sequences", tags=["External API"])
 async def external_sequences(
     api_key_record: models.APIKey = Depends(require_api_key),
     db: Session = Depends(get_db)
@@ -5435,7 +5468,7 @@ class ExternalScheduleCreate(BaseModel):
     enabled: bool = True
 
 
-@app.post("/external/categories")
+@app.post("/external/categories", tags=["External API"])
 async def external_create_category(
     category: ExternalCategoryCreate,
     api_key_record: models.APIKey = Depends(require_api_key_full),
@@ -5490,7 +5523,7 @@ async def external_create_category(
     }
 
 
-@app.post("/external/prerolls/register")
+@app.post("/external/prerolls/register", tags=["External API"])
 async def external_register_preroll(
     preroll: ExternalPrerollRegister,
     api_key_record: models.APIKey = Depends(require_api_key_full),
@@ -5566,7 +5599,7 @@ async def external_register_preroll(
     }
 
 
-@app.post("/external/prerolls/{preroll_id}/assign-category/{category_id}")
+@app.post("/external/prerolls/{preroll_id}/assign-category/{category_id}", tags=["External API"])
 async def external_assign_preroll_category(
     preroll_id: int,
     category_id: int,
@@ -5604,7 +5637,7 @@ async def external_assign_preroll_category(
     }
 
 
-@app.post("/external/schedules")
+@app.post("/external/schedules", tags=["External API"])
 async def external_create_schedule(
     schedule: ExternalScheduleCreate,
     api_key_record: models.APIKey = Depends(require_api_key_full),
@@ -5722,7 +5755,7 @@ async def external_create_schedule(
     }
 
 
-@app.delete("/external/schedules/{schedule_id}")
+@app.delete("/external/schedules/{schedule_id}", tags=["External API"])
 async def external_delete_schedule(
     schedule_id: int,
     api_key_record: models.APIKey = Depends(require_api_key_full),
@@ -5756,7 +5789,7 @@ async def external_delete_schedule(
     }
 
 
-@app.put("/external/schedules/{schedule_id}/toggle")
+@app.put("/external/schedules/{schedule_id}/toggle", tags=["External API"])
 async def external_toggle_schedule(
     schedule_id: int,
     enabled: bool = True,
@@ -5793,7 +5826,7 @@ async def external_toggle_schedule(
     }
 
 
-@app.post("/external/apply-category/{category_id}")
+@app.post("/external/apply-category/{category_id}", tags=["External API"])
 async def external_apply_category(
     category_id: int,
     api_key_record: models.APIKey = Depends(require_api_key_full),
@@ -5848,6 +5881,318 @@ async def external_apply_category(
         "preroll_count": len(paths),
         "plex_mode": plex_mode
     }
+
+
+# =============================================================================
+# External API: NeX-Up generators
+#
+# Rendering a five second preroll takes over two minutes of FFmpeg, so these do
+# not answer inline the way the UI's own endpoints do -- a caller would sit on a
+# socket past most client and proxy timeouts. They accept the request, hand back
+# a job id, and render on a worker thread.
+#
+# One render runs at a time. The generators write a fixed filename per template
+# and per layout, so two concurrent renders would fight over the same output
+# file, and FFmpeg at these settings will use whatever cores it is given.
+# =============================================================================
+
+NEXUP_JOBS: "OrderedDict[str, dict]" = collections.OrderedDict()
+NEXUP_JOBS_LOCK = threading.Lock()
+NEXUP_RENDER_LOCK = threading.Lock()
+NEXUP_JOBS_MAX = 50
+
+
+def _nexup_job_public(job: dict) -> dict:
+    """A job as the API reports it, without the internals."""
+    return {k: v for k, v in job.items() if not k.startswith("_")}
+
+
+def _nexup_job_create(kind: str, params: dict) -> dict:
+    job = {
+        "id": uuid.uuid4().hex,
+        "kind": kind,
+        "state": "queued",
+        "submitted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "started_at": None,
+        "finished_at": None,
+        "params": params,
+        "result": None,
+        "error": None,
+    }
+    with NEXUP_JOBS_LOCK:
+        NEXUP_JOBS[job["id"]] = job
+        while len(NEXUP_JOBS) > NEXUP_JOBS_MAX:
+            NEXUP_JOBS.popitem(last=False)
+    return job
+
+
+def _nexup_job_update(job_id: str, **fields) -> None:
+    with NEXUP_JOBS_LOCK:
+        job = NEXUP_JOBS.get(job_id)
+        if job:
+            job.update(fields)
+
+
+# Fields each generator writes back as the UI's saved defaults. An API call is
+# not someone choosing a default in the interface, so unless the caller asks for
+# it these are put back exactly as they were.
+_NEXUP_DYNAMIC_DEFAULT_FIELDS = (
+    "nexup_dynamic_preroll_template",
+    "nexup_dynamic_preroll_server_name",
+    "nexup_dynamic_preroll_duration",
+    "nexup_dynamic_preroll_theme",
+    "nexup_dynamic_preroll_language",
+)
+_NEXUP_COMING_SOON_DEFAULT_FIELDS = ("nexup_dynamic_preroll_server_name",)
+
+
+def _nexup_snapshot(db, fields) -> dict:
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {}
+    return {f: getattr(setting, f, None) for f in fields}
+
+
+def _nexup_restore(db, saved: dict) -> None:
+    if not saved:
+        return
+    try:
+        db.execute(models.Setting.__table__.update().values(**saved))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _nexup_run_job(job_id: str, coro_factory, save_as_default: bool, fields) -> None:
+    """Render on a worker thread and record the outcome on the job."""
+    _nexup_job_update(job_id, state="running",
+                      started_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    db = SessionLocal()
+    saved = {} if save_as_default else _nexup_snapshot(db, fields)
+    try:
+        with NEXUP_RENDER_LOCK:
+            result = asyncio.run(coro_factory(db))
+        if not save_as_default:
+            _nexup_restore(db, saved)
+
+        path = result.get("path") if isinstance(result, dict) else None
+        preroll_id = None
+        if path:
+            # The Coming Soon generator registers its own output; the dynamic
+            # FFmpeg path does not, so the file would exist on disk with no
+            # library row and nothing to schedule. Register it here so a caller
+            # can hand result.preroll_id straight to POST /external/schedules.
+            row = db.query(models.Preroll).filter(models.Preroll.path == str(path)).first()
+            if not row:
+                try:
+                    _register_generated_preroll_to_category(
+                        db, Path(path),
+                        str(result.get("template") or ""),
+                        str(result.get("theme") or ""),
+                        name=str(result.get("name") or ""))
+                    row = db.query(models.Preroll).filter(models.Preroll.path == str(path)).first()
+                except Exception as reg_error:
+                    _file_log(f"[EXTERNAL-NEXUP] Could not register {path}: {reg_error}", level="ERROR")
+            preroll_id = row.id if row else None
+        _nexup_job_update(
+            job_id,
+            state="succeeded",
+            finished_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            result={
+                "path": str(path) if path else None,
+                "filename": os.path.basename(str(path)) if path else None,
+                "preroll_id": preroll_id,
+                "details": result if isinstance(result, dict) else None,
+            },
+        )
+    except HTTPException as exc:
+        if not save_as_default:
+            _nexup_restore(db, saved)
+        _nexup_job_update(job_id, state="failed", error=str(exc.detail),
+                          finished_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    except Exception as exc:
+        if not save_as_default:
+            _nexup_restore(db, saved)
+        log_event('ERROR', 'api', f'External API: NeX-Up job {job_id} failed: {exc}',
+                  source='external_nexup_job')
+        _nexup_job_update(job_id, state="failed", error=str(exc),
+                          finished_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    finally:
+        db.close()
+
+
+@app.get("/external/nexup/capabilities", tags=["External API"])
+async def external_nexup_capabilities(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """What the generators can currently produce on this install.
+
+    Call this before generating: without FFmpeg or a configured NeX-Up storage
+    path, both generators refuse.
+    """
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None) if setting else None
+    try:
+        generator = DynamicPrerollGenerator()
+        templates = generator.get_available_templates()
+        themes = list((generator.get_color_themes() or {}).keys())
+        ffmpeg_available = generator.check_ffmpeg_available()
+    except Exception as exc:
+        return {"ffmpeg_available": False, "storage_configured": bool(storage_path),
+                "templates": [], "themes": [], "error": str(exc)}
+
+    return {
+        "ffmpeg_available": ffmpeg_available,
+        "storage_configured": bool(storage_path),
+        "templates": templates,
+        "themes": themes,
+        "coming_soon": {
+            "layouts": ["list", "grid"],
+            "sources": ["movies", "shows", "both"],
+        },
+        "render": {
+            "resolutions": ["720", "1080", "1440", "2160"],
+            "qualities": ["fast", "balanced", "high"],
+            "max_duration_seconds": MAX_GENERATED_DURATION,
+        },
+    }
+
+
+@app.post("/external/nexup/dynamic", status_code=202, tags=["External API"])
+async def external_nexup_generate_dynamic(
+    template: str = Query("now_showing", description="Template id from /external/nexup/capabilities"),
+    server_name: str = Query("Your Server", description="Name shown in the video"),
+    duration: int = Query(5, description="Seconds"),
+    theme: str = Query("midnight", description="Colour theme id"),
+    language: str = Query("en"),
+    name: Optional[str] = Query(None, description="Save as its own preroll under this name instead of replacing the template's file"),
+    save_as_default: bool = Query(False, description="Also make these the generator's saved settings in the interface"),
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """Render a dynamic preroll. Returns a job to poll, not the video.
+
+    Without `name` the output replaces this template's existing file, which is
+    how the interface behaves. Pass `name` to keep several variants side by side.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, 'nexup_storage_path', None):
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    if duration < 1 or duration > MAX_GENERATED_DURATION:
+        raise HTTPException(status_code=422, detail=f"duration must be between 1 and {MAX_GENERATED_DURATION} seconds")
+
+    params = {"template": template, "server_name": server_name, "duration": duration,
+              "theme": theme, "language": language, "name": name}
+    job = _nexup_job_create("dynamic", params)
+
+    def factory(worker_db):
+        return generate_dynamic_preroll(
+            template=template, server_name=server_name, duration=duration,
+            theme=theme, language=language, db=worker_db)
+
+    threading.Thread(
+        target=_nexup_run_job,
+        args=(job["id"], factory, save_as_default, _NEXUP_DYNAMIC_DEFAULT_FIELDS),
+        daemon=True,
+    ).start()
+    return {"job": _nexup_job_public(job),
+            "poll": f"/external/nexup/jobs/{job['id']}"}
+
+
+@app.post("/external/nexup/coming-soon", status_code=202, tags=["External API"])
+async def external_nexup_generate_coming_soon(
+    layout: str = Query("list", description="list or grid"),
+    source: str = Query("both", description="movies, shows or both"),
+    duration: int = Query(10, description="Seconds"),
+    max_items: int = Query(8),
+    bg_color: str = Query("#141428"),
+    text_color: str = Query("#ffffff"),
+    accent_color: str = Query("#00d4ff"),
+    server_name: Optional[str] = Query(None),
+    include_audio: bool = Query(False),
+    language: str = Query("en"),
+    resolution: str = Query("1080"),
+    frame_rate: int = Query(30),
+    quality: str = Query("balanced"),
+    save_as_default: bool = Query(False),
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """Render a Coming Soon list from downloaded trailers. Returns a job to poll.
+
+    The animated themed backdrop is recorded by a browser, so it cannot be made
+    here; this renders over the still background, exactly as scheduled
+    auto-regeneration does.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, 'nexup_storage_path', None):
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    if layout not in ("list", "grid"):
+        raise HTTPException(status_code=422, detail="layout must be 'list' or 'grid'")
+    if source not in ("movies", "shows", "both"):
+        raise HTTPException(status_code=422, detail="source must be 'movies', 'shows' or 'both'")
+    if duration < 1 or duration > MAX_GENERATED_DURATION:
+        raise HTTPException(status_code=422, detail=f"duration must be between 1 and {MAX_GENERATED_DURATION} seconds")
+
+    params = {"layout": layout, "source": source, "duration": duration, "max_items": max_items,
+              "resolution": resolution, "quality": quality}
+    job = _nexup_job_create("coming_soon", params)
+
+    def factory(worker_db):
+        return generate_coming_soon_list(
+            layout=layout, source=source, duration=duration, max_items=max_items,
+            bg_color=bg_color, text_color=text_color, accent_color=accent_color,
+            server_name=server_name, include_audio=include_audio, language=language,
+            resolution=resolution, frame_rate=frame_rate, quality=quality,
+            backdrop_video=None, db=worker_db)
+
+    threading.Thread(
+        target=_nexup_run_job,
+        args=(job["id"], factory, save_as_default, _NEXUP_COMING_SOON_DEFAULT_FIELDS),
+        daemon=True,
+    ).start()
+    return {"job": _nexup_job_public(job),
+            "poll": f"/external/nexup/jobs/{job['id']}"}
+
+
+@app.get("/external/nexup/jobs", tags=["External API"])
+async def external_nexup_jobs(
+    api_key_record: models.APIKey = Depends(require_api_key),
+):
+    """Recent generation jobs, newest first. Held in memory, so a restart clears them."""
+    with NEXUP_JOBS_LOCK:
+        jobs = [_nexup_job_public(j) for j in NEXUP_JOBS.values()]
+    jobs.reverse()
+    return {"jobs": jobs, "count": len(jobs)}
+
+
+@app.get("/external/nexup/jobs/{job_id}", tags=["External API"])
+async def external_nexup_job(
+    job_id: str,
+    api_key_record: models.APIKey = Depends(require_api_key),
+):
+    """One job. `state` is queued, running, succeeded or failed.
+
+    On success `result.preroll_id` is the library row for the rendered file,
+    ready to hand to POST /external/schedules.
+    """
+    with NEXUP_JOBS_LOCK:
+        job = NEXUP_JOBS.get(job_id)
+        payload = _nexup_job_public(job) if job else None
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Unknown job id. Jobs are kept in memory and cleared on restart.")
+    return payload
+
+
+@app.get("/external/nexup/generated", tags=["External API"])
+async def external_nexup_generated(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """Every video the generators have produced, with when it was last written."""
+    listing = list_generated_prerolls(db=db)
+    return listing
 
 
 # =============================================================================
