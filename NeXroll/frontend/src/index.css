@@ -6703,7 +6703,7 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 .nx-service-status.is-warn { color: #f6b84a; background: rgba(246, 184, 74, 0.11); }
 .nx-service-status.is-error { color: #ff5e67; background: rgba(255, 94, 103, 0.09); }
 .nx-service-status.is-loading { color: #8f96a3; background: rgba(143, 150, 163, 0.1); }
-.nx-content .nx-focus-topbar-actions > span:first-child {
+.nx-content .nx-topbar-inner > .nx-service-status {
   min-height: 25px;
   padding: 5px 10px !important;
   border-radius: 999px !important;
@@ -10884,3 +10884,74 @@ body.light .nx-draft-cal-event { color: #157a55; }
 }
 .nx-draft-overlap-dot.is-exclusive { background: var(--danger-color, #e05555); }
 .nx-draft-overlap-dot.is-blend { background: var(--accent-color, #00d4ff); }
+
+/* Mobile shell: keep account controls out of legacy inline-flex/tabbar rules.
+   Narrow cover screens need a real second row, not wrapping inside a 48px bar. */
+.nx-content .nx-focus-topbar-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+.nx-content .nx-topbar-inner > .nx-service-status {
+  min-height: 25px;
+  padding: 5px 10px;
+  font-size: 11px;
+  box-sizing: border-box;
+}
+@media (max-width: 900px) {
+  .nx-content .nx-topbar {
+    height: auto;
+    min-height: 56px;
+    flex-shrink: 0;
+  }
+  .nx-content .nx-topbar-inner {
+    min-width: 0;
+    padding: 6px 12px;
+    gap: 8px;
+  }
+  .nx-content .nx-mobile-menu-toggle,
+  .nx-content .nx-topbar .nx-iconbtn {
+    flex: 0 0 auto;
+    width: 44px !important;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0 !important;
+  }
+  .nx-content .nx-focus-topbar-actions { gap: 6px !important; }
+  .nx-content .nx-topbar-logout-label { display: none; }
+  .nx-sidebar { height: 100dvh; }
+  .nx-sidebar-mobile-close { min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 480px) {
+  .nx-content .nx-topbar-inner {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    row-gap: 4px;
+  }
+  .nx-content .nx-topbar-spacer { display: none; }
+  .nx-content .nx-mobile-menu-toggle { grid-column: 1; grid-row: 1; }
+  .nx-content .nx-focus-topbar-actions {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .nx-content .nx-topbar-inner > .nx-service-status {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+    white-space: normal;
+  }
+  .nx-content .nx-page-header-actions { flex-wrap: wrap; }
+  .nx-content .nx-dash-greeting,
+  .nx-content .nx-page-header-title { overflow-wrap: anywhere; }
+}
+@media (max-width: 760px) {
+  .nx-content-library .nx-route-summary,
+  .nx-content-nexup .nx-route-summary,
+  .nx-content-nexup.nx-content-nexup-trailers .nx-route-summary,
+  .nx-content-nexup:has(.nx-nexup-trailers) .nx-route-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

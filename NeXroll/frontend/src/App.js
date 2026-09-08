@@ -153,7 +153,7 @@ const WIKI_PAGES = {
   'settings/backup':      'Backup-and-Restore',
   'settings/storage':     'Configuration#data-storage-locations',
   'settings/users':       'Configuration#authentication',
-  'settings/apikeys':     'Configuration#api-keys',
+  'settings/apikeys':     'API#authentication',
   'settings/logs':        'Configuration#logging',
   'settings/system':      'Troubleshooting#system-page',
 };
@@ -1256,6 +1256,18 @@ function App() {
   const [communityIsSearching, setCommunityIsSearching] = useState(false);
   // Browse-by-facet state (Community Prerolls)
   const [communityFacets, setCommunityFacets] = useState(null);
+  // idle -> loading -> ready | unavailable. The Browse card is drawn in every
+  // one of these, because a card that simply is not there reads as a bug.
+  const [communityFacetsStatus, setCommunityFacetsStatus] = useState('idle');
+  const [communityFacetsMessage, setCommunityFacetsMessage] = useState('');
+  // Bumped to ask the loader below to run again. The status cannot do that job:
+  // it is set inside the effect, so having it in the dependency list made the
+  // effect re-run and cancel its own request, leaving it loading forever.
+  const [communityFacetsReload, setCommunityFacetsReload] = useState(0);
+  // What the loaded facets describe. Moving between Browse and Search changes
+  // activeTab, and the endpoint re-reads and re-parses the whole index file on
+  // every call, so repeating the request on each hop is worth avoiding.
+  const communityFacetsKey = React.useRef(null);
   const [browseCategory, setBrowseCategory] = useState('');
   const [browseCreator, setBrowseCreator] = useState('');
   const [browsePlatform, setBrowsePlatform] = useState('');
@@ -3365,14 +3377,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
               } catch (indexError) {
                 console.error('Failed to load index status:', indexError);
               }
-              // Load browse facets (categories / creators / platforms + counts)
-              try {
-                const facetsRes = await fetch(apiUrl(`community-prerolls/facets?include_ai=${communityIncludeAI}`));
-                const facetsData = await facetsRes.json();
-                setCommunityFacets(facetsData && facetsData.available ? facetsData : null);
-              } catch (facetsError) {
-                console.error('Failed to load community facets:', facetsError);
-              }
+              // Browse facets are loaded by their own effect below, which can
+              // retry; this one-shot could not.
               // Fetch community server info
               try {
                 const [serverUrlRes, serversRes] = await Promise.all([
@@ -3402,6 +3408,41 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       checkFairUseStatus();
     }
   }, [activeTab, communityFairUseStatus]);
+
+  // Browse's filters come from the facets endpoint. Load them whenever the
+  // Community page is open and we do not have them, rather than as a side
+  // effect of the fair-use check, so arriving at Browse always fetches them and
+  // a failure can be retried instead of leaving the card missing.
+  React.useEffect(() => {
+    if (!activeTab.startsWith('community-prerolls')) return undefined;
+    const key = `ai:${communityIncludeAI}|reload:${communityFacetsReload}`;
+    if (communityFacetsKey.current === key) return undefined;
+    communityFacetsKey.current = key;
+    let cancelled = false;
+    setCommunityFacetsStatus(status => (status === 'ready' ? status : 'loading'));
+    (async () => {
+      try {
+        const response = await fetch(apiUrl(`community-prerolls/facets?include_ai=${communityIncludeAI}`));
+        const data = await response.json();
+        if (cancelled) return;
+        if (data && data.available) {
+          setCommunityFacets(data);
+          setCommunityFacetsMessage('');
+          setCommunityFacetsStatus('ready');
+        } else {
+          setCommunityFacets(null);
+          setCommunityFacetsMessage(data?.message || 'Build the community index to browse.');
+          setCommunityFacetsStatus('unavailable');
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setCommunityFacets(null);
+        setCommunityFacetsMessage('Could not load the browse filters.');
+        setCommunityFacetsStatus('unavailable');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, communityIncludeAI, communityFacetsReload]);
 
   // Browse and Search are separate Community destinations. Reset only the
   // shared result surface when moving between them so filters and queries stay
@@ -3442,7 +3483,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           setTimeout(() => setCommunityBuildProgress(null), 1000);
           (async () => {
             try { const r = await fetch(apiUrl('community-prerolls/index-status')); setCommunityIndexStatus(await r.json()); } catch {}
-            try { const r = await fetch(apiUrl(`community-prerolls/facets?include_ai=${communityIncludeAI}`)); const f = await r.json(); setCommunityFacets(f && f.available ? f : null); } catch {}
+            setCommunityFacetsReload(n => n + 1);  // the loader picks the new index up
           })();
         } else {
           setCommunityBuildProgress(null);
@@ -11377,11 +11418,33 @@ const DashboardTiles = {
     const namedQuickCategories = ['Christmas', 'Halloween', 'Studio']
       .map(name => categories.find(category => category.name?.toLowerCase().includes(name.toLowerCase())))
       .filter(Boolean);
+    // Whether a preroll is on screen at all, given the two visibility toggles.
+    // Every quick filter counts through this, so no chip can promise rows the
+    // grid then hides.
+    const hiddenByToggles = (preroll, selectedCategoryName = '') => {
+      const name = String(selectedCategoryName).toLowerCase();
+      if (!showNexupGeneratedInLibrary && !NEXUP_GENERATED_CATEGORIES.includes(name)
+        && isNexUpGeneratedPreroll(preroll)) return true;
+      if (!showNexupTrailersInLibrary && !NEXUP_TRAILER_CATEGORIES.includes(name)
+        && isNexUpTrailerPreroll(preroll)) return true;
+      return false;
+    };
+    const countInCategory = (category) => prerolls.filter(preroll => (
+      (preroll.category_id === category.id || (preroll.categories || []).some(c => c.id === category.id))
+      && !hiddenByToggles(preroll, category.name)
+    )).length;
+    // A quick filter that always lands on an empty grid is not a filter, so
+    // only offer categories that currently have something in them.
     const quickCategories = [...namedQuickCategories, ...categories]
       .filter((category, index, all) => all.findIndex(item => item.id === category.id) === index)
+      .filter(category => countInCategory(category) > 0)
       .slice(0, 3);
+    const matchedCount = prerolls.filter(preroll =>
+      preroll.community_preroll_id && !hiddenByToggles(preroll)
+    ).length;
     const uncategorizedCount = prerolls.filter(preroll =>
       !preroll.category && !preroll.category_id && !(preroll.category_ids || []).length && !(preroll.categories || []).length
+      && !hiddenByToggles(preroll)
     ).length;
     const pageNumbers = Array.from(new Set([
       1,
@@ -11483,11 +11546,11 @@ const DashboardTiles = {
           </div>
           <div className="nx-hybrid-filters">
             <span className="nx-hybrid-filter-label">Quick filters</span>
-            <button type="button" className={`nx-hybrid-filter-chip${!filterCategory && !filterMatchStatus ? ' is-active' : ''}`} onClick={() => { setFilterCategory(''); setFilterMatchStatus(''); setCurrentPage(1); }}>All</button>
+            <button type="button" className={`nx-hybrid-filter-chip${!filterCategory && !filterMatchStatus && !inputTagsValue ? ' is-active' : ''}`} onClick={() => { setFilterCategory(''); setFilterMatchStatus(''); handleTagsChange(''); setCurrentPage(1); }}>All</button>
             {quickCategories.map(category => (
               <button type="button" key={category.id} className={`nx-hybrid-filter-chip${String(category.id) === String(filterCategory) ? ' is-active' : ''}`} onClick={() => { setFilterCategory(String(category.id)); setFilterMatchStatus(''); setCurrentPage(1); }}>{category.name}</button>
             ))}
-            <button type="button" className={`nx-hybrid-filter-chip is-dot${filterMatchStatus === 'matched' ? ' is-active' : ''}`} onClick={() => { setFilterMatchStatus(filterMatchStatus === 'matched' ? '' : 'matched'); setCurrentPage(1); }}>Matched</button>
+            <button type="button" className={`nx-hybrid-filter-chip is-dot${filterMatchStatus === 'matched' ? ' is-active' : ''}`} onClick={() => { const on = filterMatchStatus === 'matched'; setFilterMatchStatus(on ? '' : 'matched'); if (!on) setFilterCategory(''); setCurrentPage(1); }}>Matched &middot; {matchedCount}</button>
             <button type="button" className={`nx-hybrid-filter-chip is-dot is-warn${filterCategory === 'uncategorized' ? ' is-active' : ''}`} onClick={() => { setFilterCategory(filterCategory === 'uncategorized' ? '' : 'uncategorized'); setFilterMatchStatus(''); setCurrentPage(1); }}>Uncategorized · {uncategorizedCount}</button>
             <details className="nx-hybrid-more">
               <summary className="nx-hybrid-filter-chip"><Sliders size={10} /> More filters</summary>
@@ -11530,7 +11593,7 @@ const DashboardTiles = {
         <div className={`nx-hybrid-layout${prerollView === 'list' ? ' is-list' : ''}${libraryInspectorOpen ? ' preview-open' : ''}`}>
           <main className="nx-hybrid-results">
             <div className="nx-hybrid-results-head">
-              <span><strong>{totalPrerolls}</strong> prerolls{activeQuickCategory ? ` in ${activeQuickCategory.name}` : ''}</span>
+              <span><strong>{totalPrerolls}</strong> preroll{totalPrerolls === 1 ? '' : 's'}{activeQuickCategory ? ` in ${activeQuickCategory.name}` : ''}{filterCategory === 'uncategorized' ? ' with no category' : ''}</span>
               <div><span>Select items to organize them in bulk</span><label><input type="checkbox" checked={allSelectedOnPage} onChange={(event) => selectAllVisible(visibleIds, event.target.checked)} /> Select page</label></div>
             </div>
 
@@ -35280,14 +35343,7 @@ const DashboardTiles = {
       const includeAI = !communityIncludeAI;
       setCommunityIncludeAI(includeAI);
       setCommunityRandomPreroll(null);
-
-      try {
-        const response = await fetch(apiUrl(`community-prerolls/facets?include_ai=${includeAI}`));
-        const data = await response.json();
-        setCommunityFacets(data && data.available ? data : null);
-      } catch (error) {
-        console.error('Failed to refresh community facets:', error);
-      }
+      // One loader owns the facets, and it re-runs when include_ai changes.
 
       if (!isCommunitySearchPage) {
         handleBrowse({ includeAI }, 0);
@@ -36070,12 +36126,33 @@ const DashboardTiles = {
         )}
 
         {/* Browse the library by facet (category / platform / creator / sort) */}
-        {!isCommunitySearchPage && communityFacets && (
+        {!isCommunitySearchPage && (
           <div className="card">
             <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <Filter size={16} /> Browse the Library
-              <span style={{ color: 'var(--text-secondary)', fontWeight: 500, fontSize: '0.85rem' }}>({communityFacets.total} prerolls)</span>
+              {communityFacets && <span style={{ color: 'var(--text-secondary)', fontWeight: 500, fontSize: '0.85rem' }}>({communityFacets.total} prerolls)</span>}
             </h3>
+            {communityFacetsStatus === 'loading' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem', padding: '0.5rem 0' }}>
+                <Loader2 size={15} className="spin" /> Loading filters&hellip;
+              </div>
+            )}
+            {communityFacetsStatus === 'unavailable' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', padding: '0.25rem 0' }}>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  {communityFacetsMessage || 'Build the community index to browse.'}
+                  {communityIndexStatus?.is_stale ? ' The index on disk is past its refresh age, so it cannot be read.' : ''}
+                </span>
+                <button className="button" onClick={handleBuildIndex} disabled={communityIsBuilding}>
+                  {communityIsBuilding ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                  {communityIndexStatus?.exists ? 'Refresh Index' : 'Build Index'}
+                </button>
+                <button className="button button-secondary" onClick={() => setCommunityFacetsReload(n => n + 1)}>
+                  Try again
+                </button>
+              </div>
+            )}
+            {communityFacets && (<React.Fragment>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
               <div>
                 <label className="nx-conn-field-label">Category</label>
@@ -36144,6 +36221,7 @@ const DashboardTiles = {
                 </span>
               )}
             </div>
+            </React.Fragment>)}
           </div>
         )}
 
@@ -37120,6 +37198,7 @@ const DashboardTiles = {
             className="nx-mobile-menu-toggle"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             aria-label="Toggle navigation menu"
+            aria-expanded={mobileMenuOpen}
           >
             <Menu size={20} />
           </button>
@@ -37133,12 +37212,12 @@ const DashboardTiles = {
             </div>
           )}
           <div className="nx-topbar-spacer" />
-          <div className="tabbar-right nx-focus-topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {/* Service Status Indicator */}
           <span className={`nx-service-status is-${serviceStatusBadge.tone}`}>
             <span className="nx-service-status-dot" />
             {serviceStatusBadge.label}
           </span>
+          <div className="nx-focus-topbar-actions">
           
           {/* Theme Toggle Button */}
           <button
