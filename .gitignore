@@ -173,3 +173,14 @@ launch-video/out/
 /docs/ui-drafts/
 /Launch-Video-Promo-Playbook.md
 /.codex-tmp/
+
+# Site drafts and separate web projects living in this folder (local only)
+/website/
+/JFLX.CLOUD-Web/
+
+# AI assistant handover notes and local-only review harnesses
+/docs/CLAUDE-*.md
+/docs/CODEX-*.md
+/docs/*-handoff.md
+/docs/*-handover.md
+/docs/*-review.cjs
