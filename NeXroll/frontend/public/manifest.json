@@ -4,30 +4,30 @@
   "description": "Comprehensive Plex preroll management system with web interface",
   "icons": [
     {
-      "src": "favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
+      "src": "icons/nexroll.ico",
+      "sizes": "16x16 24x24 32x32 48x48 64x64 128x128 256x256",
       "type": "image/x-icon"
     },
     {
-      "src": "NeXroll_Logo_BLK.png",
+      "src": "icons/nexroll-maskable-192.png",
       "type": "image/png",
       "sizes": "192x192",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     },
     {
-      "src": "NeXroll_Logo_WHT.png",
+      "src": "icons/nexroll-maskable-512.png",
       "type": "image/png",
       "sizes": "512x512",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     },
     {
-      "src": "NeXroll_Logo_BLK.png",
+      "src": "icons/nexroll-192.png",
       "type": "image/png",
       "sizes": "192x192",
       "purpose": "any"
     },
     {
-      "src": "NeXroll_Logo_WHT.png",
+      "src": "icons/nexroll-512.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any"

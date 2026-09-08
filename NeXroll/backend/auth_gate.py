@@ -19,6 +19,7 @@ AUTH_GATE_EXEMPT_EXACT = frozenset({
 
 AUTH_GATE_EXEMPT_PREFIXES = (
     "/static/",
+    "/icons/",
     "/plugin/",
     "/jellyfin/plugin/",
     "/emby/plugin/",
