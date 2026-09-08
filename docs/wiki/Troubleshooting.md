@@ -92,7 +92,7 @@ If you can't access the web interface due to authentication:
 1. **Check key format** — Keys start with `nx_`
 2. **Check permissions** — Read-only keys can't make changes
 3. **Check expiration** — Keys may have expired
-4. **Use correct header** — `Authorization: Bearer nx_your_key`
+4. **Use correct header** — `X-Api-Key: nx_your_key`, or the `api_key` query parameter. `Authorization: Bearer` is not accepted and returns 401
 
 ## Scheduling Issues
 

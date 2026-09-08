@@ -20,16 +20,19 @@ Used by the web interface. After logging in via `/auth/login`, a session cookie 
 
 ### API Key Authentication (External Access)
 
-For programmatic access, use API keys with the `/external/*` endpoints:
+For programmatic access, use API keys with the `/external/*` endpoints. Send the
+key in the `X-Api-Key` header:
 
 ```http
-Authorization: Bearer nx_your_api_key_here
+X-Api-Key: nx_your_api_key_here
 ```
 
 Or as a query parameter:
 ```http
 GET /external/status?api_key=nx_your_api_key_here
 ```
+
+`Authorization: Bearer` is not accepted and returns 401.
 
 API keys are generated in **Settings → API Keys**. Keys can be scoped as **read-only** or **full access** and can have expiration dates.
 
@@ -483,10 +486,12 @@ DELETE /schedules/{id}
 ### Get Active Schedules
 
 ```http
-GET /schedules/active
+GET /scheduler/active-schedule-ids
 ```
 
-Returns schedules currently active based on date/time.
+Returns `{"active_schedule_ids": [...]}` for the schedules active right now.
+For the full records rather than the ids, use the External API's
+`GET /external/active-schedules`.
 
 ---
 
@@ -553,28 +558,31 @@ auto_download: true
 
 ## Settings
 
-### Get Settings
+### Get a Setting
 
 ```http
-GET /settings
+GET /settings/{key}
 ```
 
-### Update Settings
+Returns the value stored under that key, or 404 if the key is not set. There is
+no endpoint that returns every setting at once.
+
+### Update a Setting
 
 ```http
-PUT /settings
+PUT /settings/{key}
 Content-Type: application/json
 
-{
-  "plex_url": "http://192.168.1.100:32400",
-  "plex_token": "your-token-here"
-}
+"http://192.168.1.100:32400"
 ```
 
-### Test Plex Connection
+The body is the value itself -- a string, object or array. Plex connection
+details are set through `POST /plex/connect` rather than here.
+
+### Connect to Plex
 
 ```http
-POST /settings/test-plex
+POST /plex/connect
 Content-Type: application/json
 
 {
@@ -583,10 +591,10 @@ Content-Type: application/json
 }
 ```
 
-### Test Jellyfin Connection
+### Connect to Jellyfin
 
 ```http
-POST /settings/test-jellyfin
+POST /jellyfin/connect
 Content-Type: application/json
 
 {
@@ -618,13 +626,13 @@ Filler types: `category`, `sequence`, `coming_soon`
 ### Get Path Mappings
 
 ```http
-GET /path-mappings
+GET /settings/path-mappings
 ```
 
 ### Update Path Mappings
 
 ```http
-PUT /path-mappings
+PUT /settings/path-mappings
 Content-Type: application/json
 
 {
@@ -845,7 +853,7 @@ GET /health
 ### Version
 
 ```http
-GET /version
+GET /system/version
 ```
 
 ### System Health Summary
