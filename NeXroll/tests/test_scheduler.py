@@ -585,10 +585,13 @@ class SchedulerTransitionTests(unittest.TestCase):
         self.assertTrue(second_entered.is_set())
         self.assertEqual(calls, ["first", "second"])
 
-    def test_linked_holiday_dates_refresh_for_the_current_year_but_keep_future_pins(self):
+    def test_linked_holiday_dates_move_to_the_holidays_next_occurrence(self):
+        # A holiday-linked schedule means "Thanksgiving, US", not a fixed date,
+        # so every one of them tracks the next occurrence -- whether its stored
+        # date is behind us or pinned to some later year.
         with self.Session() as db:
-            current = models.Schedule(
-                name="Current Thanksgiving",
+            stale = models.Schedule(
+                name="Stale Thanksgiving",
                 type="holiday",
                 start_date=datetime.datetime(2025, 11, 27),
                 end_date=datetime.datetime(2025, 11, 27, 23, 59),
@@ -596,8 +599,8 @@ class SchedulerTransitionTests(unittest.TestCase):
                 holiday_country="US",
                 is_active=True,
             )
-            future = models.Schedule(
-                name="Future Thanksgiving",
+            pinned_later = models.Schedule(
+                name="Later Thanksgiving",
                 type="holiday",
                 start_date=datetime.datetime(2027, 11, 25),
                 end_date=datetime.datetime(2027, 11, 25, 23, 59),
@@ -605,25 +608,74 @@ class SchedulerTransitionTests(unittest.TestCase):
                 holiday_country="US",
                 is_active=True,
             )
-            db.add_all([current, future])
+            unlinked = models.Schedule(
+                name="Not linked to a holiday",
+                type="custom",
+                start_date=datetime.datetime(2025, 11, 27),
+                end_date=datetime.datetime(2025, 11, 27, 23, 59),
+                is_active=True,
+            )
+            db.add_all([stale, pinned_later, unlinked])
             db.commit()
-            current_id, future_id = current.id, future.id
+            stale_id, later_id, unlinked_id = stale.id, pinned_later.id, unlinked.id
 
+        next_thanksgiving = datetime.date(2026, 11, 26)
         refresh_now = datetime.datetime(2026, 1, 2, 8, 0)
         with self.Session() as db, patch.object(
             self.scheduler,
-            "_get_holiday_date",
-            return_value=datetime.date(2026, 11, 26),
+            "_get_next_holiday_date",
+            return_value=next_thanksgiving,
         ) as holiday_lookup:
             self.scheduler._refresh_linked_holiday_dates_if_needed(db, refresh_now)
 
         with self.Session() as db:
-            current = db.get(models.Schedule, current_id)
-            future = db.get(models.Schedule, future_id)
-            self.assertEqual(current.start_date, datetime.datetime(2026, 11, 26))
-            self.assertEqual(current.end_date, datetime.datetime(2026, 11, 26, 23, 59, 59))
-            self.assertEqual(future.start_date, datetime.datetime(2027, 11, 25))
-        holiday_lookup.assert_called_once_with("Thanksgiving", "US", 2026)
+            stale = db.get(models.Schedule, stale_id)
+            pinned_later = db.get(models.Schedule, later_id)
+            unlinked = db.get(models.Schedule, unlinked_id)
+            self.assertEqual(stale.start_date, datetime.datetime(2026, 11, 26))
+            self.assertEqual(stale.end_date, datetime.datetime(2026, 11, 26, 23, 59, 59))
+            self.assertEqual(pinned_later.start_date, datetime.datetime(2026, 11, 26))
+            self.assertEqual(pinned_later.end_date, datetime.datetime(2026, 11, 26, 23, 59, 59))
+            # A schedule with no holiday link is not swept up in the refresh.
+            self.assertEqual(unlinked.start_date, datetime.datetime(2025, 11, 27))
+
+        # The date is resolved without a year argument, and only for the two
+        # linked schedules.
+        self.assertEqual(holiday_lookup.call_count, 2)
+        holiday_lookup.assert_called_with("Thanksgiving", "US")
+
+    def test_linked_holiday_refresh_runs_once_per_local_day(self):
+        with self.Session() as db:
+            db.add(models.Schedule(
+                name="Thanksgiving",
+                type="holiday",
+                start_date=datetime.datetime(2025, 11, 27),
+                end_date=datetime.datetime(2025, 11, 27, 23, 59),
+                holiday_name="Thanksgiving",
+                holiday_country="US",
+                is_active=True,
+            ))
+            db.commit()
+
+        with self.Session() as db, patch.object(
+            self.scheduler,
+            "_get_next_holiday_date",
+            return_value=datetime.date(2026, 11, 26),
+        ) as holiday_lookup:
+            self.scheduler._refresh_linked_holiday_dates_if_needed(
+                db, datetime.datetime(2026, 1, 2, 8, 0)
+            )
+            self.assertEqual(holiday_lookup.call_count, 1)
+            # Same day, so the holiday source is not consulted again.
+            self.scheduler._refresh_linked_holiday_dates_if_needed(
+                db, datetime.datetime(2026, 1, 2, 19, 30)
+            )
+            self.assertEqual(holiday_lookup.call_count, 1)
+            # Next day, so it is.
+            self.scheduler._refresh_linked_holiday_dates_if_needed(
+                db, datetime.datetime(2026, 1, 3, 8, 0)
+            )
+            self.assertEqual(holiday_lookup.call_count, 2)
 
     def test_same_category_fallback_reapplies_and_clears_stale_schedule_pointer(self):
         with self.Session() as db:
