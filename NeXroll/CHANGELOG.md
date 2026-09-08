@@ -2,14 +2,12 @@
 
 ## [2.2.0-beta.8] - 09-08-2026 (beta)
 
-> A preroll change that was waiting for playback to end no longer reports itself as a
-> failure. Endpoints for the NeX-Up generators, so a dynamic preroll or a Coming Soon
-> list can be rendered without opening the interface. Two External API endpoints that
-> raised 500 on every call are fixed. The Library's quick filters now show what clicking
-> them will actually return, and Community Browse says when its filters are loading or
-> why they cannot load at all. The header no longer breaks apart on a folded phone, and
-> NeXroll now ships a real app icon at every size a launcher, browser tab or home screen
-> asks for.
+> Endpoints for the NeX-Up generators, so a dynamic preroll or a Coming Soon list can be
+> rendered without opening the interface. Two External API endpoints that raised 500 on
+> every call are fixed. The Library's quick filters now show what clicking them will
+> actually return, and Community Browse says when its filters are loading or why they
+> cannot load at all. The header no longer breaks apart on a folded phone, and NeXroll
+> now ships a real app icon at every size a launcher, browser tab or home screen asks for.
 
 ### Added
 
@@ -28,7 +26,6 @@
 - **"All" did not mean all.** The search box feeds the same filter state the chips do, but All neither cleared it nor accounted for it, so a search with no matches left "All" highlighted over an empty grid with nothing to say why.
 - **Community Browse showed no filters until you interacted with the page.** They were loaded as a side effect of the Fair Use check, which runs at most once per page load and only if that check is still pending when Community is first opened; anything that made it miss left the card absent for the session. They now load whenever the page is open, and the card says whether it is loading, or why it cannot load — a community index past its refresh age cannot be read, which previously removed the card silently.
 - **The Matched quick filter did not reset the others**, so its count described the whole library while the grid showed the intersection. It now behaves like every other chip in the row and carries a count.
-- **A preroll change that was waiting said it had failed.** Plex resolves the next preroll from `CinemaTrailersPrerollID` as playback advances rather than reading it once, so writing that preference mid-playback makes Plex reach for an entry that is no longer there and hang. The scheduler deliberately waits for playback to finish before writing, but every apply site reported that wait as "Failed to apply" — one evening's viewing produced 246 warnings about a guard doing its job, while a blend genuinely did not reach Plex for one hour and forty-nine minutes and the only explanation on offer said it had failed. A deferral now reads as a wait, and a real failure keeps the message and level it had. The wait was also invisible to the interface, which reads applied state and saw nothing change: the dashboard alternated between "Blending" and "Nothing applied" for most of those two hours. The scheduler now reports what a write is waiting on and for how long, and the Current and next schedule tile says so.
 - **The header came apart on a folded phone.** On a cover screen around 320 to 344 pixels wide, the account controls grew taller than the fixed header and the avatar wrapped onto a line below it, overlapping the page. The header now grows to fit on narrow screens, its controls meet the 44 pixel minimum touch target, and below 480 pixels the health badge moves to its own row with its text intact rather than being reduced to a coloured dot. Library and NeX-Up summary tiles drop to two columns on narrow screens instead of forcing the page wider than the screen.
 - **"1 prerolls".**
 
