@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "a1b2c3d4-e5f6-7890-abcd-ae0c01100001",
+    "name": "NeXroll Intros",
+    "description": "Injects preroll intros from a NeXroll server before movies and episodes.",
+    "overview": "NeXroll prerolls for Jellyfin 10.11",
+    "owner": "JFLXCLOUD",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.14.0.0",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/JFLXCLOUD/NeXroll/releases/download/v2.0.5/NeXroll.Jellyfin-1.14.0.0-repository.zip",
+        "checksum": "8ba8a378055652813cf83a16633d2844",
+        "timestamp": "2026-07-28T18:17:58Z",
+        "changelog": "NeXroll Intros 1.14.0.0. Repository package enables automatic plugin updates."
+      }
+    ]
+  }
+]

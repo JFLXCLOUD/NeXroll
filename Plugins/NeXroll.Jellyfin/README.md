@@ -10,14 +10,17 @@ A Jellyfin plugin that injects preroll intros from your **NeXroll** server befor
 
 ## Requirements
 
-- **Jellyfin 10.10+** (uses the `IIntroProvider` API)
+- **Jellyfin 10.11.x** (plugin 1.14.0.0, .NET 9). For Jellyfin 12, use the
+  [separate Jellyfin 12 build](../NeXroll.Jellyfin12/README.md).
 - **NeXroll v1.11.12+** (with the `/plugin/intros` endpoint)
-- **.NET 8 SDK** (only to build; not needed to run)
+- **.NET 9 SDK** (only to build; not needed to run)
 - Both servers must be able to access the same preroll video files (via shared storage, NFS mount, Docker volume, etc.)
 
 ## Installation
 
 ### Option 1: Pre-built DLL (Recommended)
+
+For catalog installation and automatic updates, use the [Jellyfin plugin repository](../jellyfin/README.md) matching your server version. The steps below are the manual alternative.
 
 1. Download the latest [`NeXroll.Jellyfin.dll`](https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll) from the repository.
 2. Create a folder in your Jellyfin plugins directory:
@@ -29,7 +32,7 @@ A Jellyfin plugin that injects preroll intros from your **NeXroll** server befor
 
 ### Option 2: Build from Source
 
-1. Install the [.NET 8 SDK](https://dot.net/download).
+1. Install the [.NET 9 SDK](https://dot.net/download).
 2. Run `build.bat` (Windows) or:
    ```bash
    dotnet publish -c Release -o ./publish

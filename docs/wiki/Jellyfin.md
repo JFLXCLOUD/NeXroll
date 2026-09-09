@@ -13,9 +13,9 @@ Unlike Plex (which uses a simple preroll path string), Jellyfin requires a plugi
 
 ## Requirements
 
-- **Jellyfin 10.11+** (uses the `IIntroProvider` API)
+- **Jellyfin 10.11.x or 12.x**, with the matching plugin build (1.14.0.0 for 10.11; 1.15.0.0 for 12)
 - **NeXroll v1.12.0+** — use **plugin v1.14.0+** for Docker/Unraid; it fixes preroll caching when Jellyfin can't read the files directly
-- **.NET 9 SDK** (only needed if building from source)
+- **.NET 9 SDK for Jellyfin 10.11, or .NET 10 SDK for Jellyfin 12** (only needed if building from source)
 - Network access between NeXroll and Jellyfin (default port: 9393)
 
 ## Step 1: Connect NeXroll to Jellyfin
@@ -33,7 +33,18 @@ Once connected, NeXroll can communicate with your Jellyfin server and auto-detec
 
 ## Step 2: Install the NeXroll Intros Plugin
 
-### Option 1: Automatic (via NeXroll UI)
+### Recommended: Jellyfin plugin catalog
+
+Add the matching repository in **Jellyfin Dashboard > Plugins > Repositories**, then install **NeXroll Intros** from **Catalog** and restart Jellyfin.
+
+- Jellyfin 12: `https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/Plugins/jellyfin/manifest.json`
+- Jellyfin 10.11: `https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/Plugins/jellyfin/manifest-10.11.json`
+
+Future versions use Jellyfin's **Update Plugins** task. Existing manual installs need a one-time migration to enable updates; see the [repository instructions](../../Plugins/jellyfin/README.md). Use only the feed matching your server version.
+
+The API permission warning on Jellyfin 12 in older NeXroll versions requires the separate application connector fix prepared for **2.2.0-beta.9**; installing the plugin alone does not update NeXroll.
+
+### Detect and configure an installed plugin (via NeXroll UI)
 
 If NeXroll is already connected to Jellyfin, it can detect and configure the plugin automatically:
 
@@ -67,7 +78,7 @@ If NeXroll is already connected to Jellyfin, it can detect and configure the plu
    cd Plugins/NeXroll.Jellyfin
    dotnet publish -c Release -o ./publish
    ```
-3. Copy the contents of `publish/` to `<Jellyfin Data>/plugins/NeXroll Intros/`
+3. Run `./package.ps1` and extract only the resulting ZIP's three files into the plugin directory. Do not copy server dependency DLLs from `publish/`. For Jellyfin 12, build from `Plugins/NeXroll.Jellyfin12` using .NET 10; see its [build instructions](../../Plugins/NeXroll.Jellyfin12/README.md).
 4. Restart Jellyfin
 
 ## Step 3: Configure the Plugin

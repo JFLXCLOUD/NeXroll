@@ -1,7 +1,7 @@
-name: Build and Attach Jellyfin Plugin
+name: Build and Attach Jellyfin Plugins
 
-# Builds the NeXroll Intros Jellyfin plugin and attaches the install zip
-# (NeXroll.Jellyfin-<version>.zip = DLL + meta.json + thumb.png) to the matching
+# Builds separate NeXroll Intros packages for Jellyfin 10.11 and Jellyfin 12.
+# Each install zip (DLL + meta.json + thumb.png) is attached to the matching
 # GitHub release, so users always have a ready download for the current plugin
 # instead of building it themselves.
 #
@@ -23,6 +23,13 @@ on:
 jobs:
   build-plugin:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - directory: NeXroll.Jellyfin
+            sdk: '9.0.x'
+          - directory: NeXroll.Jellyfin12
+            sdk: '10.0.x'
     permissions:
       contents: write   # required to upload release assets
     steps:
@@ -32,12 +39,24 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: ${{ matrix.sdk }}
 
       - name: Build + package plugin
         shell: pwsh
-        working-directory: Plugins/NeXroll.Jellyfin
+        working-directory: Plugins/${{ matrix.directory }}
         run: ./package.ps1
+
+      - name: Resolve package filename
+        id: package
+        shell: pwsh
+        env:
+          PLUGIN_DIRECTORY: ${{ matrix.directory }}
+        run: |
+          $root = "Plugins/$env:PLUGIN_DIRECTORY"
+          $version = (Get-Content "$root/meta.json" -Raw | ConvertFrom-Json).version
+          $zip = "$root/$env:PLUGIN_DIRECTORY-$version.zip"
+          if (-not (Test-Path -LiteralPath $zip)) { throw "Missing package: $zip" }
+          "zip=$zip" >> $env:GITHUB_OUTPUT
 
       - name: Resolve release tag
         id: tag
@@ -45,21 +64,59 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ]; then
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
           fi
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
 
       - name: Attach plugin zip to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLUGIN_ZIP: ${{ steps.package.outputs.zip }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          zip=$(ls Plugins/NeXroll.Jellyfin/NeXroll.Jellyfin-*.zip | head -1)
-          if [ -z "$zip" ]; then echo "No plugin zip found"; exit 1; fi
-          tag="${{ steps.tag.outputs.tag }}"
+          zip="$PLUGIN_ZIP"
+          tag="$RELEASE_TAG"
           for i in 1 2 3 4 5 6; do
             if gh release view "$tag" >/dev/null 2>&1; then
-              gh release upload "$tag" "$zip" --clobber
+              if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$(basename "$zip")"; then
+                echo "Preserving existing release asset $zip"; exit 0
+              fi
+              gh release upload "$tag" "$zip"
               echo "Uploaded $zip to $tag"; exit 0
             fi
             echo "Release $tag not published yet, waiting 10s ($i/6)…"; sleep 10
           done
           echo "Release $tag never appeared — create the GitHub release for this tag, then re-run."; exit 1
+
+  publish-repository:
+    needs: build-plugin
+    runs-on: ubuntu-latest
+    concurrency:
+      group: jellyfin-plugin-catalog
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Publish verified catalog packages and manifests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          python -m unittest discover -s Plugins/jellyfin -p test_repository.py
+          python Plugins/jellyfin/update_repository.py --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG"
+      - name: Commit catalog updates
+        run: |
+          git add Plugins/jellyfin/manifest*.json
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "Update Jellyfin plugin catalogs"
+          git pull --rebase origin main
+          git push origin HEAD:main

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>NeXroll.Jellyfin</RootNamespace>
+    <AssemblyName>NeXroll.Jellyfin</AssemblyName>
+    <Version>1.15.0.0</Version>
+    <AssemblyVersion>1.15.0.0</AssemblyVersion>
+    <FileVersion>1.15.0.0</FileVersion>
+    <Title>NeXroll Intros</Title>
+    <Description>NeXroll preroll intros for Jellyfin 12.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DefineConstants>$(DefineConstants);JELLYFIN12</DefineConstants>
+  </PropertyGroup>
+  <!-- Keep host references at the first supported 12.x release. Never ship
+       Jellyfin's own assemblies in the install package. -->
+  <ItemGroup>
+    <PackageReference Include="Jellyfin.Controller" Version="[12.0.0]" />
+    <PackageReference Include="Jellyfin.Data" Version="[12.0.0]" />
+    <PackageReference Include="Jellyfin.Model" Version="[12.0.0]" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+  </ItemGroup>
+  <!-- Share behavior and settings with the 10.11 plugin without changing its
+       target framework, assembly version, or output directory. -->
+  <ItemGroup>
+    <Compile Include="../NeXroll.Jellyfin/*.cs" Link="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../NeXroll.Jellyfin/Configuration/configPage.html"
+                      LogicalName="NeXroll.Jellyfin.Configuration.configPage.html" />
+    <None Include="meta.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../NeXroll.Jellyfin/thumb.png" Link="thumb.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
