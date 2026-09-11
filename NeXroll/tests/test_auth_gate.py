@@ -17,6 +17,11 @@ class AuthGateExemptionTests(unittest.TestCase):
         self.assertFalse(is_auth_gate_exempt("GET", "/icons-private"))
 
     def test_login_logo_variants_are_public(self):
+        public = Path(__file__).resolve().parents[1] / "frontend" / "public"
+        for name in ("nexroll-logo-black.png", "nexroll-logo-white.png"):
+            with self.subTest(logo=name):
+                self.assertTrue((public / "icons" / name).is_file())
+                self.assertTrue(is_auth_gate_exempt("GET", "/icons/" + name))
         self.assertTrue(is_auth_gate_exempt("GET", "/NeXroll_Logo_BLK.png"))
         self.assertTrue(is_auth_gate_exempt("GET", "/NeXroll_Logo_WHT.png"))
 

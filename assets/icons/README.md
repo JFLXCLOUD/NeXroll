@@ -16,6 +16,12 @@ The reusable icon is the glyph, with no wordmark. Exported files live in
 
 Black, white, and opaque PNGs are available at 16, 24, 32, 48, 64, 128,
 192, 256, 512, and 1024 pixels. The wide logos remain suitable for headers.
+The UI uses `nexroll-logo-black.png` and `nexroll-logo-white.png` from the same
+public directory for the sidebar, sign-in screen, and onboarding. Their sources
+are `assets/nexroll-logo-black.png` and `assets/nexroll-logo-white.png`; the original
+wordmark pixels are preserved and only the adjacent icon has changed. These wide
+logos are not launcher icons. `nexroll-master-white.png` is also available here
+as a transparent white version of the square master.
 The Unraid template uses the opaque 512-pixel icon; its GitHub URL will
 resolve after these files are published to the main branch.
 

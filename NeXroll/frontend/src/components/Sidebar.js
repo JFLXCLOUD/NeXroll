@@ -293,7 +293,7 @@ function Sidebar({
             title="NeXroll on GitHub"
           >
             <img
-              src={darkMode ? '/NeXroll_Logo_WHT.png' : '/NeXroll_Logo_BLK.png'}
+              src={darkMode ? '/icons/nexroll-logo-white.png' : '/icons/nexroll-logo-black.png'}
               alt="NeXroll"
               className="nx-sidebar-logo"
             />

@@ -522,7 +522,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       <div style={card}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
-          <img src={darkMode ? '/NeXroll_Logo_WHT.png' : '/NeXroll_Logo_BLK.png'} alt="NeXroll" style={{ height: '46px' }} />
+          <img src={darkMode ? '/icons/nexroll-logo-white.png' : '/icons/nexroll-logo-black.png'} alt="NeXroll" style={{ height: '46px' }} />
         </div>
 
         {/* ---- Welcome ---- */}

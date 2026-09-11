@@ -5,6 +5,7 @@ import urllib.parse
 import ipaddress
 from typing import Optional
 from backend import secure_store
+from backend.jellyfin_auth import jellyfin_auth_headers
 
 def _is_dir_writable(p: str) -> bool:
     try:
@@ -102,10 +103,7 @@ class JellyfinConnector:
             self.load_stable_key()
 
         if self.api_key:
-            self.headers = {
-                "X-Emby-Token": self.api_key,
-                "X-MediaBrowser-Token": self.api_key,
-            }
+            self.headers = jellyfin_auth_headers(self.api_key)
 
     def _find_config_file(self) -> str:
         """
@@ -146,10 +144,7 @@ class JellyfinConnector:
 
             if key:
                 self.api_key = key
-                self.headers = {
-                    "X-Emby-Token": self.api_key,
-                    "X-MediaBrowser-Token": self.api_key,
-                }
+                self.headers = jellyfin_auth_headers(self.api_key)
                 print("Loaded Jellyfin API key from secure store")
                 return True
 
@@ -174,10 +169,7 @@ class JellyfinConnector:
                         except Exception:
                             pass
                         self.api_key = legacy
-                        self.headers = {
-                            "X-Emby-Token": self.api_key,
-                            "X-MediaBrowser-Token": self.api_key,
-                        }
+                        self.headers = jellyfin_auth_headers(self.api_key)
                         print(f"Migrated Jellyfin API key from {self.config_file} to secure store")
                         return True
                 else:
@@ -215,10 +207,7 @@ class JellyfinConnector:
                 pass
 
             self.api_key = api_key
-            self.headers = {
-                "X-Emby-Token": self.api_key,
-                "X-MediaBrowser-Token": self.api_key,
-            }
+            self.headers = jellyfin_auth_headers(self.api_key)
             print("Stable Jellyfin API key saved to secure store")
             return True
         except Exception as e:

@@ -1,96 +1,125 @@
-
 <div align="center">
-  <img src="NeXroll/frontend/NeXroll_Logo_WHT.png#gh-dark-mode-only" alt="NeXroll Logo" width="500"/>
-  <img src="NeXroll/frontend/NeXroll_Logo_BLK.png#gh-light-mode-only" alt="NeXroll Logo" width="500"/>
-  <br>
- <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://badgen.net/github/release/JFLXCLOUD/NeXroll/stable?label=stable&color=yellow" alt="Stable Release"/></a>
-  <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/downloads/JFLXCLOUD/NeXroll/total?include_prereleases&color=DE7716" alt="Downloads"/></a>
-  <a href="https://github.com/JFLXCLOUD/NeXroll/stargazers"><img src="https://badgen.net/github/stars/JFLXCLOUD/NeXroll?color=yellow" alt="GitHub Stars"/></a>
-  <a href="https://github.com/JFLXCLOUD/NeXroll/blob/main/LICENSE"><img src="https://badgen.net/github/license/JFLXCLOUD/NeXroll" alt="License"/></a>
-  <br>
-  <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/jbrns/nexroll" alt="Docker Pulls"/></a>
-  <a href="https://discord.gg/R9eH7TbxEk"><img src="https://img.shields.io/discord/1439077075117150313?logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord"/></a>
-
+  <img src="assets/nexroll-logo-white.png#gh-dark-mode-only" alt="NeXroll" width="380" />
+  <img src="assets/nexroll-logo-black.png#gh-light-mode-only" alt="NeXroll" width="380" />
+  <p>Make the start of the movie part of the experience.</p>
+  <p>
+    <a href="https://github.com/JFLXCLOUD/NeXroll/releases">Downloads</a> ·
+    <a href="docs/wiki/Getting-Started.md">Getting started</a> ·
+    <a href="docs/wiki/Home.md">Documentation</a> ·
+    <a href="https://discord.gg/R9eH7TbxEk">Discord</a> ·
+    <a href="https://ko-fi.com/j_b__">Support on Ko-fi</a>
+  </p>
 </div>
 
----
+> **2.2.0 beta.** This README describes the upcoming 2.2.0 release. [Try 2.2.0-beta.9](https://github.com/JFLXCLOUD/NeXroll/releases/tag/v2.2.0-beta.9), or use the [latest stable release](https://github.com/JFLXCLOUD/NeXroll/releases/latest).
 
-NeXroll turns your home theater into a night at the cinema. It's a preroll manager for Plex, Jellyfin, and Emby that plays the cinematic intros before a movie, with holiday and seasonal scheduling, automatic trailers for upcoming releases, and a built-in community intro library. Install it on Windows or run it in Docker, self-contained and ready to go in a few minutes.
+NeXroll manages prerolls for **Plex, Jellyfin, and Emby**. Organize your intro videos, build a sequence for movie night, and schedule something different for a holiday or a season. NeX-Up adds trailers from your Radarr and Sonarr libraries, plus tools for creating your own welcome screens, announcements, and Coming Soon videos.
 
----
+Run it on Windows, in Docker, or on Unraid. Manage everything from your browser.
 
-## Screenshots
+![The NeXroll dashboard showing the current selection, upcoming schedules, and library activity](docs/screenshots/v2.2.0/dashboard.png)
 
-### Dashboard
-![Dashboard](docs/screenshots/N_Dashboard.png)
+*Screenshots show the 2.2.0 beta interface with example data and demonstration artwork.*
 
-### Preroll Management
-![Prerolls](docs/screenshots/prerolls.png)
+## What's new in 2.2.0
 
-### Schedule Management
-![Schedule](docs/screenshots/schedule.png)
+- **A clearer view of your setup.** See what's playing, what comes next, and what needs attention. Library filters, schedule controls, and connection pages follow a consistent layout, with navigation that adapts to smaller screens.
+- **Eight themes across the whole app.** Choose Midnight, Daylight, Cinema, Nocturne, Parchment, Terminal, Neon, or Carbon.
+- **NeX-Up Generator Studio.** Create a preroll with a live preview, then adjust the template, text, typeface, colors, timing, and soundtrack. Add your own logo or video backdrop, write a custom message, or include a QR code.
+- **More useful calendar views.** Browse schedules by month, week, or day. See filler coverage, open a day for details, and review overlapping schedules and their priorities.
+- **Community browsing improvements.** Filter by category, creator, or platform, and select several prerolls to download together.
+- **Generator API access.** Start a dynamic preroll or Coming Soon render from another tool and check its progress through the External API.
+- **Jellyfin 12 support.** A separate plugin build supports Jellyfin 12, alongside the existing Jellyfin 10.11 build. The connector also uses the authentication header required by Jellyfin 12.
 
-### Calendar Year View
-![Calendar Year View](docs/screenshots/N_Calendar_Year.png)
+See the [changelog](NeXroll/CHANGELOG.md) for the full set of changes and fixes.
 
-### NeX-Up - Radarr & Sonarr Integration
-![NeX-Up Connections](docs/screenshots/Nex-Up_Connections.png)
+## Build your preshow
 
-### Community Prerolls
-![Community Prerolls](docs/screenshots/community_prerolls.png)
+### Keep your collection organized
 
----
+Upload or import prerolls, preview them, and organize them with categories and tags. A video can belong to more than one category. Filters help you find the videos you want without mixing your permanent collection with automatically managed trailers and generator output.
 
-## Main Features
+<details>
+<summary>View the preroll library</summary>
 
-- **Modern v2 Interface** — Collapsible "Arr-style" sidebar with built-in search and per-section colors, a redesigned dashboard with quick-action tiles, a first-run onboarding wizard, and deep-linkable pages (refresh-safe URLs)
-- **NeX-Up** — Automatically download trailers for upcoming movies and TV shows from Radarr & Sonarr, with **cookie-free YouTube downloads** (a built-in PO-token provider clears the "not a bot" wall) in a Plex-friendly H.264 format, a dynamic intro generator with multi-language support (EN/FR/ES/DE), a Coming Soon List generator, and sequence builder presets
-- **Preroll Management** — Upload videos, auto-generate thumbnails, organize with tags and multi-category assignments
-- **Smart Scheduling** — Daily, weekly, monthly, yearly schedules with recurrence patterns, fallback categories, and visual calendar views
-- **Sequence Builder** — Create ordered preroll sequences with random blocks and fixed selections
-- **Schedule Blend Mode** — Automatically blend prerolls from overlapping schedules (e.g., Christmas + New Year's)
-- **Priority & Exclusive Mode** — Control which schedule wins with priority levels (1-10) and exclusive override
-- **Holiday Browser** — Search holidays from 100+ countries and create schedules with one click
-- **Holiday Presets** — 32+ built-in holidays with one-click category and schedule creation
-- **Community Prerolls** — Search and **browse** 1,700+ community prerolls (by category, platform, creator, upload date) with pagination, and download in one click
-- **Media Server Integration** — Connect to Plex, Jellyfin, or Emby with status monitoring and quick apply actions; download and remotely configure the Jellyfin/Emby plugin from the Connect page
-- **Backup & Restore** — Full database and file backups with one-click restore and live progress
-- **Factory Reset & Redaction** — Reset to a fresh-install state from the UI, and automatic redaction of API keys/IPs in exported logs
-- **Windows Native** — One-click installer with optional Windows Service and System Tray app
+![Preroll library with category filters, thumbnails, and video details](docs/screenshots/v2.2.0/library.png)
 
-## Download and Install
+</details>
 
-1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:
-   https://github.com/JFLXCLOUD/NeXroll/releases
-2. Run `NeXroll_Installer.exe` (administrator recommended).
-3. Choose:
-   - Install location (default: `C:\Program Files\NeXroll`)
-   - Preroll storage directory (can be on any drive)
-4. Optional components you may select:
-   - Install as Windows Service (`NeXrollService`)
-   - Plex Stable Token setup (runs `setup_plex_token.exe`)
-   - Start with Windows (adds the tray app to Startup)
-   - Install FFmpeg via winget (for thumbnail generation)
-   - Windows Firewall rule (Allow inbound TCP 9393 for local web UI)
-5. Finish the installer and open the app from the Start Menu or tray menu.
+### Set the schedule once
 
-After install, visit http://localhost:9393 to use the web UI.
+Create recurring schedules or use a date range for a one-off event. Choose a category or a saved sequence, set its priority, and decide how it behaves when schedules overlap. Filler provides a selection for the gaps between schedules.
 
+<details>
+<summary>View schedules and the calendar</summary>
 
----
+![Schedule management with named schedules, timing, and playback rules](docs/screenshots/v2.2.0/schedules.png)
 
-## Docker
+![Calendar showing seasonal selections, individual events, and filler coverage](docs/screenshots/v2.2.0/calendar.png)
 
-NeXroll is available as an official Docker image supporting AMD64 and ARM64.
+</details>
 
-```bash
-docker pull jbrns/nexroll:latest
-```
+### Put the sequence together
 
-### docker-compose (Recommended)
+Combine fixed videos, random selections from categories, and pauses in a saved sequence. Use the same sequence in more than one schedule. Random selections cycle through eligible videos before repeating.
+
+### Bring upcoming releases into the mix
+
+Connect Radarr and Sonarr to NeX-Up to find and download trailers for upcoming movies and TV releases. Choose how many to include, manage the downloaded files, and set when old trailers should be removed.
+
+Use Generator Studio to create a welcome video, an announcement, a QR code screen, or a Coming Soon list with your own presentation style.
+
+<details>
+<summary>View Generator Studio</summary>
+
+![NeX-Up Generator Studio with a live preroll preview and presentation controls](docs/screenshots/v2.2.0/generator.png)
+
+</details>
+
+YouTube can restrict downloads through rate limits, IP blocks, or authentication checks. NeX-Up includes download diagnostics and PO-token support, but it cannot guarantee access to every trailer or remove a YouTube block.
+
+### Find something from the community
+
+Search and browse Community Prerolls by theme, category, creator, or platform. Preview a selection, choose a category, and add it to your library.
+
+Community Prerolls is powered by [TypicalNerds](https://typicalnerds.uk/). A big thank you to TypicalNerds for making the collection available, and to the creators who contribute their prerolls for everyone to enjoy.
+
+<details>
+<summary>View Community Prerolls</summary>
+
+![Community browsing with filters and a list of example prerolls](docs/screenshots/v2.2.0/community.png)
+
+The titles and collection names in this screenshot are demonstration content.
+
+</details>
+
+## Choose your media server
+
+| Server | How NeXroll connects |
+| --- | --- |
+| **Plex** | Updates the server's preroll selection from your active schedule or filler settings. Plex needs access to the video files through paths it can read. |
+| **Jellyfin** | The NeXroll Intros plugin requests the current selection when Jellyfin asks for intros. Install the plugin build that matches your Jellyfin server version. |
+| **Emby** | The NeXroll Intros plugin requests intros from NeXroll. Configure it for the movies or episodes you want to include. |
+
+Plex's preroll setting is shared across the server. Playback-triggered changes are best effort, and a change may wait while a movie is playing. Jellyfin and Emby use their plugin intro flow; playback behavior also depends on the client.
+
+Setup guides: [Plex and connections](docs/wiki/Connect.md), [Jellyfin](docs/wiki/Jellyfin.md), [Jellyfin 12 plugin](Plugins/NeXroll.Jellyfin12/README.md), [Emby](docs/wiki/Emby.md).
+
+## Install NeXroll
+
+### Windows
+
+1. Download the Windows installer from [GitHub Releases](https://github.com/JFLXCLOUD/NeXroll/releases).
+2. Run the installer and choose where to keep your prerolls. You can also install the Windows service and tray app.
+3. Open `http://localhost:9393` and follow the setup wizard.
+
+Windows 10 or 11, 64-bit, is supported. You do not need to install Python. FFmpeg is used for thumbnails and video generation; see the [installation guide](docs/wiki/Installation.md) for setup options.
+
+### Docker
+
+Create a `compose.yaml` file:
 
 ```yaml
-version: "3.8"
 services:
   nexroll:
     image: jbrns/nexroll:latest
@@ -98,262 +127,75 @@ services:
     ports:
       - "9393:9393"
     environment:
-      - NEXROLL_PORT=9393
-      - NEXROLL_DB_DIR=/data
-      - NEXROLL_PREROLL_PATH=/data/prerolls
-      - NEXROLL_SECRETS_DIR=/data
-      - TZ=America/New_York
+      TZ: America/New_York
+      NEXROLL_DB_DIR: /data
+      NEXROLL_SECRETS_DIR: /data
+      NEXROLL_PREROLL_PATH: /data/prerolls
     volumes:
       - ./nexroll-data:/data
-      - /path/to/your/prerolls:/data/prerolls
+      - /path/to/prerolls:/data/prerolls
+      - /path/to/trailers:/data/nexup_trailers
     restart: unless-stopped
 ```
 
+Replace the host paths and timezone with your own, then run:
+
 ```bash
-mkdir -p ./nexroll-data
 docker compose up -d
-# Access at http://YOUR_HOST:9393
 ```
 
-### With NeX-Up Trailer Storage
+Open `http://YOUR_SERVER:9393`. If you use the separate trailer folder above, set NeX-Up's storage path to `/data/nexup_trailers`.
 
-Add a separate volume so Plex/Jellyfin/Emby can access downloaded trailers:
+The Docker image supports AMD64 and ARM64. The `latest` tag follows stable releases; `beta` follows prereleases. See the [Docker guide](docs/wiki/Docker.md) for permissions and additional configuration.
 
-```yaml
-    volumes:
-      - ./nexroll-data:/data
-      - /path/to/your/prerolls:/data/prerolls
-      - /path/to/trailers:/data/nexup_trailers
-```
+### Unraid
 
-Then set **NeX-Up → Settings → Storage Path** to `/data/nexup_trailers`.
+Find **NeXroll** in Community Applications. Set the app-data, preroll, and optional trailer paths, check your timezone, then open the WebUI and complete setup.
 
-### Key Environment Variables
+### Check your file paths
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NEXROLL_PORT` | Web UI port | `9393` |
-| `NEXROLL_DB_DIR` | Database & config directory | `/data` |
-| `NEXROLL_PREROLL_PATH` | Preroll storage directory | `/data/prerolls` |
-| `NEXROLL_SECRETS_DIR` | Secrets storage directory | `/data` |
-| `TZ` | Timezone — **required for correct scheduling** | `UTC` |
-| `PUID` / `PGID` | File permission user/group IDs | `99` / `100` |
+A successful connection does not mean the media server can read your videos. For Plex, map NeXroll's paths to the paths visible inside Plex's own container or service. For example, `/data/prerolls` in NeXroll might be `/media/prerolls` in Plex.
 
-### Path Mappings
+Jellyfin and Emby plugins can use mapped local paths or download intros through NeXroll's streaming URL. Make sure the plugin can reach NeXroll and has access to its cache location.
 
-Because NeXroll runs inside a container, paths it sees differ from what your media server sees. Configure **Settings → Path Mappings** to translate container paths to media server paths.
+Read the [path-mapping guide](docs/wiki/Path-Mappings.md) if the connection works but prerolls do not play.
 
-| Scenario | NeXroll Path | Media Server Path |
-|----------|--------------|-------------------|
-| Docker → Linux Plex | `/data/prerolls` | `/media/prerolls` |
-| Docker → Windows Plex | `/data/prerolls` | `Z:\Prerolls` |
-| Unraid → Unraid Plex | `/data/prerolls` | `/mnt/user/media/prerolls` |
+## Start with one movie night
 
-### Updating
+1. Connect your media server in **Connect**.
+2. Add a few videos to **Library** and put them in a category.
+3. Create a schedule, or use the category as your filler selection.
+4. Start a movie from the beginning on your usual playback client and check the full preroll-to-movie flow.
+5. Add sequences, seasonal schedules, or NeX-Up when you're ready.
+
+## Updating and backups
+
+Create a backup in **Settings > Backup & Restore** before updating.
+
+On Windows, run the newer installer over your existing installation. For Docker:
 
 ```bash
-docker pull jbrns/nexroll:latest
-docker compose up -d --force-recreate
+docker compose pull
+docker compose up -d
 ```
 
-For full Docker documentation including full-stack examples, Linux host networking, and detailed troubleshooting see the [Docker wiki page](docs/wiki/Docker.md).
+Keep your existing data volumes and media folders. See [backup and restore](docs/wiki/Backup-and-Restore.md) for moving an installation or restoring a backup.
 
----
+## Help and documentation
 
-## Unraid
+- [Getting started](docs/wiki/Getting-Started.md)
+- [Scheduling](docs/wiki/Scheduling.md) and [sequences](docs/wiki/Sequences.md)
+- [NeX-Up](docs/wiki/NeX-Up.md)
+- [External API](docs/wiki/API.md)
+- [Troubleshooting](docs/wiki/Troubleshooting.md)
+- [Building from source](docs/wiki/Building-from-Source.md)
 
-NeXroll is available in **Unraid Community Applications**.
+For support, join [Discord](https://discord.gg/R9eH7TbxEk) or [r/NeXroll](https://www.reddit.com/r/NeXroll/). Report reproducible bugs through [GitHub Issues](https://github.com/JFLXCLOUD/NeXroll/issues), with your NeXroll version, installation type, media server and client versions, and relevant logs. Remove tokens and API keys before sharing.
 
-1. Open **Apps** in Unraid and search for **NeXroll**
-2. Click **Install**
-3. Configure paths:
+## Support NeXroll
 
-| Setting | Container Path | Suggested Host Path |
-|---------|---------------|---------------------|
-| WebUI Port | 9393 | 9393 |
-| Application Data | `/data` | `/mnt/user/appdata/nexroll` |
-| Preroll Storage | `/data/prerolls` | `/mnt/user/media/prerolls` |
-| Trailer Storage | `/data/nexup_trailers` | `/mnt/user/media/trailers` |
-| Time Zone | `TZ` | e.g. `America/New_York` |
-
-4. Click **Apply**, then open the WebUI at `http://YOUR_UNRAID_IP:9393`
-
-> **Important:** The Preroll Storage path must be accessible by your media server (Plex/Jellyfin/Emby). If your media server is also running on Unraid, mount the same share to both containers and set a Path Mapping in NeXroll Settings so paths translate correctly.
-
----
-
-## What 's Installed
-
-- `NeXroll.exe`   the web application (FastAPI + bundled frontend)
-- `NeXrollService.exe`   optional Windows Service wrapper
-- `NeXrollTray.exe`   system tray app with quick actions
-- `setup_plex_token.exe`   helper to obtain a stable Plex token
-
-Start Menu shortcuts are created for NeXroll, NeXroll Tray, and Uninstall NeXroll. A desktop shortcut for NeXroll is also added.
-
-
----
-
-## System Tray App
-
-The tray icon provides quick actions:
-- Open   launches http://localhost:9393 (default action)
-- Start Service   attempts to start the Windows service (if installed)
-- Stop Service   stops the Windows service (if installed)
-- Restart Service   restarts the Windows service (if installed)
-- Start App (portable)   starts the packaged app directly (non service)
-- Check for updates   checks GitHub Releases and opens the latest release if a newer version is available (dialog is foreground and closable)
-- About   shows app information (dialog is foreground and closable)
-- GitHub   opens https://github.com/JFLXCLOUD/NeXroll
-- Exit   closes the tray app
-
-If you selected Start with Windows, the tray app launches automatically at login.
-
----
-
-## Windows Service (Optional)
-
-If chosen during installation, the `NeXrollService` Windows Service is installed. You can manage it via Services.msc or the following commands (run from `C:\Program Files\NeXroll` or your chosen InstallDir):
-
-```
-NeXrollService.exe install
-NeXrollService.exe start
-NeXrollService.exe stop
-NeXrollService.exe remove
-```
-
-Logs (service mode): `%ProgramData%\NeXroll\logs\service.log`
-Logs (packaged app): `%ProgramData%\NeXroll\logs\app.log`
-Logs (tray): `%ProgramData%\NeXroll\logs\tray.log`
-Database (packaged): `%ProgramData%\NeXroll\nexroll.db`
-
-Tip: if a previous NeXroll instance is still running and occupying port 9393, the service may need a second start attempt after that instance is closed.
-
----
-
-## Requirements
-
-- Windows 10/11 x64
-- FFmpeg for thumbnail generation (you can install it from the installer's optional components, or manually)
-- Network access to your Plex, Jellyfin, or Emby server
-- No Python required on user machines
-
----
-
-## First Time Setup
-
-1. Open http://localhost:9393
-2. Connect to your media server:
-   - Connect to Plex, Jellyfin, or Emby using URL and credentials
-   - For Plex: Use your Plex URL and token; or run `setup_plex_token.exe` to create a long lived "stable token"
-3. Upload prerolls, create categories, and configure schedules.
-
----
-
-## Upgrade / Uninstall
-
-- Upgrade: simply run the newer `NeXroll_Installer.exe` over the existing installation. Your configured Preroll storage path is preserved, and data is not removed.
-- Uninstall: use "Uninstall NeXroll" from the Start Menu (or Apps & Features). The installer removes the service and shortcuts; your Preroll storage directory is not deleted.
-
----
-
-## Building From Source
-
-See the full packaging guide in `NeXroll/Docs/PACKAGING.md`.
-
-Prerequisites (build machine):
-- Python 3.10+ (build time only)
-- pip install: `pyinstaller`, `pywin32`, `pystray`, `Pillow`
-- NSIS 3.x (`makensis` on PATH)
-
-Build commands (run from the repository root):
-
-```
-py -m PyInstaller -y NeXroll\build\neXroll.spec
-py -m PyInstaller -y NeXroll\build\NeXrollService.spec
-py -m PyInstaller -y NeXroll\build\setup_plex_token.spec
-py -m PyInstaller -y NeXroll\build\NeXrollTray.spec
-
-makensis NeXroll\build\installer.nsi
-```
-
-Outputs:
-- `dist\NeXroll.exe`
-- `dist\NeXrollService.exe`
-- `dist\setup_plex_token.exe`
-- `dist\NeXrollTray.exe`
-- `NeXroll\build\NeXroll_Installer.exe`  (Release asset is published as a generic name)
-
----
-
-
-## Project Structure
-
-- Backend (FastAPI): `NeXroll/backend/`
-- Packaged runtime backend: `NeXroll/backend/`
-- Frontend (static build served by backend): `NeXroll/frontend/`
-- Windows Service wrapper: `NeXroll/scripts/windows_service.py`
-- System tray app: `NeXroll/scripts/tray_app.py`
-- PyInstaller specs:
-  - `NeXroll/build/neXroll.spec`
-  - `NeXroll/build/NeXrollService.spec`
-  - `NeXroll/build/NeXrollTray.spec`
-  - `NeXroll/build/setup_plex_token.spec`
-- NSIS installer: `NeXroll/build/installer.nsi`
-
----
-
-## Troubleshooting
-
-- "Service did not respond in time"
-  - Ensure no other process is using port 9393; stop any `NeXroll.exe` that 's running, then start the service again.
-- UI not reachable at http://localhost:9393
-  - If you selected the firewall component, verify the inbound rule "NeXroll (TCP 9393)" exists. Otherwise, allow inbound TCP 9393 or re-run the installer and select the firewall option.
-- Service logs location
-  - Check `%ProgramData%\NeXroll\logs\service.log` for service-mode startup and health probe messages.
-- Thumbnails not created
-  - Install FFmpeg (choose the installer component, or install manually); re upload a preroll.
-- Tray icon not shown
-  - Run "NeXroll Tray" from Start Menu; pin it so it's always visible.
-- Media server connection issues
-  - Verify your Plex, Jellyfin, or Emby server is reachable from the machine, and credentials are valid (retry `setup_plex_token.exe` for Plex if needed).
-
----
+If NeXroll adds something to your movie nights, you can [support its development on Ko-fi](https://ko-fi.com/j_b__). Donations help support continued development and maintenance. Thank you to everyone who contributes, shares feedback, or helps other users get set up.
 
 ## License
 
-MIT. Third party components remain under their respective licenses.
-
-
----
-
-## Support
-
-If NeXroll is helpful, consider supporting ongoing development:
-
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
-
-Join the community on Discord for support, feature requests, and discussions:
-
-[![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/R9eH7TbxEk)
-
-Join the subreddit:
-
-[![Reddit](https://img.shields.io/badge/Reddit-r%2FNeXroll-FF4500?style=for-the-badge&logo=reddit&logoColor=white)](https://www.reddit.com/r/NeXroll/)
-
----
-
-## Credits
-
-Community Prerolls powered by [Typical Nerds](https://typicalnerds.uk/) - Thank you for making thousands of prerolls available to the community!
-
----
-
-## A Note of Transparency
-
-I have immense respect for software developers and the craft of programming. I want to be upfront: I'm not a professional developer — I'm an IT manager with a passion for media server environments and home automation.
-
-NeXroll was made possible through collaboration with [Claude](https://www.anthropic.com/claude) (Anthropic's AI assistant). From architecture decisions to debugging edge cases, Claude was an invaluable partner in bringing this project to life. This transparency feels important in an era where AI-assisted development is becoming more common.
-
-If you're a developer reviewing this code, I welcome feedback, pull requests, and patience with any rough edges. The goal was always to create something useful for the Plex/Jellyfin community, and I hope NeXroll delivers on that.
-
+NeXroll is released under the [MIT License](LICENSE). Third-party components and community media retain their own licenses and usage terms.

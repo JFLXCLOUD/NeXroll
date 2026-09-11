@@ -1,7 +1,7 @@
  // NeXroll Service Worker for PWA functionality
-const CACHE_NAME = 'nexroll-v1.3.1';
-const STATIC_CACHE = 'nexroll-static-v1.3.1';
-const API_CACHE = 'nexroll-api-v1.3.1';
+const CACHE_NAME = 'nexroll-v2.2.0-beta.9';
+const STATIC_CACHE = 'nexroll-static-v2.2.0-beta.9';
+const API_CACHE = 'nexroll-api-v2.2.0-beta.9';
 
 // Resources to cache immediately on install
 const STATIC_ASSETS = [
@@ -15,8 +15,8 @@ const STATIC_ASSETS = [
  '/icons/nexroll-maskable-192.png',
  '/icons/nexroll-maskable-512.png',
  '/icons/apple-touch-icon.png',
- '/NeXroll_Logo_BLK.png',
- '/NeXroll_Logo_WHT.png'
+ '/icons/nexroll-logo-black.png',
+ '/icons/nexroll-logo-white.png'
 ];
 
 // API endpoints to cache for offline viewing

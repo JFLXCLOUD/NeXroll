@@ -36662,10 +36662,10 @@ const DashboardTiles = {
           {/* Logo/Header */}
           <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
             <img
-              src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
+              src={darkMode ? "/icons/nexroll-logo-white.png" : "/icons/nexroll-logo-black.png"}
               alt="NeXroll"
-              width="305"
-              height="60"
+              width="649"
+              height="207"
               style={{
                 display: 'block',
                 width: '100%',

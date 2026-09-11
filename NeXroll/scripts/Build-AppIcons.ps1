@@ -59,5 +59,9 @@ try {
         foreach ($frame in $frames) { $writer.Write([byte[]]$frame) }
     } finally { $writer.Dispose(); $stream.Dispose() }
 } finally { $master.Dispose() }
+Copy-Item -LiteralPath (Join-Path $destination 'nexroll.ico') -Destination (Join-Path (Split-Path $destination -Parent) 'favicon.ico') -Force
+foreach ($color in @('black', 'white')) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "assets/nexroll-logo-$color.png") -Destination (Join-Path $destination "nexroll-logo-$color.png") -Force
+}
 Compress-Archive -Path (Join-Path $destination '*') -DestinationPath (Join-Path $repoRoot 'assets/icons/nexroll-app-icons.zip') -Force
 Write-Output "Exported app icons to $destination"

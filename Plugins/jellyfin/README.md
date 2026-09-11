@@ -29,7 +29,7 @@ The original manual ZIPs contain `"autoUpdate": false`. Adding a repository alon
 
 This one-time change keeps the working plugin and its settings. Do not delete the plugin configuration or keep duplicate DLLs in different plugin directories. Reinstalling the same version from the catalog can fail on Windows because the running server locks the DLL. New catalog installations already enable automatic updates.
 
-Plugin updates do not update the NeXroll application. The Jellyfin 12 API permission warning in older NeXroll versions requires the separate connector fix prepared for NeXroll 2.2.0-beta.9.
+Plugin updates do not update the NeXroll application. The Jellyfin 12 API permission warning in older NeXroll versions requires the separate connector fix included in NeXroll 2.2.0-beta.9. This authentication fix does not address a plugin DLL that fails to load inside Jellyfin.
 
 ## Release maintenance
 

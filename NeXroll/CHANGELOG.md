@@ -1,5 +1,23 @@
 ﻿# Changelog
 
+<!-- Stable 2.2.0 release preparation: use the user-approved README-2.2.0-draft.md and refreshed screenshots. Complete docs/RELEASE_PLAN_v2.2.0.md before tagging stable; keep this pending during beta. -->
+
+## [2.2.0-beta.9] - 09-11-2026 (beta)
+
+### Added
+
+- **A separate Jellyfin 12 plugin build.** NeXroll Intros 1.15.0.0 targets Jellyfin 12 and .NET 10. The existing 1.14.0.0 package remains available for Jellyfin 10.11. The release workflow packages both variants with distinct filenames.
+- **Jellyfin plugin update repositories.** Separate catalogs for Jellyfin 12 and 10.11 support automatic plugin updates. Existing manual installs need the one-time migration described in the plugin repository guide.
+
+### Fixed
+
+- **Valid Jellyfin API keys could be reported as lacking permission on Jellyfin 12.** NeXroll sent the legacy token headers that Jellyfin 12 disables by default. The connector now uses the supported `Authorization` header when connecting, loading saved keys, migrating legacy keys, and saving replacement keys. This fixes connector authentication; Jellyfin 12 also requires the separate compatible plugin build for preroll playback.
+
+### Changed
+
+- **Updated NeXroll branding throughout the interface.** The sidebar, sign-in screen, and first-run setup now use the new icon beside the original wordmark, with matching light and dark theme logos. New asset URLs prevent old cached logos from carrying over after an update, and the fallback browser favicon now matches the app icon.
+- **A refreshed GitHub README.** Updated UI screenshots, setup guidance, TypicalNerds community credit, and Ko-fi support links introduce the upcoming 2.2.0 release.
+
 ## [2.2.0-beta.8] - 09-08-2026 (beta)
 
 > Endpoints for the NeX-Up generators, so a dynamic preroll or a Coming Soon list can be
