@@ -16276,30 +16276,44 @@ def system_health_summary(conflicts: Optional[int] = None, db: Session = Depends
     # Media server. Based on stored credentials, not a live probe: this endpoint
     # runs on every dashboard load and must not fire network calls at a server
     # that may be asleep or behind a slow link.
+    #
+    # Credentials are looked for in the secure store as well as the database,
+    # because the database column alone is not a signal. /plex/connect and
+    # /jellyfin/connect deliberately persist no plaintext key, and
+    # _migrate_legacy_api_keys() clears any an older version left behind - so a
+    # perfectly healthy Jellyfin or Emby always has an empty column, and the
+    # tile used to contradict the Connections page by reporting it disconnected.
     try:
         setting = db.query(models.Setting).first()
-        configured = []
-        if setting:
-            if getattr(setting, "plex_url", None) and getattr(setting, "plex_token", None):
-                configured.append("Plex")
-            if getattr(setting, "jellyfin_url", None) and getattr(setting, "jellyfin_api_key", None):
-                configured.append("Jellyfin")
-            if getattr(setting, "emby_url", None) and getattr(setting, "emby_api_key", None):
-                configured.append("Emby")
 
-        if len(configured) == 1:
-            checks.append(health_summary.make_check(
-                "media_server", "Media server", health_summary.OK, "", f"{configured[0]} connected"))
-        elif len(configured) > 1:
-            checks.append(health_summary.make_check(
-                "media_server", "Media server", health_summary.WARN,
-                "More than one media server is connected - disconnect the extras",
-                " and ".join(configured)))
-        else:
-            checks.append(health_summary.make_check(
-                "media_server", "Media server", health_summary.ERROR,
-                "No media server is connected, so prerolls cannot be applied",
-                "Not connected"))
+        def _has_credential(attr, secure_has) -> bool:
+            if getattr(setting, attr, None):
+                return True
+            try:
+                return bool(secure_has())
+            except Exception:
+                return False
+
+        def _plugin_registered(server_type) -> bool:
+            return any(
+                c.get("server_type", "").lower() == server_type
+                for c in PLUGIN_CLIENTS.values()
+            )
+
+        checks.append(health_summary.media_server_check([
+            ("Plex",
+             getattr(setting, "plex_url", None),
+             _has_credential("plex_token", secure_store.has_plex_token),
+             False),  # Plex is driven directly; it has no NeXroll plugin.
+            ("Jellyfin",
+             getattr(setting, "jellyfin_url", None),
+             _has_credential("jellyfin_api_key", secure_store.has_jellyfin_api_key),
+             _plugin_registered("jellyfin")),
+            ("Emby",
+             getattr(setting, "emby_url", None),
+             _has_credential("emby_api_key", secure_store.has_emby_api_key),
+             _plugin_registered("emby")),
+        ]))
     except Exception:
         checks.append(health_summary.make_check("media_server", "Media server", health_summary.UNKNOWN))
 

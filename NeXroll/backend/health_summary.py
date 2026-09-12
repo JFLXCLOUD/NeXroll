@@ -132,3 +132,42 @@ def conflicts_check(count: Optional[int]) -> dict:
         "conflicts", "Schedule conflicts", WARN,
         f"{count} schedule conflict{'s' if count != 1 else ''} need a look", count
     )
+
+
+def configured_media_servers(servers) -> list:
+    """Which of the given media servers are usably configured, in order.
+
+    `servers` is an iterable of (name, url, has_credential, has_plugin) tuples.
+    A server counts when it has both an address and a credential, or when its
+    plugin has registered itself - a plugin-only install stores no address here.
+
+    Whether a credential exists is resolved by the caller rather than read from
+    one place, because it may be held in the database or the secure store and
+    this module touches neither. Reading only the database column is what made
+    a healthy Jellyfin report as disconnected: the connect endpoints store no
+    plaintext key, and the startup migration clears any an older version left.
+    """
+    return [
+        name for name, url, has_credential, has_plugin in servers
+        if (url and has_credential) or has_plugin
+    ]
+
+
+def media_server_check(servers) -> dict:
+    """The media_server check, from the credentials found for each server.
+
+    Takes the same tuples as `configured_media_servers`.
+    """
+    configured = configured_media_servers(servers)
+    if len(configured) == 1:
+        return make_check("media_server", "Media server", OK, "",
+                          f"{configured[0]} connected")
+    if len(configured) > 1:
+        return make_check(
+            "media_server", "Media server", WARN,
+            "More than one media server is connected - disconnect the extras",
+            " and ".join(configured))
+    return make_check(
+        "media_server", "Media server", ERROR,
+        "No media server is connected, so prerolls cannot be applied",
+        "Not connected")

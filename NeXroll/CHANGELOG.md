@@ -2,6 +2,16 @@
 
 <!-- Stable 2.2.0 release preparation: use the user-approved README-2.2.0-draft.md and refreshed screenshots. Complete docs/RELEASE_PLAN_v2.2.0.md before tagging stable; keep this pending during beta. -->
 
+## [Unreleased]
+
+> The dashboard told Jellyfin and Emby users their server was not connected while
+> the Connections page, the Servers tile and the scheduler all agreed it was.
+
+### Fixed
+
+- **The dashboard reported "No media server is connected" on a perfectly healthy Jellyfin or Emby.** The System health tile decided whether a server was connected by reading the API key column on the settings row, but nothing puts a key there: `/jellyfin/connect` and `/emby/connect` persist only the address and hand the key to the secure store, and `_migrate_legacy_api_keys()` clears the column on every startup for any older install that still had one. The check could therefore never pass. It cost 30 of the 100 health points, so an otherwise flawless install opened on a score of 70, a red banner saying prerolls could not be applied, and a Servers tile beside it naming the server, address and version it was connected to. Plex was affected too wherever the connection was made through `/plex/connect`, which nulls the token column by the same design. Connection state is now resolved from the secure store as well as the database, and a registered plugin counts on its own, so a plugin-only Emby with no stored address reads as connected rather than missing. Nothing was ever actually wrong with the affected servers: the scheduler reads its credentials from elsewhere and had been applying schedules to them throughout.
+- **"1 item need attention".**
+
 ## [2.2.0-beta.9] - 09-11-2026 (beta)
 
 ### Added

@@ -254,7 +254,7 @@ const getDashboardHealthBadge = (summary) => {
   if (summary.status === 'degraded') return { tone: 'error', label: 'System needs attention' };
   if (summary.status === 'attention') {
     const count = Number(summary.attention_count) || 0;
-    return { tone: 'warn', label: `${count || 'Some'} item${count === 1 ? '' : 's'} need attention` };
+    return { tone: 'warn', label: count === 1 ? '1 item needs attention' : `${count || 'Some'} items need attention` };
   }
   return { tone: 'ok', label: 'All systems healthy' };
 };
@@ -7401,7 +7401,9 @@ const DashboardTiles = {
                 <small>
                   {h.attention_count === 0
                     ? 'No problems found'
-                    : `${h.attention_count} item${h.attention_count === 1 ? '' : 's'} need attention`}
+                    : h.attention_count === 1
+                      ? '1 item needs attention'
+                      : `${h.attention_count} items need attention`}
                 </small>
               </span>
             </div>

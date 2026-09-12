@@ -8,7 +8,9 @@ from backend.health_summary import (
     build_summary,
     community_index_check,
     conflicts_check,
+    configured_media_servers,
     make_check,
+    media_server_check,
     overall_status,
     score_checks,
     summary_note,
@@ -186,6 +188,120 @@ class IndividualCheckTests(unittest.TestCase):
         self.assertEqual(conflicts_check(4)["status"], WARN)
         self.assertEqual(conflicts_check(4)["value"], 4)
 
+
+
+class MediaServerCheckTests(unittest.TestCase):
+    """A server counts as connected when an address and a credential are both
+    stored, wherever the credential is stored. Jellyfin and Emby keys never sit
+    in the database - the connect endpoints keep no plaintext copy and the
+    startup migration clears legacy ones - so a check that reads only the
+    database column reports every healthy Jellyfin install as disconnected.
+    """
+
+    def test_a_jellyfin_key_held_only_in_the_secure_store_still_counts(self):
+        check = media_server_check([
+            ("Plex", None, False, False),
+            ("Jellyfin", "http://jellyfin:8096", True, False),
+            ("Emby", None, False, False),
+        ])
+
+        self.assertEqual(check["status"], OK)
+        self.assertEqual(check["value"], "Jellyfin connected")
+
+    def test_a_plex_token_held_only_in_the_secure_store_still_counts(self):
+        # /plex/connect sets Setting.plex_token to None on purpose, so a URL
+        # plus a secure-store token is the normal healthy Plex install.
+        check = media_server_check([
+            ("Plex", "http://plex:32400", True, False),
+            ("Jellyfin", None, False, False),
+            ("Emby", None, False, False),
+        ])
+
+        self.assertEqual(check["status"], OK)
+        self.assertEqual(check["value"], "Plex connected")
+
+    def test_an_emby_known_only_through_its_plugin_counts(self):
+        # A plugin-only install stores no address at all.
+        check = media_server_check([
+            ("Plex", None, False, False),
+            ("Jellyfin", None, False, False),
+            ("Emby", None, False, True),
+        ])
+
+        self.assertEqual(check["status"], OK)
+        self.assertEqual(check["value"], "Emby connected")
+
+    def test_a_direct_connection_and_its_own_plugin_are_one_server(self):
+        # Jellyfin can be configured directly and have its plugin registered at
+        # the same time. That must not read as two servers fighting.
+        check = media_server_check([
+            ("Plex", None, False, False),
+            ("Jellyfin", "http://jellyfin:8096", True, True),
+            ("Emby", None, False, False),
+        ])
+
+        self.assertEqual(check["status"], OK)
+        self.assertEqual(check["value"], "Jellyfin connected")
+
+    def test_nothing_configured_is_an_error(self):
+        check = media_server_check([
+            ("Plex", None, False, False),
+            ("Jellyfin", None, False, False),
+            ("Emby", None, False, False),
+        ])
+
+        self.assertEqual(check["status"], ERROR)
+        self.assertEqual(check["value"], "Not connected")
+        self.assertIn("No media server is connected", check["detail"])
+
+    def test_an_address_without_a_credential_is_not_connected(self):
+        check = media_server_check([
+            ("Plex", None, False, False),
+            ("Jellyfin", "http://jellyfin:8096", False, False),
+            ("Emby", None, False, False),
+        ])
+
+        self.assertEqual(check["status"], ERROR)
+
+    def test_a_credential_without_an_address_is_not_connected(self):
+        # A key left in the secure store after a disconnect clears the URL.
+        check = media_server_check([
+            ("Plex", None, False, False),
+            ("Jellyfin", None, True, False),
+            ("Emby", None, False, False),
+        ])
+
+        self.assertEqual(check["status"], ERROR)
+
+    def test_two_servers_still_warn_and_are_both_named(self):
+        check = media_server_check([
+            ("Plex", "http://plex:32400", True, False),
+            ("Jellyfin", "http://jellyfin:8096", True, False),
+            ("Emby", None, False, False),
+        ])
+
+        self.assertEqual(check["status"], WARN)
+        self.assertEqual(check["value"], "Plex and Jellyfin")
+        self.assertIn("disconnect the extras", check["detail"])
+
+    def test_the_media_server_check_carries_its_weight(self):
+        # Worth 30, so a false error costs the dashboard exactly 30 points.
+        check = media_server_check([("Jellyfin", None, False, False)])
+
+        self.assertEqual(check["weight"], 30)
+        self.assertEqual(score_checks([check]), 70)
+
+    def test_configured_servers_are_listed_in_the_order_given(self):
+        configured = configured_media_servers([
+            ("Plex", "http://plex:32400", True, False),
+            ("Jellyfin", None, False, True),
+            ("Emby", "http://emby:8096", True, False),
+        ])
+
+        self.assertEqual(configured, ["Plex", "Jellyfin", "Emby"])
+
+    def test_no_servers_at_all_is_an_error_rather_than_a_crash(self):
+        self.assertEqual(media_server_check([])["status"], ERROR)
 
 class BuildSummaryTests(unittest.TestCase):
     def test_summary_carries_score_status_note_and_checks(self):
