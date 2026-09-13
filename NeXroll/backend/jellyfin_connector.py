@@ -234,6 +234,31 @@ class JellyfinConnector:
         except Exception:
             return False
 
+    def test_api_key(self) -> Optional[bool]:
+        """Is the stored API key actually accepted by this server?
+
+        True = accepted, False = rejected, None = could not tell (unreachable,
+        or an unexpected status) so the caller should not treat it as a failure.
+
+        Reachability alone used to stand in for this: connecting checked only
+        /System/Info/Public, which needs no credentials, so an invented API key
+        reported "Connected successfully" and was saved. The user then found out
+        only when nothing ever played. /System/Info (no /Public) answers 200 for
+        a valid key and 401 for anything else.
+        """
+        try:
+            if not self.url or not self.api_key:
+                return None
+            r = requests.get(f"{self.url}/System/Info", headers=self.headers,
+                             timeout=10, verify=self._verify)
+            if r.status_code == 200:
+                return True
+            if r.status_code in (401, 403):
+                return False
+            return None
+        except Exception:
+            return None
+
     def get_server_info(self) -> Optional[dict]:
         """
         Return a normalized dict with Jellyfin server info if reachable.

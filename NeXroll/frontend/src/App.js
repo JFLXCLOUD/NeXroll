@@ -7091,6 +7091,15 @@ const SortableTile = ({ id, disabled, size = 'sm', detail = 'detailed', onCycleS
     '--nx-tile-span': SIZE_SPAN[size] || SIZE_SPAN.sm,
     position: 'relative'
   };
+  // Only wear the sortable ARIA while the tile can actually be sorted. dnd-kit
+  // puts aria-disabled="true" on a disabled sortable, and outside Arrange mode
+  // every tile is disabled - so the dashboard was telling assistive technology
+  // that every control inside every tile, "Refresh data" and "Scan files"
+  // included, was a disabled control, and any tool honouring ARIA refused to
+  // operate the dashboard at all. A tile that merely is not draggable right now
+  // is not a disabled control, and has no sortable role to describe.
+  const sortableProps = disabled ? {} : attributes;
+  const sortableListeners = disabled ? {} : listeners;
   return (
     <div
       ref={setNodeRef}
@@ -7098,8 +7107,8 @@ const SortableTile = ({ id, disabled, size = 'sm', detail = 'detailed', onCycleS
       data-size={size}
       data-detail={detail}
       className={`nx-tile ${id === 'weekly_calendar' ? 'nx-tile-cal' : ''} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
-      {...attributes}
-      {...listeners}
+      {...sortableProps}
+      {...sortableListeners}
     >
       {!disabled && (
         <span className="nx-tile-drag-handle" aria-hidden="true"><GripVertical size={14} /></span>
@@ -30113,7 +30122,7 @@ const DashboardTiles = {
           <h3>Clear Prerolls When Inactive</h3>
         </div>
         <p className="nx-setting-row-desc">
-          Clear the Plex preroll field when no schedules are active. No prerolls will play outside scheduled times.
+          Clear the preroll setting on your media server when no schedules are active. No prerolls will play outside scheduled times.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <label className="nx-rockerswitch">
@@ -30143,7 +30152,7 @@ const DashboardTiles = {
         {!passiveMode && !clearWhenInactive && (
           <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Info size={14} /> Prerolls remain in Plex when no schedules are active.
+              <Info size={14} /> Prerolls remain set on your media server when no schedules are active.
             </p>
           </div>
         )}

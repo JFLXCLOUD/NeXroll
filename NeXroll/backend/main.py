@@ -26059,9 +26059,19 @@ def connect_jellyfin(request: JellyfinConnectRequest, db: Session = Depends(get_
         from backend.jellyfin_connector import JellyfinConnector
         connector = JellyfinConnector(url, api_key)
 
-        # Reachability (public info/ping)
+        # Reachability first, so a bad address reads as a bad address.
         if not connector.test_connection():
             raise HTTPException(status_code=422, detail="Failed to connect to Jellyfin server. Please check your URL.")
+
+        # Then prove the key works. Reachability alone accepted any string as a
+        # valid API key; None means we could not tell, which must not block a
+        # connection that may well be fine.
+        if connector.test_api_key() is False:
+            raise HTTPException(
+                status_code=422,
+                detail="Jellyfin rejected that API key. Create one in Jellyfin under "
+                       "Dashboard > API Keys and paste it here.",
+            )
 
         # Persist URL (no plaintext key in DB)
         setting = db.query(models.Setting).first()
@@ -26473,11 +26483,39 @@ def connect_emby(request: EmbyConnectRequest, db: Session = Depends(get_db)):
         url = f"http://{url}"
 
     try:
-        # Verify connectivity by calling Emby's public system info endpoint
+        # Reachability first, against the public endpoint, so a bad address is
+        # reported as a bad address rather than a bad key.
         resp = requests.get(f"{url.rstrip('/')}/emby/System/Info/Public", timeout=10)
         if resp.status_code != 200:
             raise HTTPException(status_code=422, detail="Failed to connect to Emby server. Please check your URL.")
         info = resp.json()
+
+        # Then prove the key actually works. Connecting used to check only the
+        # public endpoint, which needs no credentials at all - so a completely
+        # invented API key returned "Connected successfully" and was saved, and
+        # the user found out only when nothing ever played. /emby/System/Info
+        # (no /Public) answers 200 for a valid key and 401 for anything else.
+        auth = requests.get(
+            f"{url.rstrip('/')}/emby/System/Info",
+            headers={"X-Emby-Token": api_key},
+            timeout=10,
+        )
+        if auth.status_code in (401, 403):
+            raise HTTPException(
+                status_code=422,
+                detail="Emby rejected that API key. Create one in Emby under "
+                       "Settings > API Keys and paste it here.",
+            )
+        if auth.status_code != 200:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Emby returned {auth.status_code} when checking the API key. "
+                       "Please try again.",
+            )
+        try:
+            info = auth.json() or info
+        except Exception:
+            pass
 
         setting = db.query(models.Setting).first()
         if not setting:
