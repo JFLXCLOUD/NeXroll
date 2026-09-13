@@ -1159,6 +1159,9 @@ function App() {
   });
   const [previewingPreroll, setPreviewingPreroll] = useState(null);
   // Media server selection for Connect page
+  // Set once the user picks a server tab themselves, so the auto-follow below
+  // never overrides a deliberate choice.
+  const userPickedServerRef = React.useRef(false);
   const [activeServer, setActiveServer] = useState(() => {
     try { return localStorage.getItem('activeServer') || 'plex'; } catch { return 'plex'; }
   });
@@ -4221,6 +4224,20 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     if (embyConnected) return 'emby';
     return null;
   };
+
+  // Open the Connections page on the server you actually run. The tab defaulted
+  // to Plex, so a Jellyfin-only user landed on the Plex panel, while the
+  // connected Jellyfin card offered only Disconnect where a disconnected one
+  // offers "Setup" - leaving no obvious way in. Everything behind that panel was
+  // unreachable, including the NeXroll Intros plugin's detect-and-configure
+  // step, which is the only way to make prerolls play.
+  useEffect(() => {
+    if (userPickedServerRef.current) return;
+    const connected = getActiveConnectedServer();
+    if (connected && connected !== 'conflict' && connected !== activeServer) {
+      setActiveServer(connected);
+    }
+  }, [plexStatus, jellyfinStatus, embyStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleApplyCategoryToActiveServer = (categoryId, categoryName) => {
     const server = getActiveConnectedServer();
@@ -34126,7 +34143,7 @@ const DashboardTiles = {
                   aria-selected={active}
                   aria-controls={`panel-${srv.id}`}
                   className="nx-connect-card-head"
-                  onClick={() => setActiveServer(srv.id)}
+                  onClick={() => { userPickedServerRef.current = true; setActiveServer(srv.id); }}
                 >
                   <span className="nx-connect-card-mark">{srv.mark}</span>
                   <span className="nx-connect-card-copy">
@@ -34137,12 +34154,21 @@ const DashboardTiles = {
                 {srv.connected ? (
                   <div className="nx-connect-card-body">
                     <ul className="nx-connect-card-meta">{srv.meta.map((line, index) => <li key={index} title={line}>{line}</li>)}</ul>
-                    {srv.canDisconnect && <button type="button" className="button button-danger" onClick={srv.disconnect}><Unlink size={13} /> Disconnect</button>}
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                      {!active && (
+                        <button
+                          type="button"
+                          className="nx-connect-card-setup"
+                          onClick={() => { userPickedServerRef.current = true; setActiveServer(srv.id); }}
+                        >Settings &amp; plugin <ChevronRight size={13} /></button>
+                      )}
+                      {srv.canDisconnect && <button type="button" className="button button-danger" onClick={srv.disconnect}><Unlink size={13} /> Disconnect</button>}
+                    </div>
                   </div>
                 ) : (
                   <div className="nx-connect-card-body idle">
                     <span>{srv.idleCopy}</span>
-                    <button type="button" className="nx-connect-card-setup" onClick={() => setActiveServer(srv.id)}>Setup <ChevronRight size={13} /></button>
+                    <button type="button" className="nx-connect-card-setup" onClick={() => { userPickedServerRef.current = true; setActiveServer(srv.id); }}>Setup <ChevronRight size={13} /></button>
                   </div>
                 )}
               </article>
