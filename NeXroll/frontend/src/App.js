@@ -52,7 +52,7 @@ import {
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, TrendingUp, Server, Timer, ArrowUp, ArrowDown,
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
-    Music, Wand2, GitCompare, Square, Plug, GripVertical, Maximize2
+    Music, Wand2, GitCompare, Square, Plug, GripVertical, Maximize2, Copy
   } from 'lucide-react';
 // Grid units. A small rowHeight lets a tile's height land close to its measured
 // content height. Tile HEIGHT is always auto-fit to content (so no scrollbars);
@@ -198,6 +198,23 @@ const resolveTheme = (id) => (THEMES[id] ? id : DEFAULT_THEME);
 // them. The library hides them by default — they're managed from NeX-Up, and in
 // bulk they bury the prerolls someone actually curated.
 const NEXUP_GENERATED_CATEGORIES = ['nex-up prerolls', 'coming soon lists'];
+
+// Jellyfin plugin repositories. These were published so the plugin can update
+// itself, but the URL existed only in the wiki and the repo's own README - a
+// user inside NeXroll was told they needed the plugin and never told where to
+// get it, which is a dead end on the one feature that makes prerolls play.
+// Jellyfin 12 and 10.11 take different builds, so the catalogs are separate.
+const JELLYFIN_PLUGIN_REPOS = {
+  '12': 'https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/Plugins/jellyfin/manifest.json',
+  '10.11': 'https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/Plugins/jellyfin/manifest-10.11.json',
+};
+// Pick the catalog matching the server we are actually talking to. Unknown
+// versions fall back to the 10.11 catalog, which is what most installs run.
+const jellyfinPluginRepoFor = (version) => (
+  String(version || '').trim().startsWith('12')
+    ? JELLYFIN_PLUGIN_REPOS['12']
+    : JELLYFIN_PLUGIN_REPOS['10.11']
+);
 // Downloaded Radarr/Sonarr trailers. They are a separate concept from generator
 // output: NeX-Up registers them as real Preroll rows whenever its storage path
 // sits inside the prerolls folder (which NeX-Up Settings now recommends), so
@@ -3990,6 +4007,11 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         // so an optimistic local append left new schedules invisible to the
         // conflicts page until a manual refresh.
         fetchData();
+        // Land on the list, where the new schedule is. Clearing the wizard in
+        // place left a blank "Untitled schedule" on screen, which looks exactly
+        // like a click that did nothing - and invites a second click that
+        // creates a duplicate. Showing the result is the confirmation.
+        setActiveTab('schedules');
       })
       .catch(error => {
         console.error('Schedule creation error:', error);
@@ -6708,6 +6730,11 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   }, [prerolls, categories, filterCategory, filterTags, filterMatchStatus, showNexupGeneratedInLibrary, showNexupTrailersInLibrary, prerollSortField, prerollSortDirection]);
 
   const totalPrerolls = filteredPrerolls.length;
+  // How many prerolls the generator-output rule is holding back right now. Only
+  // meaningful when the grid came out empty, which is when it gets shown.
+  const hiddenGeneratedCount = React.useMemo(() => (
+    showNexupGeneratedInLibrary ? 0 : prerolls.filter(isNexUpGeneratedPreroll).length
+  ), [prerolls, showNexupGeneratedInLibrary]);
   const totalPages = Math.max(1, Math.ceil(totalPrerolls / pageSize));
   const currentPageClamped = Math.min(currentPage, totalPages);
   const pageStartIndex = (currentPageClamped - 1) * pageSize;
@@ -11603,8 +11630,30 @@ const DashboardTiles = {
               <div className="nx-hybrid-empty">
                 <Film size={34} />
                 <strong>No prerolls found</strong>
-                <span>Clear the current filters or add a new preroll.</span>
-                <button type="button" className="nx-hybrid-btn is-primary" onClick={() => setActiveTab('library/add')}><Upload size={14} /> Add prerolls</button>
+                {hiddenGeneratedCount > 0 ? (
+                  <>
+                    {/* The grid hides NeX-Up output by default, so a library
+                        holding only generated items reads as empty while the
+                        header still counts them. Say what is hidden and offer
+                        to show it, rather than implying the files are gone. */}
+                    <span>
+                      {hiddenGeneratedCount} generated preroll{hiddenGeneratedCount === 1 ? ' is' : 's are'} hidden from this view.
+                    </span>
+                    <button
+                      type="button"
+                      className="nx-hybrid-btn is-primary"
+                      onClick={() => {
+                        setShowNexupGeneratedInLibrary(true);
+                        try { localStorage.setItem('nx_show_generated', '1'); } catch (e) { /* private mode */ }
+                      }}
+                    ><Eye size={14} /> Show generated prerolls</button>
+                  </>
+                ) : (
+                  <>
+                    <span>Clear the current filters or add a new preroll.</span>
+                    <button type="button" className="nx-hybrid-btn is-primary" onClick={() => setActiveTab('library/add')}><Upload size={14} /> Add prerolls</button>
+                  </>
+                )}
               </div>
             ) : (
               <>
@@ -20036,7 +20085,10 @@ const DashboardTiles = {
     const blockDescription = block => {
       if (block?.type === 'random' || block?.type === 'sequential') return `${categories.find(category => String(category.id) === String(block.category_id))?.name || 'Choose category'} / ${block.type}`;
       if (block?.type === 'fixed') return `${block.preroll_ids?.length || 0} selected preroll${block.preroll_ids?.length === 1 ? '' : 's'}`;
-      if (block?.type === 'nexup_trailers') return `${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}`;
+      // "up to", because this is how many trailers the block asks for, not how
+      // many exist. Reading as inventory, it claimed "2 trailers" on an install
+      // with none downloaded, which then played as an empty block.
+      if (block?.type === 'nexup_trailers') return `up to ${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}`;
       if (block?.type === 'dynamic_preroll') return generatedItems.find(item => item.filename === block.filename)?.name || 'Choose a generated item';
       if (block?.type === 'coming_soon_list') return block.layout === 'list' ? 'Latest Coming Soon list' : 'Latest Coming Soon grid';
       if (block?.type === 'separator') return `${block.duration ?? 3}s blank gap`;
@@ -20098,7 +20150,10 @@ const DashboardTiles = {
                 </React.Fragment>
               ))}
             </div>
-            <div className="nx-draft-builder-stats"><div><span>Blocks</span><strong>{sequenceBlocks.length}</strong></div><div><span>Estimated duration</span><strong>~{Math.max(1, sequenceBlocks.length * 2)}m</strong></div><div><span>Variations</span><strong>{Math.max(1, sequenceBlocks.length * 12)}</strong></div></div>
+            {/* The Math.max(1, ...) floors below apply only once there is at
+                least one block. An empty sequence was reporting "~1m" and
+                "1 variation" for nothing at all. */}
+            <div className="nx-draft-builder-stats"><div><span>Blocks</span><strong>{sequenceBlocks.length}</strong></div><div><span>Estimated duration</span><strong>{sequenceBlocks.length === 0 ? '—' : `~${Math.max(1, sequenceBlocks.length * 2)}m`}</strong></div><div><span>Variations</span><strong>{sequenceBlocks.length === 0 ? '—' : Math.max(1, sequenceBlocks.length * 12)}</strong></div></div>
           </section>
 
           <aside className="nx-draft-panel nx-draft-inspector">
@@ -22050,13 +22105,18 @@ const DashboardTiles = {
       {/* Identity, status, meta, and Disconnect now live in the server card
           above (renderConnect) — this panel only covers connect/settings UI. */}
 
-      {/* Connection-problem notices (shown even when "connected" flag is off but info exists) */}
-      {plexServerInfo?.message && !plexServerInfo.connected && (
+      {/* Connection-problem notices (shown even when "connected" flag is off but info exists).
+          "not_configured" is deliberately excluded: /plex/status reports it for
+          everyone who has never set Plex up, which is the normal state for a
+          Jellyfin or Emby user and is not a problem to warn about. Showing it
+          put two red error banners under a working Emby connection. The connect
+          form directly below is the remedy, so the banners said nothing useful. */}
+      {plexServerInfo?.message && !plexServerInfo.connected && plexServerInfo.error !== 'not_configured' && (
         <div className="nx-notice warn" style={{ marginBottom: '1rem' }}>
           <strong>Status:</strong> {plexServerInfo.message}
         </div>
       )}
-      {plexServerInfo?.error && (
+      {plexServerInfo?.error && plexServerInfo.error !== 'not_configured' && (
         <div className="nx-notice danger" style={{ marginBottom: '1rem' }}>
           <strong>Error:</strong> {plexServerInfo.error}{plexServerInfo.message ? ` — ${plexServerInfo.message}` : ''}
         </div>
@@ -33469,11 +33529,47 @@ const DashboardTiles = {
             {!jellyfinPluginInfo.auth_error && (
               <div className="nx-notice">
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
-                <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                  <li>Download the <strong>NeXroll Intros</strong> plugin package: <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.zip</a> (extract the DLL + meta.json + thumb.png into your Jellyfin <code>plugins/NeXroll Intros/</code> folder)</li>
-                  <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
+                <p style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>
+                  <strong>Recommended — add the repository</strong>, so the plugin updates itself.
+                  {jellyfinServerInfo?.version && (
+                    <span style={{ color: 'var(--text-secondary)' }}>
+                      {' '}This is the catalog for Jellyfin {jellyfinServerInfo.version}.
+                    </span>
+                  )}
+                </p>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                  <code style={{ flex: '1 1 320px', minWidth: 0, overflowWrap: 'anywhere', fontSize: '0.8rem', padding: '0.35rem 0.5rem', background: 'var(--surface-2, rgba(127,127,127,0.12))', borderRadius: '4px' }}>
+                    {jellyfinPluginRepoFor(jellyfinServerInfo?.version)}
+                  </code>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      const url = jellyfinPluginRepoFor(jellyfinServerInfo?.version);
+                      if (navigator.clipboard?.writeText) {
+                        navigator.clipboard.writeText(url).then(
+                          () => showAlert('Repository URL copied. Paste it into Jellyfin: Dashboard > Plugins > Repositories > Add.', 'success'),
+                          () => showAlert('Could not copy automatically — select the URL and copy it by hand.', 'warning')
+                        );
+                      } else {
+                        showAlert('Copying is not available here — select the URL and copy it by hand.', 'warning');
+                      }
+                    }}
+                  ><Copy size={14} /> Copy URL</button>
+                </div>
+                <ol style={{ margin: '0 0 0.75rem', paddingLeft: '1.25rem', lineHeight: '1.7', fontSize: '0.9rem' }}>
+                  <li>In Jellyfin: <strong>Dashboard &gt; Plugins &gt; Repositories &gt; Add</strong>, paste the URL above, save</li>
+                  <li><strong>Catalog</strong> tab, install <strong>NeXroll Intros</strong></li>
                   <li>Restart Jellyfin</li>
                 </ol>
+                <details>
+                  <summary style={{ cursor: 'pointer', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>Install by hand instead</summary>
+                  <ol style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem', lineHeight: '1.7', fontSize: '0.9rem' }}>
+                    <li>Download <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.zip</a></li>
+                    <li>Extract the DLL, meta.json and thumb.png into Jellyfin's <code>plugins/NeXroll Intros/</code> folder</li>
+                    <li>Restart Jellyfin</li>
+                  </ol>
+                </details>
               </div>
             )}
 
@@ -33665,6 +33761,44 @@ const DashboardTiles = {
     <div className="nx-conn-panel" style={{ '--brand': '#52c41a' }}>
       {/* Identity, status, meta, and Disconnect now live in the server card
           above (renderConnect) — this panel only covers connect/settings UI. */}
+
+      {/* Emby needs the plugin before anything plays, and nothing in the app
+          used to say so - a user could connect Emby successfully, build a
+          schedule, and never see a preroll, with no indication why. */}
+      {connected && !(embyServerInfo?.plugin_clients?.length > 0) && (
+        <div className="nx-notice warn" style={{ marginBottom: '1rem' }}>
+          <strong>Prerolls will not play yet — the plugin is missing</strong>
+          <p style={{ margin: '0.5rem 0 0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            Emby plays prerolls only through the NeXroll Intros plugin. Connecting
+            the server is not enough on its own.
+          </p>
+          <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7', fontSize: '0.9rem' }}>
+            <li>
+              Download{' '}
+              <a
+                href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: 'var(--accent-color, #7c4dff)' }}
+              >NeXroll.Emby.dll</a>
+            </li>
+            <li>Copy it into Emby's <code>plugins/</code> folder and restart Emby</li>
+            <li>
+              In Emby: <strong>Settings &gt; Cinema Mode</strong> — turn Cinema Mode on,
+              enable intros for Movies and Episodes, and tick{' '}
+              <strong>"Include trailers from my movies in my library"</strong>.
+              Without that last one Emby ignores the intros NeXroll registers, and nothing plays.
+            </li>
+            <li>
+              Then run <strong>Dashboard &gt; Scheduled Tasks &gt; Refresh Custom Intros</strong>{' '}
+              so Emby registers the cached files.
+            </li>
+          </ol>
+          <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            This panel will show the plugin under "Plugin Clients" once it checks in.
+          </p>
+        </div>
+      )}
 
       {/* Plugin clients (when present) */}
       {embyServerInfo?.plugin_clients?.length > 0 && (
@@ -33949,7 +34083,17 @@ const DashboardTiles = {
         meta: [
           embyServerInfo?.name,
           embyServerInfo?.version && `v${embyServerInfo.version}`,
-          embyServerInfo?.connection_type === 'plugin' ? 'via Plugin (API Key)' : embyServerInfo?.connection_type === 'direct' ? 'Direct connection' : null,
+          // Emby plays prerolls only through the NeXroll Intros plugin, so a
+          // direct connection on its own puts nothing on screen. Calling that
+          // "Direct connection" read as "all set" to a user whose prerolls
+          // never played; say what is actually missing instead.
+          embyServerInfo?.connection_type === 'plugin'
+            ? 'via Plugin (API Key)'
+            : embyServerInfo?.plugin_clients?.length > 0
+              ? 'Plugin connected'
+              : embyServerInfo?.connection_type === 'direct'
+                ? 'Connected — plugin not detected'
+                : null,
         ].filter(Boolean),
         canDisconnect: embyServerInfo?.connection_type !== 'plugin',
         disconnect: handleDisconnectEmby,

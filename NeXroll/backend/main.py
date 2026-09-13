@@ -59,6 +59,7 @@ from backend.scheduler import (
     _localized_now,
 )
 from backend import secure_store
+from backend.changelog_text import strip_html_comments
 from backend.qr_render import QR_MODULE_STYLES
 from backend.dynamic_preroll import (
     BUNDLED_FONTS,
@@ -3950,7 +3951,7 @@ def get_changelog(db: Session = Depends(get_db)):
         "current_version": current_version,
         "last_seen_version": last_seen_version,
         "show_changelog": show_changelog,
-        "changelog": changelog_content
+        "changelog": strip_html_comments(changelog_content)
     }
 
 

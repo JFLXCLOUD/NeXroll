@@ -6,6 +6,19 @@ import SequenceTimeline from './SequenceTimeline';
 // eslint-disable-next-line no-unused-vars
 import SequenceStats from './SequenceStats';
 
+// Human names for block types, used when telling the viewer which block had
+// nothing to play.
+const BLOCK_LABELS = {
+  preroll: 'Fixed preroll',
+  fixed: 'Fixed preroll',
+  random: 'Category block',
+  sequential: 'Category block',
+  nexup_trailers: 'NeX-Up trailers',
+  coming_soon_list: 'Coming Soon list',
+  dynamic_preroll: 'Generated preroll',
+  separator: 'Pause / separator',
+};
+
 /**
  * SequencePreviewModal - Full-screen preview modal with playback simulator
  * Shows timeline visualization, statistics, and simulates sequence playback
@@ -26,6 +39,10 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [expandedBlocks, setExpandedBlocks] = useState(new Set());
   const [playlist, setPlaylist] = useState([]);
+  // Blocks that produced nothing to play. A block that resolves empty used
+  // to vanish from the preview with no trace, renumbering the blocks after
+  // it, so a three-block sequence silently played as two.
+  const [skippedBlocks, setSkippedBlocks] = useState([]);
   const videoRef = React.useRef(null);
   const overlayRef = React.useRef(null);
   const isTransitioningRef = React.useRef(false);
@@ -104,6 +121,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       setCurrentPrerollIndex(0);
       setPlaybackProgress(0);
       setPlaylist([]);
+      setSkippedBlocks([]);
       return;
     }
 
@@ -144,6 +162,22 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
           });
         }
       });
+      return items;
+    };
+
+    // Any block with no items is reported rather than silently dropped.
+    const noteSkipped = (items) => {
+      const played = new Set(items.map(i => i.blockIndex));
+      setSkippedBlocks(
+        snap.blocks
+          .map((b, i) => ({ block: b, index: i }))
+          .filter(({ index }) => !played.has(index))
+          .map(({ block, index }) => ({
+            index,
+            label: block.label || BLOCK_LABELS[block.type] || 'Sequence block',
+            type: block.type,
+          }))
+      );
       return items;
     };
 
@@ -195,19 +229,19 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
             finalPlaylist.push(localItems[localPointer]);
             localPointer++;
           }
-          setPlaylist(finalPlaylist);
+          setPlaylist(noteSkipped(finalPlaylist));
         })
         .catch((error) => {
           if (!active || error.name === 'AbortError') return;
           // Fallback: just use local items
-          setPlaylist(buildLocalItems());
+          setPlaylist(noteSkipped(buildLocalItems()));
         });
       return () => {
         active = false;
         controller.abort();
       };
     } else {
-      setPlaylist(buildLocalItems());
+      setPlaylist(noteSkipped(buildLocalItems()));
     }
   }, [isOpen, modalOpenCounter, getBlockPrerolls]);
 
@@ -441,9 +475,37 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               </h3>
               <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                 {playlist.length} preroll{playlist.length !== 1 ? 's' : ''} • {blocks.length} block{blocks.length !== 1 ? 's' : ''}
+                {skippedBlocks.length > 0 && (
+                  <span style={{ color: '#c2660a' }}>
+                    {' '}• {skippedBlocks.length} skipped
+                  </span>
+                )}
               </p>
             </div>
           </div>
+          {skippedBlocks.length > 0 && (
+            <div
+              role="status"
+              style={{
+                flexBasis: '100%', order: 99, marginTop: '0.6rem',
+                padding: '0.55rem 0.75rem', borderRadius: '6px',
+                border: '1px solid rgba(194,102,10,0.45)',
+                background: 'rgba(194,102,10,0.10)',
+                color: 'var(--text-color)', fontSize: '0.83rem', lineHeight: 1.45,
+              }}
+            >
+              <strong>Not everything in this sequence can play.</strong>{' '}
+              {skippedBlocks.map((b, i) => (
+                <span key={b.index}>
+                  {i > 0 ? ', ' : ''}block {b.index + 1} ({b.label})
+                </span>
+              ))}{' '}
+              {skippedBlocks.length === 1 ? 'has' : 'have'} nothing to play, so{' '}
+              {skippedBlocks.length === 1 ? 'it is' : 'they are'} left out of this preview.
+              {skippedBlocks.some(b => b.type === 'nexup_trailers') &&
+                ' NeX-Up trailer blocks need trailers downloaded first - check NeX-Up > Connections.'}
+            </div>
+          )}
           <button
             type="button"
             onClick={onClose}
