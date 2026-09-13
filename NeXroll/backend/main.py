@@ -60,6 +60,7 @@ from backend.scheduler import (
 )
 from backend import secure_store
 from backend.changelog_text import strip_html_comments
+from backend import settings_singleton
 from backend.qr_render import QR_MODULE_STYLES
 from backend.dynamic_preroll import (
     BUNDLED_FONTS,
@@ -899,6 +900,57 @@ def _migrate_legacy_api_keys():
             pass
 
 _migrate_legacy_api_keys()
+
+
+# ---- Collapse duplicate Setting rows ----
+def _collapse_duplicate_settings():
+    """Merge multiple Setting rows back into one.
+
+    Setting is a singleton, but ~20 sites create one with `if not setting:
+    create`, and on a fresh database a first page load fires many endpoints at
+    once - two can both see no row and both insert. The app then reads whichever
+    `.first()` returns, which is not necessarily the one being written to.
+
+    Observed in the wild: the startup hook adopted the container's TZ into one
+    row while the scheduler read the other, still holding the UTC column
+    default, so every time-of-day schedule ran hours off.
+
+    Order matters. This runs at import; the TZ auto-detection in
+    startup_env_bootstrap() runs afterwards, on app startup. Collapsing first
+    means that hook lands on the one surviving row - which is what actually
+    restores the timezone, since the merge keeps the most recently written row
+    and that is the one holding the stale "UTC" default.
+    """
+    try:
+        db = SessionLocal()
+        try:
+            rows = db.query(models.Setting).all()
+            if len(rows) < 2:
+                return
+            survivor = settings_singleton.choose_survivor(rows)
+            others = [r for r in rows if r is not survivor]
+            columns = [c.name for c in models.Setting.__table__.columns if c.name != "id"]
+            filled = settings_singleton.fields_to_backfill(survivor, others, columns)
+            for column, value in filled.items():
+                setattr(survivor, column, value)
+            for row in others:
+                db.delete(row)
+            db.commit()
+            _file_log(
+                f"Settings repair: merged {len(rows)} duplicate settings rows into id={survivor.id}"
+                + (f", recovering {', '.join(sorted(filled))}" if filled else ""),
+                level="WARNING",
+            )
+        finally:
+            db.close()
+    except Exception as e:
+        try:
+            _file_log(f"Settings repair warning: {e}", level="WARNING")
+        except Exception:
+            pass
+
+
+_collapse_duplicate_settings()
 
 def resolve_nexup_trailer_block(block: dict, db, rotation_key=None) -> list:
     """Resolve a sequence/filler 'nexup_trailers' block to an ordered list of
@@ -2935,8 +2987,11 @@ def startup_env_bootstrap():
             db.commit()
             _file_log("Created default Setting record on startup")
         
-        # Auto-detect timezone from TZ environment variable (Docker support)
-        if setting and not setting.timezone or setting.timezone == 'UTC':
+        # Auto-detect timezone from TZ environment variable (Docker support).
+        # Parenthesised deliberately: `a and not b or c` binds as
+        # `(a and not b) or c`, so with no settings row at all the second
+        # operand dereferenced None and raised instead of skipping.
+        if setting and (not setting.timezone or setting.timezone == 'UTC'):
             tz_env = os.environ.get('TZ')
             if tz_env:
                 try:
