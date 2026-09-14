@@ -84,8 +84,21 @@ Common issues and solutions for NeXroll.
 If you can't access the web interface due to authentication:
 
 1. **Wait for lockout to expire** — 15-minute lockout after failed attempts
-2. **Use another admin account** — If available, use a different admin to reset
-3. **Check Settings → Logs** — Look for auth-related error messages
+2. **Reset the password from the machine NeXroll runs on.** This works with no
+   existing login and is the recovery path for a single-admin install. It is
+   deliberately refused from any other computer, so it cannot be done from the
+   browser you are locked out in:
+
+   ```bash
+   curl -X POST http://localhost:9393/auth/reset-password      -H "Content-Type: application/json"      -d '{"username":"YOUR_USERNAME","new_password":"NewPassword1"}'
+   ```
+
+   In Docker, prefix it with `docker exec <container>`. The new password needs at
+   least 8 characters, upper and lower case, and a digit. All existing sessions
+   are invalidated. The sign-in screen's **Forgot password?** link shows this
+   same command.
+3. **Use another admin account** — If you have one, sign in and reset from there
+4. **Check Settings → Logs** — Look for auth-related error messages
 
 ### API Key Not Working
 

@@ -1711,6 +1711,9 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [authNotice, setAuthNotice] = useState(null);
   const [showRegisterForm, setShowRegisterForm] = useState(false);
   const [showResetForm, setShowResetForm] = useState(false);
+  // Shown instead of the reset form when the browser is not on the server, so
+  // the sign-in screen explains recovery rather than appearing to have none.
+  const [showRecoveryHelp, setShowRecoveryHelp] = useState(false);
   const [resetForm, setResetForm] = useState({ new_password: '', confirm_password: '' });
   const [resetLoading, setResetLoading] = useState(false);
   const [resetError, setResetError] = useState(null);
@@ -37229,31 +37232,73 @@ const DashboardTiles = {
                     Need an account? Register
                   </button>
                 )}
-                {authStatus.is_local && (
-                  <button
-                    type="button"
-                    onClick={() => {
+                {/* Always offer this. The reset itself is rightly restricted to
+                    the machine NeXroll runs on, but hiding the link from everyone
+                    else meant a user browsing to their own server over the network
+                    - which is almost everyone - saw no recovery of any kind and
+                    concluded there was none. Naming the localhost-only route gives
+                    nothing away: knowing the command does not let you run it. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (authStatus.is_local) {
                       setShowResetForm(true);
                       setShowRegisterForm(false);
                       setLoginError(null);
                       setAuthNotice(null);
                       setResetError(null);
                       setResetSuccess(null);
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: darkMode ? '#aaa' : '#888',
-                      cursor: 'pointer',
-                      fontSize: '0.85rem'
-                    }}
-                  >
-                    Forgot password?
-                  </button>
-                )}
+                    } else {
+                      setShowRecoveryHelp(v => !v);
+                    }
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: darkMode ? '#aaa' : '#888',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  Forgot password?
+                </button>
               </div>
             </form>
           ))}
+
+          {/* Recovery instructions for anyone not browsing from the server
+              itself. Without this the sign-in screen was a dead end: no link,
+              no hint, and an endpoint that refuses a remote caller. */}
+          {showRecoveryHelp && !authStatus.is_local && (
+            <div style={{
+              marginTop: '1.25rem',
+              padding: '0.9rem 1rem',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              lineHeight: 1.6,
+              color: darkMode ? '#cfd8dc' : '#455a64',
+              backgroundColor: darkMode ? 'rgba(0, 212, 255, 0.08)' : 'rgba(0, 150, 200, 0.06)',
+              border: `1px solid ${darkMode ? 'rgba(0, 212, 255, 0.2)' : 'rgba(0, 150, 200, 0.15)'}`
+            }}>
+              <strong>Resetting the password needs access to the machine NeXroll runs on.</strong>
+              <p style={{ margin: '0.5rem 0' }}>
+                It cannot be done from another computer, which is why this browser
+                cannot offer the form. From the server itself, run:
+              </p>
+              <code style={{
+                display: 'block', overflowX: 'auto', whiteSpace: 'pre',
+                padding: '0.6rem 0.7rem', borderRadius: '6px', fontSize: '0.78rem',
+                backgroundColor: darkMode ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.05)'
+              }}>{`curl -X POST http://localhost:9393/auth/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{"username":"YOUR_USERNAME","new_password":"NewPassword1"}'`}</code>
+              <p style={{ margin: '0.5rem 0 0' }}>
+                Running NeXroll in Docker? Put <code>docker exec &lt;container&gt;</code> in
+                front of that command. The new password needs at least 8 characters,
+                upper and lower case, and a digit.
+              </p>
+            </div>
+          )}
 
           {/* Reset Password Form (localhost only) */}
           {showResetForm && !showRegisterForm && authStatus.users_exist && (
