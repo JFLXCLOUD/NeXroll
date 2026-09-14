@@ -705,7 +705,21 @@ export default function NeXUpGeneratorStudio(props) {
     <div className="nx-ap-page nx-generator-studio" data-nexup-page="generator">
       <section className="nx-gen-toolbar">
         <div><span className="nx-gen-kicker"><Sparkles size={13} /> Generator Studio</span><h2>Shape the intro, then choose how cleanly it renders.</h2></div>
-        <div className="nx-gen-toolbar-actions"><div className="nx-gen-mode"><button type="button" className={generatorTab === 'dynamic' ? 'active' : ''} onClick={() => setGeneratorTab('dynamic')}><Sparkles size={14} /> Dynamic</button><button type="button" className={generatorTab === 'coming-soon' ? 'active' : ''} onClick={() => setGeneratorTab('coming-soon')}><Film size={14} /> Coming Soon</button></div><div className="nx-gen-health"><StudioBadge tone={ffmpegAvailable ? 'good' : 'warn'}>{ffmpegAvailable ? 'FFmpeg ready' : 'FFmpeg required'}</StudioBadge><StudioBadge tone={settings.storage_path ? 'good' : 'warn'}>{settings.storage_path ? 'Storage ready' : 'Choose storage'}</StudioBadge></div></div>
+        <div className="nx-gen-toolbar-actions"><div className="nx-gen-mode"><button type="button" className={generatorTab === 'dynamic' ? 'active' : ''} onClick={() => setGeneratorTab('dynamic')}><Sparkles size={14} /> Dynamic</button><button type="button" className={generatorTab === 'coming-soon' ? 'active' : ''} onClick={() => setGeneratorTab('coming-soon')}><Film size={14} /> Coming Soon</button></div><div className="nx-gen-health"><StudioBadge tone={ffmpegAvailable ? 'good' : 'warn'}>{ffmpegAvailable ? 'FFmpeg ready' : 'FFmpeg required'}</StudioBadge>{settings.storage_path
+                ? <StudioBadge tone="good">Storage ready</StudioBadge>
+                : (
+                  /* This read "Choose storage" and looked exactly like the
+                     status pills beside it, but was a plain span - so clicking
+                     the one thing on the page that names the blocker did
+                     nothing, and the actual control lives on another page
+                     entirely. It now goes there. */
+                  <button
+                    type="button"
+                    className="nx-gen-badge-link"
+                    title="Set a storage folder in NeX-Up settings"
+                    onClick={() => onNavigate && onNavigate('nexup/settings')}
+                  ><StudioBadge tone="warn">Choose storage &rsaquo;</StudioBadge></button>
+                )}</div></div>
       </section>
 
       {!connected && generatorTab !== 'dynamic' && <div className="nx-gen-notice"><AlertTriangle size={17} /><div><strong>Connect Radarr or Sonarr before rendering.</strong><span>A Coming Soon list is built from the upcoming titles those sources report, so one has to be connected to generate.</span></div><button type="button" className="nx-gen-btn subtle" onClick={() => onNavigate('nexup')}>Open connections</button></div>}

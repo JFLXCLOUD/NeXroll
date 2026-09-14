@@ -10955,3 +10955,9 @@ body.light .nx-draft-cal-event { color: #157a55; }
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* The "Choose storage" pill is a real control - it takes you to the setting it
+   names. Keep it looking like the status badges beside it. */
+.nx-gen-badge-link { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.nx-gen-badge-link:hover { filter: brightness(1.15); }
+.nx-gen-badge-link:focus-visible { outline: 2px solid var(--button-bg); outline-offset: 2px; border-radius: 20px; }

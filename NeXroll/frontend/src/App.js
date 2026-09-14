@@ -3880,6 +3880,26 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     return data;
   };
 
+  // Check a wizard step before leaving it. The Start date was only validated on
+  // the final "Create schedule" click, so you could walk through Content and
+  // Behavior and be sent back three steps by a small toast - with nothing on
+  // the Timing step marking the field required in the first place.
+  const scheduleStepProblem = (step) => {
+    if (step === 1 && !scheduleForm.name.trim()) return 'Give the schedule a name before continuing.';
+    if (step === 2) {
+      if (!scheduleForm.start_date && scheduleForm.type !== 'monthly') {
+        return 'Set a first active date before continuing - it is what tells the schedule when to begin.';
+      }
+      if (scheduleForm.type === 'daily' && !timeRange.start) {
+        return 'Set at least a start time for a daily schedule.';
+      }
+      if (scheduleForm.type === 'weekly' && weekDays.length === 0) {
+        return 'Pick at least one day of the week.';
+      }
+    }
+    return null;
+  };
+
   const handleCreateSchedule = async (e) => {
     e.preventDefault();
     if (isCreatingSchedule) return;
@@ -7557,7 +7577,7 @@ const DashboardTiles = {
       <div className="card nx-focus-tile nx-focus-actions">
         <div className="nx-tile-head">
           <h2><Zap size={16} /> Quick actions</h2>
-          <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('settings')}>
+          <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => { setActiveTab('settings'); setHighlightSettingsTarget('nx-settings-filler'); }}>
             All tools <ArrowRight size={12} />
           </button>
         </div>
@@ -8523,7 +8543,11 @@ const DashboardTiles = {
                   }}><Save size={15} /> Save draft</button>
                 )}
                 <button type="button" className="button" disabled={isCreatingSchedule} onClick={() => {
-                  if (scheduleCreateStep < 4) setScheduleCreateStep(step => Math.min(4, step + 1));
+                  if (scheduleCreateStep < 4) {
+                    const problem = scheduleStepProblem(scheduleCreateStep);
+                    if (problem) { showAlert(problem, 'warning'); return; }
+                    setScheduleCreateStep(step => Math.min(4, step + 1));
+                  }
                   else document.getElementById('nx-approved-schedule-form')?.requestSubmit();
                 }}><Check size={15} /> {scheduleCreateStep < 4 ? 'Continue' : (isCreatingSchedule ? (editingSchedule ? 'Saving...' : 'Creating...') : (editingSchedule ? 'Save changes' : 'Create schedule'))}</button>
               </>
@@ -8583,7 +8607,19 @@ const DashboardTiles = {
             )}
             {activeTab === 'nexup/generator' && (
               <>
-                <button type="button" className="button button-secondary" onClick={() => document.querySelector('.nx-gen-recent')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Film size={15} /> Generated videos</button>
+                <button type="button" className="button button-secondary" onClick={() => {
+                  // The Recent section renders nothing when the current tab has
+                  // no output, so this scrolled to an element that was not there
+                  // and the optional chain swallowed it - a button that did
+                  // nothing, twice reported. Say what is going on instead.
+                  const target = document.querySelector('.nx-gen-recent');
+                  if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+                  const other = generatorTab === 'dynamic' ? 'coming-soon' : 'dynamic';
+                  const otherHas = (other === 'dynamic' ? generatedPrerolls : generatedComingSoonLists)?.length > 0;
+                  showAlert(otherHas
+                    ? `Nothing generated on this tab yet - your generated videos are under ${other === 'dynamic' ? 'Dynamic' : 'Coming Soon'}.`
+                    : 'Nothing has been generated yet. Use Generate to make one, and it will appear here.', 'info');
+                }}><Film size={15} /> Generated videos</button>
                 <button type="button" className="button" disabled={!nexupSettings.storage_path || !ffmpegAvailable || (generatorTab === 'dynamic' ? !dynamicPrerollReady : (!nexupSettings.radarr_connected && !nexupSettings.sonarr_connected))} onClick={() => generatorTab === 'dynamic' ? handleGenerateFromPreview() : handleGenerateComingSoonList(comingSoonListSettings.layout)}><Sparkles size={15} /> {generatorTab === 'dynamic' ? 'Generate preroll' : 'Generate list'}</button>
               </>
             )}
@@ -19307,7 +19343,7 @@ const DashboardTiles = {
                 <strong>Filler is on</strong> — gaps with no active schedule play {fillerLabel()}.
               </span>
             )}
-            <button type="button" className="nx-linkbtn" onClick={() => setActiveTab('settings')}>
+            <button type="button" className="nx-linkbtn" onClick={() => { setActiveTab('settings'); setHighlightSettingsTarget('nx-settings-filler'); }}>
               {fillerSuppressedBy() ? 'Review the conflict' : fillerIsIncomplete() ? 'Finish setting it up' : 'Change'}
             </button>
           </div>
@@ -19317,8 +19353,8 @@ const DashboardTiles = {
             <span>
               <strong>No filler set</strong> — when no schedule is active, your server keeps whatever preroll was last applied.
             </span>
-            <button type="button" className="nx-linkbtn" onClick={() => setActiveTab('settings')}>
-              Enable fallback filler
+            <button type="button" className="nx-linkbtn" onClick={() => { setActiveTab('settings'); setHighlightSettingsTarget('nx-settings-filler'); }}>
+Enable fallback filler
             </button>
           </div>
         )}
@@ -19546,7 +19582,11 @@ const DashboardTiles = {
                 )}
                 {scheduleForm.type !== 'monthly' && (
                   <div className="nx-draft-fields nx-draft-date-fields">
-                    <label><span>First active date</span><input type="datetime-local" value={scheduleForm.start_date} onChange={event => setScheduleForm({ ...scheduleForm, start_date: event.target.value })} /></label>
+                    {/* Marked required, because it is. Nothing here said so,
+                        and the only thing that ever mentioned it was a toast
+                        three steps later. Monthly schedules genuinely do not
+                        need one, so the marker follows the type. */}
+                    <label><span>First active date{scheduleForm.type !== 'monthly' ? ' *' : ''}</span><input type="datetime-local" required={scheduleForm.type !== 'monthly'} value={scheduleForm.start_date} onChange={event => setScheduleForm({ ...scheduleForm, start_date: event.target.value })} /></label>
                     <label><span>Last active date</span><input type="datetime-local" value={scheduleForm.end_date} onChange={event => setScheduleForm({ ...scheduleForm, end_date: event.target.value })} /></label>
                   </div>
                 )}
@@ -19640,7 +19680,11 @@ const DashboardTiles = {
                 <button type="button" className="nx-draft-btn" disabled={scheduleCreateStep === 1} onClick={() => setScheduleCreateStep(step => Math.max(1, step - 1))}>Back</button>
               </div>
               {scheduleCreateStep < 4 ? (
-                <button key="wizard-continue" type="button" className="nx-draft-btn schedule" onClick={() => setScheduleCreateStep(step => step === 2 ? 3 : Math.min(4, step + 1))}>{scheduleCreateStep === 1 ? 'Continue to timing' : scheduleCreateStep === 2 ? 'Continue to content' : 'Continue to behavior'}</button>
+                <button key="wizard-continue" type="button" className="nx-draft-btn schedule" onClick={() => {
+                  const problem = scheduleStepProblem(scheduleCreateStep);
+                  if (problem) { showAlert(problem, 'warning'); return; }
+                  setScheduleCreateStep(step => step === 2 ? 3 : Math.min(4, step + 1));
+                }}>{scheduleCreateStep === 1 ? 'Continue to timing' : scheduleCreateStep === 2 ? 'Continue to content' : 'Continue to behavior'}</button>
               ) : (
                 <button key="wizard-submit" type="submit" className="nx-draft-btn schedule" disabled={isCreatingSchedule}><Check size={13} /> {isCreatingSchedule ? (editingSchedule ? 'Saving...' : 'Creating...') : (editingSchedule ? 'Save changes' : 'Create schedule')}</button>
               )}
