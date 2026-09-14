@@ -260,6 +260,7 @@ class Setting(Base):
     # App state
     active_category = Column(Integer, ForeignKey("categories.id"))
     timezone = Column(String, default="UTC")  # User's timezone (e.g., "America/New_York")
+    last_backup_at = Column(String, nullable=True)  # ISO time a backup was last produced
     # v2 onboarding: True once the first-run setup wizard has been completed/skipped.
     # Existing (v1.x) databases are marked complete during migration so upgraders
     # are never forced through the wizard.

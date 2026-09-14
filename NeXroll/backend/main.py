@@ -235,6 +235,12 @@ def ensure_schema() -> None:
             if not _sqlite_has_column("settings", "timezone"):
                 _sqlite_add_column("settings", "timezone TEXT DEFAULT 'UTC'")
             
+            # Settings: ensure last_backup_at column. The Backup page used to
+            # show a hardcoded "Ready" where a date belongs, so nobody could
+            # tell whether a backup had ever been taken, let alone when.
+            if not _sqlite_has_column("settings", "last_backup_at"):
+                _sqlite_add_column("settings", "last_backup_at TEXT")
+
             # Settings: ensure verbose_logging column
             if not _sqlite_has_column("settings", "verbose_logging"):
                 _sqlite_add_column("settings", "verbose_logging BOOLEAN DEFAULT 0")
@@ -16775,6 +16781,30 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
     return report
 
 
+def _stamp_backup_taken(db):
+    """Record when a backup was last produced, so the Backup page can say so."""
+    try:
+        setting = db.query(models.Setting).first()
+        if setting:
+            setting.last_backup_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+@app.get("/backup/status")
+def backup_status(db: Session = Depends(get_db)):
+    """When a backup was last produced. None means never on this install."""
+    try:
+        setting = db.query(models.Setting).first()
+        return {"last_backup_at": getattr(setting, "last_backup_at", None) if setting else None}
+    except Exception:
+        return {"last_backup_at": None}
+
+
 @app.get("/backup/database")
 def backup_database(db: Session = Depends(get_db)):
     """Export database to JSON.
@@ -16905,6 +16935,7 @@ def backup_database(db: Session = Depends(get_db)):
             "exported_by_version": app_version,
         }
 
+        _stamp_backup_taken(db)
         return data
     except Exception as e:
         log_event('ERROR', 'system', f'Database backup failed: {e}', source='backup_database')

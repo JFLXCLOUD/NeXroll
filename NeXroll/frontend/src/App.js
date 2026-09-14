@@ -1158,6 +1158,9 @@ function App() {
     token_length: 0
   });
   const [previewingPreroll, setPreviewingPreroll] = useState(null);
+  // When a backup was last taken. The tile used to print a hardcoded 'Ready'
+  // where a date belongs, so it read as a fact and told you nothing.
+  const [lastBackupAt, setLastBackupAt] = useState(undefined);
   // Media server selection for Connect page
   // Set once the user picks a server tab themselves, so the auto-follow below
   // never overrides a deliberate choice.
@@ -5447,12 +5450,26 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       triggerDownload(blob, `nexroll_database_${new Date().toISOString().split('T')[0]}.json`);
       resetBackupProgress();
       showAlert('Database backup downloaded successfully!', 'success');
+      refreshLastBackup();
     } catch (error) {
       console.error('Backup error:', error);
       resetBackupProgress();
       showAlert('Backup failed: ' + error.message, 'error');
     }
   };
+
+  // The server records when a backup was last produced; ask it, rather than
+  // printing a fixed word where a date belongs.
+  const refreshLastBackup = React.useCallback(() => {
+    fetch(apiUrl('backup/status'), { credentials: 'include' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => setLastBackupAt(data ? (data.last_backup_at || null) : null))
+      .catch(() => setLastBackupAt(null));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeTab === 'settings/backup') refreshLastBackup();
+  }, [activeTab, refreshLastBackup]);
 
   const handleBackupFiles = async () => {
     setBackupProgress({ active: true, type: 'system-backup', message: 'Compressing system backup…', percent: 0, loaded: 0, total: 0 });
@@ -7266,7 +7283,12 @@ const DashboardTiles = {
                 <span>{mode || (seq ? 'Sequence' : 'Category')}</span>
                 {count != null && <span>{count} preroll{count === 1 ? '' : 's'}</span>}
                 {blend && <span>Blending {blend}</span>}
-                {activeCategory?.is_filler && <span>Gap filler active</span>}
+                {/* Both halves matter. is_filler is a property of the category
+                    and stays true after Fallback Filler is switched off, so on
+                    its own this badge kept claiming filler was running - which
+                    on a seasonal setup reads as "Halloween content may still be
+                    served in November". */}
+                {activeCategory?.is_filler && fillerSettings?.enabled && <span>Gap filler active</span>}
                 {currentTimezone && <span>{currentTimezone}</span>}
               </div>
             )}
@@ -8610,7 +8632,18 @@ const DashboardTiles = {
         !preroll.category && !preroll.category_id && !(preroll.category_ids || []).length
       ).length;
       items = [
-        { label: 'Total prerolls', value: prerolls.length },
+        // Count what the grid will actually show. This counted every row in the
+        // database while the grid hides NeX-Up output by default, so a library
+        // of 6 with 4 generated items advertised "Total prerolls 6" above a list
+        // of 2 - reported three sessions running as the Library "undercounting".
+        // The hidden ones are named rather than dropped silently.
+        { label: 'Total prerolls',
+          value: hiddenGeneratedCount > 0
+            ? `${prerolls.length - hiddenGeneratedCount} of ${prerolls.length}`
+            : prerolls.length,
+          hint: hiddenGeneratedCount > 0
+            ? `${hiddenGeneratedCount} generated preroll${hiddenGeneratedCount === 1 ? '' : 's'} hidden from the list`
+            : undefined },
         { label: 'Library size', value: formatBytes(storageBreakdown?.locations?.find(location => location.key === 'prerolls')?.bytes || storageBreakdown?.total_bytes || 0) },
         { label: 'Community matched', value: communityMatchedCount, tone: 'success' },
         { label: 'Needs category', value: uncategorized, tone: uncategorized ? 'warning' : 'success' }
@@ -8738,10 +8771,12 @@ const DashboardTiles = {
         ];
       } else if (activeTab === 'settings/backup') {
         items = [
-          { label: 'Last backup', value: 'Ready', tone: 'success' },
+          { label: 'Last backup',
+            value: lastBackupAt === undefined ? 'Checking…' : (lastBackupAt ? new Date(lastBackupAt).toLocaleString() : 'No backup yet'),
+            tone: lastBackupAt ? 'success' : '' },
           { label: 'Database size', value: formatBytes(storageBreakdown?.locations?.find(location => location.key === 'database')?.bytes || 0) },
           { label: 'Media indexed', value: prerolls.length, tone: 'info' },
-          { label: 'Backup health', value: 'Ready', tone: 'success' }
+          { label: 'Backup health', value: lastBackupAt ? 'Backed up' : 'Never backed up', tone: lastBackupAt ? 'success' : 'warning' }
         ];
       } else {
         items = [
@@ -8757,9 +8792,9 @@ const DashboardTiles = {
     return (
       <section className="nx-route-summary" aria-label="Page summary">
         {items.map(item => (
-          <div key={item.label} className={item.tone ? `is-${item.tone}` : ''}>
+          <div key={item.label} className={item.tone ? `is-${item.tone}` : ''} title={item.hint || undefined}>
             <span>{item.label}</span>
-            <strong title={String(item.value)}>{item.value}</strong>
+            <strong title={item.hint || String(item.value)}>{item.value}</strong>
           </div>
         ))}
       </section>
