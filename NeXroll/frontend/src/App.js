@@ -624,6 +624,20 @@ const previewVideoRef = (el) => {
     try { window.localStorage.setItem(PREVIEW_VOLUME_KEY, String(el.volume)); } catch (e) {}
   });
 };
+// Where a password reset can actually be POSTed from the server itself. The port
+// has to come from whatever the browser is on rather than a constant: an install
+// whose container maps 9395 was shown a command pointing at 9393, which reaches
+// nothing on that machine.
+function localResetBase() {
+  try {
+    const loc = (typeof window !== 'undefined' && window.location) ? window.location : null;
+    if (!loc) return 'http://localhost:9393';
+    const port = loc.port ? `:${loc.port}` : '';
+    return `${loc.protocol || 'http:'}//localhost${port}`;
+  } catch {
+    return 'http://localhost:9393';
+  }
+}
 // Runtime API base resolver + CORS shield: rewrite hardcoded http://localhost:9393 to same-origin or configured base
 (function setupNeXrollApiBase() {
   try {
@@ -37333,13 +37347,15 @@ const DashboardTiles = {
                 display: 'block', overflowX: 'auto', whiteSpace: 'pre',
                 padding: '0.6rem 0.7rem', borderRadius: '6px', fontSize: '0.78rem',
                 backgroundColor: darkMode ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.05)'
-              }}>{`curl -X POST http://localhost:9393/auth/reset-password \
+              }}>{`curl -X POST ${localResetBase()}/auth/reset-password \
   -H "Content-Type: application/json" \
   -d '{"username":"YOUR_USERNAME","new_password":"NewPassword1"}'`}</code>
               <p style={{ margin: '0.5rem 0 0' }}>
                 Running NeXroll in Docker? Put <code>docker exec &lt;container&gt;</code> in
-                front of that command. The new password needs at least 8 characters,
-                upper and lower case, and a digit.
+                front of that command, and change the port to the one inside the
+                container (<code>9393</code> unless you changed it) - the address above
+                is the one your browser uses to reach it from outside. The new password
+                needs at least 8 characters, upper and lower case, and a digit.
               </p>
             </div>
           )}
