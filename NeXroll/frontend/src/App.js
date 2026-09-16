@@ -34295,8 +34295,41 @@ const DashboardTiles = {
       },
     ];
 
+    // Say up front that more than one server is allowed. NeXroll used to refuse
+    // a second connection, so anyone who tried before has learned it is not
+    // possible - and someone arriving fresh has no reason to guess it is. The
+    // line adapts rather than repeating itself once you are already set up.
+    const connectedNow = getConnectedServers();
+    const notConnected = ['plex', 'jellyfin', 'emby'].filter(id => !connectedNow.includes(id));
+
     return (
       <div className="nx-connect">
+        <div className={`nx-conn-banner${connectedNow.length > 1 ? ' ok' : ''}`}>
+          <Server size={15} style={{ flexShrink: 0 }} />
+          <span>
+            {connectedNow.length > 1 ? (
+              <>
+                <strong>Connected to {describeServers(connectedNow)}.</strong>{' '}
+                Every schedule, filler and category you set applies to all of them — the same
+                prerolls play on each.
+              </>
+            ) : connectedNow.length === 1 ? (
+              <>
+                <strong>You can connect more than one server.</strong>{' '}
+                {describeServers(connectedNow)} is set up; add {describeServers(notConnected)} as
+                well if you run {notConnected.length > 1 ? 'them' : 'it'}, and everything you
+                schedule will apply to all of them.
+              </>
+            ) : (
+              <>
+                <strong>Connect as many servers as you run.</strong>{' '}
+                Plex, Jellyfin and Emby can all be connected at once, and whatever you schedule
+                applies to every one of them.
+              </>
+            )}
+          </span>
+        </div>
+
         {/* One self-contained card per server: identity, live status, and key
             details together — no separate status banner repeating the same info. */}
         <div className="nx-connect-card-grid" role="tablist" aria-label="Media server">
@@ -34343,15 +34376,6 @@ const DashboardTiles = {
             );
           })}
         </div>
-
-        {/* Several servers at once is the supported setup now, not an error.
-            This banner used to tell people to disconnect all but one. */}
-        {getConnectedServers().length > 1 && (
-          <div className="nx-conn-banner">
-            Connected to {describeServers(getConnectedServers())}. Whatever you schedule
-            applies to all of them.
-          </div>
-        )}
 
         {/* Active panel — connect form (not connected) or extra settings (connected) */}
         <div id={`panel-${activeServer}`} role="tabpanel" aria-labelledby={`tab-${activeServer}`}>
