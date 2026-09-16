@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form, Request, Query, Body, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, select, func, text
@@ -4544,339 +4544,17 @@ def require_auth(request: Request, db: Session = Depends(get_db)) -> models.User
     return user
 
 
-@app.get("/dashboard")
+@app.get("/dashboard", include_in_schema=False)
 def dashboard():
-    html = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>NeXroll Dashboard</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  :root{--bg:#fafafa;--card:#fff;--text:#222;--muted:#666;--border:#e5e7eb;--brand:#0b1020;--brandText:#d1f7c4}
-  body{font-family:Segoe UI, Arial, sans-serif; margin:24px; color:var(--text); background:var(--bg)}
-  h1{margin:0 0 12px 0}
-  small{color:var(--muted)}
-  button{padding:8px 12px; margin:8px 8px 8px 0; cursor:pointer}
-  pre{background:var(--brand);color:var(--brandText);padding:12px;border-radius:6px;white-space:pre-wrap;max-width:100%;overflow:auto}
-  .card{background:var(--card);padding:16px;border:1px solid var(--border);border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,0.04);margin-bottom:16px}
-  .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
-  .field{display:flex; flex-direction:column; margin:6px 12px 6px 0}
-  .field label{font-size:12px; color:#444; margin-bottom:4px}
-  input[type="text"], input[type="number"], textarea, select{
-    padding:8px; border:1px solid var(--border); border-radius:6px; min-width:220px; font-family:inherit
-  }
-  input[type="checkbox"]{transform:translateY(2px)}
-  table{border-collapse:collapse; width:100%; margin-top:8px}
-  th, td{border:1px solid var(--border); padding:8px; text-align:left}
-  th{background:#f3f4f6; font-weight:600}
-  .muted{color:#666; font-size:12px}
-</style>
-</head>
-<body>
-  <h1>NeXroll Dashboard</h1>
+    """Send /dashboard into the app.
 
-  <!-- Quick actions -->
-  <div class="card">
-    <div class="row">
-      <button onclick="reinit()">Reinitialize Thumbnails</button>
-      <button onclick="ffmpeg()">FFmpeg Info</button>
-      <button onclick="plex()">Plex Status</button>
-      <button onclick="jellyfin()">Jellyfin Status</button>
-      <button onclick="version()">Version</button>
-      <small id="status"></small>
-    </div>
-  </div>
-
-  <!-- Path Mappings -->
-  <div class="card">
-    <h2 style="margin:0 0 8px 0;">Path Mappings</h2>
-    <div class="muted">Define how local/UNC paths translate to the path Plex sees. Longest-prefix wins; Windows is case-insensitive.</div>
-
-    <div class="row" style="margin-top:8px;">
-      <button onclick="loadMappings()">Load Mappings</button>
-      <button onclick="addMappingRow()">Add Row</button>
-      <button onclick="saveMappings(false)">Save (Replace)</button>
-      <button onclick="saveMappings(true)">Save (Merge)</button>
-    </div>
-
-    <table id="mapTable">
-      <thead>
-        <tr><th style="width:45%;">Local Prefix (e.g. \\\\NAS\\PreRolls or D:\\Media\\Prerolls)</th><th style="width:45%;">Plex Prefix (e.g. Z:\\PreRolls or /mnt/prerolls)</th><th style="width:10%;">Actions</th></tr>
-      </thead>
-      <tbody id="mapTableBody">
-      </tbody>
-    </table>
-
-    <div class="row" style="margin-top:12px;">
-      <div class="field" style="flex:1 1 420px;">
-        <label for="testPaths">Test translation (one path per line)</label>
-        <textarea id="testPaths" rows="4" placeholder="\\\\NAS\\PreRolls\\Holiday\\intro.mp4"></textarea>
-      </div>
-    </div>
-    <div class="row">
-      <button onclick="testMappings()">Run Test</button>
-    </div>
-    <pre id="mapOut">Mappings ready.</pre>
-  </div>
-
-  <!-- Map External Folder -->
-  <div class="card">
-    <h2 style="margin:0 0 8px 0;">Map External Folder (No Copy/Move)</h2>
-    <div class="muted">Indexes an existing folder (local or UNC) into NeXroll. Files are marked managed=false so NeXroll will not move/delete them.</div>
-
-    <div class="row" style="margin-top:8px;">
-      <div class="field" style="flex:1 1 420px;">
-        <label for="rootPath">Root Path</label>
-        <input type="text" id="rootPath" placeholder="\\\\NAS\\PreRolls\\Holiday or D:\\Media\\Prerolls\\Holiday" />
-      </div>
-      <div class="field">
-        <label for="categoryId">Category ID (optional)</label>
-        <input type="number" id="categoryId" placeholder="e.g. 5" />
-      </div>
-      <div class="field">
-        <label for="extensions">Extensions (comma)</label>
-        <input type="text" id="extensions" value="mp4,mkv,mov,avi,m4v,webm" />
-      </div>
-    </div>
-
-    <div class="row">
-      <div class="field">
-        <label>
-          <input type="checkbox" id="recursive" checked />
-          Recursive
-        </label>
-      </div>
-      <div class="field">
-        <label>
-          <input type="checkbox" id="generateThumbnails" checked />
-          Generate Thumbnails
-        </label>
-      </div>
-      <div class="field" style="flex:1 1 420px;">
-        <label for="tags">Tags (comma, optional)</label>
-        <input type="text" id="tags" placeholder="mapped,external" />
-      </div>
-    </div>
-
-    <div class="row" style="margin-top:8px;">
-      <button onclick="mapRoot(true)">Dry Run</button>
-      <button onclick="mapRoot(false)">Map Now</button>
-    </div>
-    <pre id="mapRootOut">Ready.</pre>
-  </div>
-
-  <!-- Output -->
-  <div class="card">
-    <pre id="out">Ready.</pre>
-  </div>
-
-<script>
-function setOut(t){document.getElementById('out').textContent=t;}
-function setStatus(t){document.getElementById('status').textContent=t;}
-function setMapOut(t){document.getElementById('mapOut').textContent=t;}
-function setMapRootOut(t){document.getElementById('mapRootOut').textContent=t;}
-
-function addMappingRow(local='', plex=''){
-  const tb = document.getElementById('mapTableBody');
-  const tr = document.createElement('tr');
-  tr.innerHTML = `
-    <td><input type="text" class="mapLocal" placeholder="\\\\\\NAS\\PreRolls or D:\\\\Media\\\\Prerolls" style="width:100%;"/></td>
-    <td><input type="text" class="mapPlex" placeholder="Z:\\\\PreRolls or /mnt/prerolls" style="width:100%;"/></td>
-    <td><button type="button" onclick="this.closest('tr').remove()">Remove</button></td>
-  `;
-  tb.appendChild(tr);
-  // Set values after insertion to avoid JS parsing issues with backslashes in HTML attributes
-  try{
-    const loc = tr.querySelector('.mapLocal');
-    const plx = tr.querySelector('.mapPlex');
-    if(loc) loc.value = local || '';
-    if(plx) plx.value = plex || '';
-  }catch(e){}
-}
-
-async function loadMappings(){
-  setMapOut('GET /settings/path-mappings ...');
-  try{
-    const res = await fetch('/settings/path-mappings');
-    const j = await res.json();
-    const tb = document.getElementById('mapTableBody');
-    tb.innerHTML = '';
-    const maps = (j && j.mappings) ? j.mappings : [];
-    for(const m of maps){
-      addMappingRow(m.local || '', m.plex || '');
-    }
-    if(maps.length === 0){ addMappingRow(); }
-    setMapOut(JSON.stringify(j,null,2));
-  }catch(e){
-    setMapOut('Error: '+e);
-  }
-}
-
-function collectMappings(){
-  const rows = Array.from(document.querySelectorAll('#mapTableBody tr'));
-  const out = [];
-  for(const r of rows){
-    const local = (r.querySelector('.mapLocal')?.value || '').trim();
-    const plex = (r.querySelector('.mapPlex')?.value || '').trim();
-    if(local && plex){ out.push({local, plex}); }
-  }
-  return out;
-}
-
-async function saveMappings(merge){
-  const mappings = collectMappings();
-  const payload = { mappings };
-  setMapOut((merge? 'PUT /settings/path-mappings?merge=true' : 'PUT /settings/path-mappings') + ' ...');
-  try{
-    const res = await fetch('/settings/path-mappings' + (merge ? '?merge=true' : ''), {
-      method:'PUT',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const j = await res.json();
-    setMapOut(JSON.stringify(j,null,2));
-  }catch(e){
-    setMapOut('Error: '+e);
-  }
-}
-
-async function testMappings(){
-  const raw = (document.getElementById('testPaths').value || '').split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
-  const payload = { paths: raw };
-  setMapOut('POST /settings/path-mappings/test ...');
-  try{
-    const res = await fetch('/settings/path-mappings/test', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const j = await res.json();
-    setMapOut(JSON.stringify(j,null,2));
-  }catch(e){
-    setMapOut('Error: '+e);
-  }
-}
-
-function parseExtensions(str){
-  if(!str) return [];
-  return str.split(',').map(s=>s.trim()).filter(Boolean).map(s => s.startsWith('.') ? s : ('.'+s));
-}
-
-function parseTags(str){
-  if(!str) return null;
-  const t = str.split(',').map(s=>s.trim()).filter(Boolean);
-  return t.length ? t : null;
-}
-
-async function mapRoot(isDry){
-  const root_path = (document.getElementById('rootPath').value || '').trim();
-  const categoryRaw = (document.getElementById('categoryId').value || '').trim();
-  const category_id = categoryRaw ? parseInt(categoryRaw, 10) : null;
-  const recursive = document.getElementById('recursive').checked;
-  const exts = parseExtensions((document.getElementById('extensions').value || ''));
-  const generate_thumbnails = document.getElementById('generateThumbnails').checked;
-  const tags = parseTags((document.getElementById('tags').value || ''));
-
-  const payload = {
-    root_path,
-    category_id,
-    recursive,
-    extensions: exts,
-    dry_run: !!isDry,
-    generate_thumbnails,
-    tags
-  };
-
-  setMapRootOut('POST /prerolls/map-root ...');
-  try{
-    const res = await fetch('/prerolls/map-root', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const j = await res.json();
-    setMapRootOut(JSON.stringify(j,null,2));
-  }catch(e){
-    setMapRootOut('Error: '+e);
-  }
-}
-
-/* Existing quick actions */
-async function reinit(){
-  setStatus('Rebuilding thumbnails...');
-  setOut('POST /thumbnails/rebuild?force=true ...');
-  try{
-    const res = await fetch('/thumbnails/rebuild?force=true', { method:'POST' });
-    const j = await res.json();
-    setOut(JSON.stringify(j,null,2));
-    setStatus('Done.');
-  }catch(e){
-    setOut('Error: '+e);
-    setStatus('Failed.');
-  }
-}
-
-async function ffmpeg(){
-  setStatus('Probing ffmpeg...');
-  try{
-    const res = await fetch('/system/ffmpeg-info');
-    const j = await res.json();
-    setOut(JSON.stringify(j,null,2));
-    setStatus('OK.');
-  }catch(e){
-    setOut('Error: '+e);
-    setStatus('Failed.');
-  }
-}
-
-async function plex(){
-  setStatus('Checking Plex status...');
-  try{
-    const res = await fetch('/plex/status');
-    const j = await res.json();
-    setOut(JSON.stringify(j,null,2));
-    setStatus('OK.');
-  }catch(e){
-    setOut('Error: '+e);
-    setStatus('Failed.');
-  }
-}
-
-async function jellyfin(){
-  setStatus('Checking Jellyfin status...');
-  try{
-    const res = await fetch('/jellyfin/status');
-    const j = await res.json();
-    setOut(JSON.stringify(j,null,2));
-    setStatus('OK.');
-  }catch(e){
-    setOut('Error: '+e);
-    setStatus('Failed.');
-  }
-}
-
-async function version(){
-  setStatus('Getting version...');
-  try{
-    const res = await fetch('/system/version');
-    const j = await res.json();
-    setOut(JSON.stringify(j,null,2));
-    setStatus('OK.');
-  }catch(e){
-    setOut('Error: '+e);
-    setStatus('Failed.');
-  }
-}
-
-/* Initialize UI */
-window.addEventListener('DOMContentLoaded', () => {
-  loadMappings().catch(()=>{});
-});
-</script>
-</body>
-</html>"""
-    return Response(content=html, media_type="text/html")
+    This used to serve a separate hand-written admin page - its own styling, its
+    own path-mapping and thumbnail controls, none of the real UI. Typing the
+    address without the "#" landed there, so people found a stale parallel
+    NeXroll and reasonably assumed it was the product. The routes it offered all
+    exist in the app proper.
+    """
+    return RedirectResponse(url="/#/dashboard", status_code=307)
 
 # ============================================================================
 # API Keys Management - External API Authentication
@@ -30194,6 +29872,37 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     except Exception as e:
         log_event('ERROR', 'system', f'Failed to gather stats: {e}', source='get_stats')
         raise HTTPException(status_code=500, detail=f"Failed to gather stats: {str(e)}")
+
+
+# A person typing an app address without the "#" used to get a bare JSON 404
+# ("/library" -> {"detail":"Not Found"}), which reads as a broken install rather
+# than a mistyped URL. Send those to the matching hash route.
+#
+# An allow-list, not a heuristic. Several app routes share a name with a real
+# endpoint - /schedules and /settings/paths both answer the API - so anything
+# cleverer risks swallowing a 404 an API client needs to see. These are the
+# app's own page ids; keep them in step with PAGE_META in App.js.
+_APP_ROUTES = frozenset({
+    "community-prerolls", "community-prerolls/browse", "community-prerolls/search",
+    "connect", "dashboard", "library",
+    "library/add", "library/categories", "library/scaling",
+    "library/trash", "nexup", "nexup/generator",
+    "nexup/settings", "nexup/trailers", "nexup/upcoming",
+    "schedules", "schedules/builder", "schedules/calendar",
+    "schedules/conflicts", "schedules/create", "schedules/library",
+    "settings", "settings/apikeys", "settings/backup",
+    "settings/logs", "settings/paths", "settings/storage",
+    "settings/system", "settings/users",
+})
+
+
+@app.exception_handler(404)
+async def _spa_route_fallback(request: Request, exc):
+    path = request.url.path.strip("/")
+    accepts_html = "text/html" in (request.headers.get("accept") or "")
+    if accepts_html and path in _APP_ROUTES:
+        return RedirectResponse(url=f"/#/{path}", status_code=307)
+    return JSONResponse({"detail": getattr(exc, "detail", "Not Found")}, status_code=404)
 
 
 # Static frontend mount — MUST be after all API route definitions since
