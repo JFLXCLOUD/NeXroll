@@ -4256,18 +4256,27 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     };
 
 
-  // Determine which server is actively connected (enforce single-server UX)
-  const getActiveConnectedServer = () => {
-    const plexConnected = plexStatus === 'Connected';
-    const jellyConnected = jellyfinStatus === 'Connected';
-    const embyConnected = embyStatus === 'Connected';
-    const count = [plexConnected, jellyConnected, embyConnected].filter(Boolean).length;
-    if (count > 1) return 'conflict';
-    if (plexConnected) return 'plex';
-    if (jellyConnected) return 'jellyfin';
-    if (embyConnected) return 'emby';
-    return null;
+  // Every media server currently connected, in the order we apply to them.
+  // NeXroll used to allow exactly one: a second connection was refused at the
+  // Connect button, and any that slipped through was reported as a "conflict"
+  // that disabled applying entirely. Nothing in the backend required that -
+  // the scheduler writes to Plex and the plugin channel independently - so a
+  // household running Plex and Jellyfin was being told to pick one for no
+  // reason. Whatever is scheduled now applies to all of them.
+  const getConnectedServers = () => {
+    const connected = [];
+    if (plexStatus === 'Connected') connected.push('plex');
+    if (jellyfinStatus === 'Connected') connected.push('jellyfin');
+    if (embyStatus === 'Connected') connected.push('emby');
+    return connected;
   };
+
+  // A single server to point the UI at - which tab to open, whose details to
+  // show in a one-server tile. Never a gate on whether work can happen.
+  const getActiveConnectedServer = () => getConnectedServers()[0] || null;
+
+  const SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+  const describeServers = (ids) => ids.map(id => SERVER_LABELS[id] || id).join(' and ');
 
   // Open the Connections page on the server you actually run. The tab defaulted
   // to Plex, so a Jellyfin-only user landed on the Plex panel, while the
@@ -4278,29 +4287,32 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   useEffect(() => {
     if (userPickedServerRef.current) return;
     const connected = getActiveConnectedServer();
-    if (connected && connected !== 'conflict' && connected !== activeServer) {
+    if (connected && connected !== activeServer) {
       setActiveServer(connected);
     }
   }, [plexStatus, jellyfinStatus, embyStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleApplyCategoryToActiveServer = (categoryId, categoryName) => {
-    const server = getActiveConnectedServer();
-    if (server === 'plex') {
-      return handleApplyCategoryToPlex(categoryId, categoryName);
-    }
-    if (server === 'jellyfin') {
-      return handleApplyCategoryToJellyfin(categoryId, categoryName);
-    }
-    if (server === 'emby') {
-      // Emby uses the plugin for preroll injection — no direct "apply" needed
-      alert('Emby uses the NeXroll Intros plugin for preroll injection. Set an active category or filler, and the plugin will pick it up automatically.');
+  // Apply to every connected server, not whichever one happened to be first.
+  // Plex needs an explicit push; Jellyfin and Emby read the active category
+  // through the plugin, so setting it is the apply for them.
+  const handleApplyCategoryToActiveServer = async (categoryId, categoryName) => {
+    const servers = getConnectedServers();
+    if (!servers.length) {
+      alert('No media server connected. Connect to Plex, Jellyfin, or Emby first.');
       return;
     }
-    if (server === 'conflict') {
-      alert('Multiple media servers are connected. Only one connection is allowed at a time. Disconnect extras on the Connect tab, then try again.');
-      return;
+    if (servers.includes('plex')) {
+      await handleApplyCategoryToPlex(categoryId, categoryName);
     }
-    alert('No media server connected. Connect to Plex, Jellyfin, or Emby first.');
+    if (servers.includes('jellyfin')) {
+      await handleApplyCategoryToJellyfin(categoryId, categoryName);
+    }
+    // Emby is plugin-only: there is no push, and the category set above is what
+    // its plugin will serve. Say so rather than staying silent, but only when
+    // Emby is the only thing connected - otherwise the other alerts covered it.
+    if (servers.includes('emby') && servers.length === 1) {
+      alert(`"${categoryName}" is now the active category. Emby's NeXroll Intros plugin will pick it up on the next playback.`);
+    }
   };
 
   // ========== Category Management Advanced Features ==========
@@ -5350,23 +5362,30 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       return;
     }
     
-    const server = getActiveConnectedServer();
-    if (!server || server === 'conflict') {
-      alert('No media server connected or multiple servers connected');
+    const servers = getConnectedServers();
+    if (!servers.length) {
+      alert('No media server connected. Connect to Plex, Jellyfin, or Emby first.');
       return;
     }
-    
-    const confirmMsg = `Apply ${selectedCategoryIds.length} selected categories to ${server === 'plex' ? 'Plex' : 'Jellyfin'}?`;
+
+    const confirmMsg = `Apply ${selectedCategoryIds.length} selected categories to ${describeServers(servers)}?`;
     if (!await showConfirm(confirmMsg, { title: 'Apply Categories', type: 'info', confirmText: 'Apply' })) return;
     
     try {
-      const endpoint = server === 'plex' ? 'apply-to-plex' : 'apply-to-jellyfin';
+      // One request per server that needs a push. Emby takes none - its plugin
+      // reads the active category these calls set.
+      const endpoints = [];
+      if (servers.includes('plex')) endpoints.push('apply-to-plex');
+      if (servers.includes('jellyfin')) endpoints.push('apply-to-jellyfin');
+      if (!endpoints.length) endpoints.push('apply-to-jellyfin'); // Emby-only: sets the active category
       await Promise.all(
-        selectedCategoryIds.map(id => 
-          fetch(apiUrl(`categories/${id}/${endpoint}`), { method: 'POST' })
+        selectedCategoryIds.flatMap(id =>
+          endpoints.map(endpoint =>
+            fetch(apiUrl(`categories/${id}/${endpoint}`), { method: 'POST' })
+          )
         )
       );
-      alert(`Successfully applied ${selectedCategoryIds.length} categories!`);
+      alert(`Successfully applied ${selectedCategoryIds.length} categories to ${describeServers(servers)}!`);
       setSelectedCategoryIds([]);
       setBulkActionMode(false);
       fetchData();
@@ -6480,10 +6499,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setEditingCategory(null);
         setNewCategory({ name: '', description: '' });
         try { fetchData(); } catch {}
-      } else if (server === 'conflict') {
-        alert('Saved. Both Plex and Jellyfin are connected. Disconnect one on the Connect tab, then apply from the category card.');
-        setEditingCategory(null);
-        setNewCategory({ name: '', description: '' });
       } else {
         alert('Saved. No media server is connected. Connect on the Connect tab, then use "Apply to Server" on the category.');
         setEditingCategory(null);
@@ -7690,13 +7705,6 @@ const DashboardTiles = {
               )}
             </div>
           </>
-        ) : s === 'conflict' ? (
-          <>
-            <p className="nx-tile-status" style={{ color: '#dc3545' }}>Conflict</p>
-            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>
-              Multiple servers connected. Disconnect extras on the Connections page.
-            </p>
-          </>
         ) : (
           <>
             <p className="nx-tile-status" style={{ color: 'var(--text-secondary, #888)' }}>Not connected</p>
@@ -8748,25 +8756,31 @@ const DashboardTiles = {
       // "Active server" / "Connection" describe NeXroll's actual integration
       // state (getActiveConnectedServer), not just whichever card the user
       // happens to be previewing below (activeServer) — those are independent.
-      const realActive = getActiveConnectedServer(); // 'plex' | 'jellyfin' | 'emby' | 'conflict' | null
-      const activeLabel = realActive === 'conflict' ? 'Conflict' : realActive ? realActive.charAt(0).toUpperCase() + realActive.slice(1) : 'None';
-      const connectionValue = realActive === 'conflict' ? 'Multiple' : realActive ? 'Connected' : 'Disconnected';
-      const connectionTone = realActive === 'conflict' ? 'warning' : realActive ? 'success' : 'warning';
+      // Several servers connected is a supported setup, not a warning state.
+      const connectedServers = getConnectedServers();
+      const realActive = connectedServers[0] || null;
+      const activeLabel = connectedServers.length ? describeServers(connectedServers) : 'None';
+      const connectionValue = connectedServers.length > 1
+        ? `${connectedServers.length} connected`
+        : connectedServers.length ? 'Connected' : 'Disconnected';
+      const connectionTone = connectedServers.length ? 'success' : 'warning';
       // pathMappings always carries at least one blank placeholder row (for the
       // Path Mappings form's empty state) — filter those out so the tile reflects
       // real saved mappings, not the placeholder. Path mappings are Plex-only, so
       // Jellyfin/Emby show their real plugin-client count instead.
       const realPathMappingCount = pathMappings.filter(mapping => (mapping.local || '').trim() && (mapping.plex || '').trim()).length;
-      const pluginClientCount = realActive === 'jellyfin'
-        ? (jellyfinServerInfo?.plugin_clients?.length || 0)
-        : realActive === 'emby'
-          ? (embyServerInfo?.plugin_clients?.length || 0)
-          : 0;
-      const thirdTile = (realActive === 'jellyfin' || realActive === 'emby')
+      // Count plugin clients across every plugin-based server that is connected,
+      // not just whichever one happens to be first in the list.
+      const pluginClientCount =
+        (connectedServers.includes('jellyfin') ? (jellyfinServerInfo?.plugin_clients?.length || 0) : 0)
+        + (connectedServers.includes('emby') ? (embyServerInfo?.plugin_clients?.length || 0) : 0);
+      const usesPlugin = connectedServers.includes('jellyfin') || connectedServers.includes('emby');
+      const thirdTile = usesPlugin
         ? { label: 'Plugin clients', value: pluginClientCount, tone: pluginClientCount ? 'success' : '' }
         : { label: 'Path mappings', value: realPathMappingCount, tone: realPathMappingCount ? 'success' : '' };
       items = [
-        { label: 'Active server', value: activeLabel, tone: realActive === 'conflict' ? 'warning' : realActive ? 'info' : '' },
+        { label: connectedServers.length > 1 ? 'Servers' : 'Active server', value: activeLabel,
+          tone: connectedServers.length ? 'info' : '' },
         { label: 'Connection', value: connectionValue, tone: connectionTone },
         thirdTile,
         { label: 'Schedules applied', value: activeScheduleIds.length, tone: activeScheduleIds.length ? 'success' : '' }
@@ -8793,14 +8807,13 @@ const DashboardTiles = {
         const realMappings = pathMappings.filter(mapping => (mapping.local || '').trim() && (mapping.plex || '').trim());
         // Report the server actually connected, not whichever card happens to be
         // selected for editing over on the Connect page — those are independent.
-        const pathsActive = getActiveConnectedServer();
-        const pathsActiveLabel = pathsActive === 'conflict' ? 'Conflict'
-          : pathsActive ? pathsActive.charAt(0).toUpperCase() + pathsActive.slice(1)
-          : 'None';
+        const pathsServers = getConnectedServers();
+        const pathsActiveLabel = pathsServers.length ? describeServers(pathsServers) : 'None';
         items = [
           { label: 'Mappings', value: realMappings.length },
           { label: 'Verified', value: realMappings.filter(mapping => mapping.verified || mapping.is_valid).length, tone: 'success' },
-          { label: 'Active server', value: pathsActiveLabel, tone: pathsActive === 'conflict' ? 'warning' : pathsActive ? 'info' : '' },
+          { label: pathsServers.length > 1 ? 'Servers' : 'Active server', value: pathsActiveLabel,
+            tone: pathsServers.length ? 'info' : '' },
           { label: 'Last tested', value: realMappings.length ? 'Today' : 'Not yet', tone: realMappings.length ? 'success' : 'warning' }
         ];
       } else if (activeTab === 'settings/storage') {
@@ -21717,7 +21730,7 @@ const DashboardTiles = {
                             }}
                             className="button"
                             style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
-                            disabled={(() => { const s = getActiveConnectedServer(); return !s || s === 'conflict'; })() || applyingToServer}
+                            disabled={getConnectedServers().length === 0 || applyingToServer}
                             title="Apply to Server"
                           >
                             <Film size={14} />
@@ -21838,10 +21851,6 @@ const DashboardTiles = {
 
   const handleConnectPlex = (e) => {
     e.preventDefault();
-    if (jellyfinStatus === 'Connected') {
-      alert('Disconnect Jellyfin first (only one media server connection at a time).');
-      return;
-    }
     fetch(apiUrl('plex/connect'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -21867,10 +21876,6 @@ const DashboardTiles = {
 
   const handleConnectPlexStableToken = (e) => {
     e.preventDefault();
-    if (jellyfinStatus === 'Connected') {
-      alert('Disconnect Jellyfin first (only one media server connection at a time).');
-      return;
-    }
     fetch(apiUrl('plex/connect/stable-token'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -21919,10 +21924,6 @@ const DashboardTiles = {
   // Jellyfin connect/disconnect handlers
   const handleConnectJellyfin = (e) => {
     e.preventDefault();
-    if (plexStatus === 'Connected') {
-      alert('Disconnect Plex first (only one media server connection at a time).');
-      return;
-    }
     fetch(apiUrl('jellyfin/connect'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -22039,11 +22040,6 @@ const DashboardTiles = {
   // Emby connect/disconnect handlers
   const handleConnectEmby = (e) => {
     e.preventDefault();
-    const server = getActiveConnectedServer();
-    if (server && server !== 'emby') {
-      alert(`Disconnect ${server === 'plex' ? 'Plex' : 'Jellyfin'} first (only one media server connection at a time).`);
-      return;
-    }
     fetch(apiUrl('emby/connect'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -22193,10 +22189,6 @@ const DashboardTiles = {
 
   const startPlexOAuth = async () => {
     try {
-      if (jellyfinStatus === 'Connected') {
-        alert('Disconnect Jellyfin first (only one media server connection at a time).');
-        return;
-      }
       setPlexOAuth({ id: null, url: '', status: 'starting', error: null });
       const res = await fetch(apiUrl('plex/tv/start'), { method: 'POST' });
       const data = await res.json();
@@ -34302,7 +34294,6 @@ const DashboardTiles = {
         disconnect: handleDisconnectEmby,
       },
     ];
-    const activeConnected = getActiveConnectedServer();
 
     return (
       <div className="nx-connect">
@@ -34353,9 +34344,12 @@ const DashboardTiles = {
           })}
         </div>
 
-        {activeConnected === 'conflict' && (
-          <div role="alert" className="nx-conn-banner warn">
-            Multiple media servers are connected. Disconnect all but one before proceeding.
+        {/* Several servers at once is the supported setup now, not an error.
+            This banner used to tell people to disconnect all but one. */}
+        {getConnectedServers().length > 1 && (
+          <div className="nx-conn-banner">
+            Connected to {describeServers(getConnectedServers())}. Whatever you schedule
+            applies to all of them.
           </div>
         )}
 
