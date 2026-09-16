@@ -151,6 +151,14 @@ COPY NeXroll/frontend/build /app/NeXroll/frontend/build
 # Jellyfin plugin package, served for download from the Connect page
 COPY --from=pluginbuild /out/NeXroll.Jellyfin.zip /app/plugins/NeXroll.Jellyfin.zip
 
+# Emby plugin assembly, served the same way. Prebuilt rather than compiled in a
+# stage above: Emby ships no NuGet SDK, so building it needs MediaBrowser.*.dll
+# lifted from an Emby install, and those are deliberately not in this repo.
+# Without this an Emby user was sent to GitHub's raw view of main - outbound
+# internet from a server that often has none, fetching whatever is on the
+# default branch instead of the build they are running.
+COPY Plugins/NeXroll.Emby.dll /app/plugins/NeXroll.Emby.dll
+
 # Prepare persistent data volume
 RUN mkdir -p /data /data/prerolls
 

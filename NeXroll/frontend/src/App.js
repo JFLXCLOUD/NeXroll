@@ -1224,6 +1224,9 @@ function App() {
 
   // Emby plugin remote-detection state
   const [embyPluginInfo, setEmbyPluginInfo] = useState(null);
+  // Whether this build can hand out the Emby plugin itself, so the panel can
+  // offer a local download instead of sending the user to GitHub.
+  const [embyPluginBundled, setEmbyPluginBundled] = useState(null);
   const [embyPluginConfiguring, setEmbyPluginConfiguring] = useState(false);
   const [embyPluginNexrollUrl, setEmbyPluginNexrollUrl] = useState('');
   const [embyPluginPathFrom, setEmbyPluginPathFrom] = useState('');
@@ -22089,6 +22092,18 @@ const DashboardTiles = {
       });
   };
 
+  // Ask once whether the plugin ships with this build. Cheap, and the answer
+  // decides whether the install steps offer a local file or a GitHub link.
+  useEffect(() => {
+    if (activeTab !== 'connect' || embyPluginBundled !== null) return;
+    let cancelled = false;
+    fetch(apiUrl('emby/plugin/available'))
+      .then(res => (res.ok ? res.json() : { available: false }))
+      .then(data => { if (!cancelled) setEmbyPluginBundled(!!data.available); })
+      .catch(() => { if (!cancelled) setEmbyPluginBundled(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, embyPluginBundled]);
+
   // Emby plugin detection & remote configuration
   const handleDetectEmbyPlugin = () => {
     fetch(apiUrl('emby/plugin/detect'))
@@ -33950,12 +33965,25 @@ const DashboardTiles = {
           <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7', fontSize: '0.9rem' }}>
             <li>
               Download{' '}
-              <a
-                href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll"
-                target="_blank"
-                rel="noreferrer"
-                style={{ color: 'var(--accent-color, #7c4dff)' }}
-              >NeXroll.Emby.dll</a>
+              {embyPluginBundled === false ? (
+                <a
+                  href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: 'var(--accent-color, #7c4dff)' }}
+                >NeXroll.Emby.dll</a>
+              ) : (
+                <a
+                  href={apiUrl('emby/plugin/download')}
+                  download="NeXroll.Emby.dll"
+                  style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}
+                >NeXroll.Emby.dll</a>
+              )}
+              {embyPluginBundled === false && (
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  {' '}(from GitHub — this build does not bundle the plugin)
+                </span>
+              )}
             </li>
             <li>Copy it into Emby's <code>plugins/</code> folder and restart Emby</li>
             <li>

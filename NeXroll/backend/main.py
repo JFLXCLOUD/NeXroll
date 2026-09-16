@@ -26502,6 +26502,82 @@ def download_jellyfin_plugin():
     )
 
 
+
+def _resolve_emby_plugin_dll() -> Optional[str]:
+    """Locate the bundled NeXroll Intros (Emby) plugin DLL to offer for download.
+
+    Same search order as the Jellyfin package. Emby takes a bare DLL dropped in
+    its plugins folder - there is no meta.json or repository catalog the way
+    Jellyfin has - so this serves the assembly itself rather than a zip.
+
+    Serving it from the running NeXroll matters more here than it does for
+    Jellyfin: the Emby panel used to link to GitHub's raw view of `main`, which
+    needs outbound internet from a machine that often has none, and which tracks
+    whatever is on the default branch rather than the build you are running.
+    """
+    bases: list = []
+    env = os.environ.get("NEXROLL_EMBY_PLUGIN_DLL")
+    if env:
+        bases.append(env)  # may point at the DLL directly or a containing dir
+    mei = getattr(sys, "_MEIPASS", None)
+    if mei:
+        bases.append(os.path.join(mei, "plugins"))
+    try:
+        bases.append(os.path.join(os.path.dirname(sys.executable), "plugins"))
+    except Exception:
+        pass
+    bases.append("/app/plugins")
+    bases.append(os.path.join(os.getcwd(), "plugins"))
+    # Dev source tree: NeXroll/backend/main.py -> ../../Plugins
+    here = os.path.dirname(os.path.abspath(__file__))
+    bases.append(os.path.abspath(os.path.join(here, "..", "..", "Plugins")))
+    bases.append(os.path.abspath(os.path.join(here, "..", "..", "Plugins", "NeXroll.Emby")))
+    for base in bases:
+        try:
+            if not base:
+                continue
+            if os.path.isfile(base) and base.lower().endswith(".dll"):
+                return base
+            if os.path.isdir(base):
+                matches = sorted(Path(base).glob("NeXroll.Emby*.dll"))
+                if matches:
+                    return str(matches[-1])
+        except Exception:
+            continue
+    return None
+
+
+@app.get("/emby/plugin/available")
+def emby_plugin_available():
+    """Whether this build can hand out the Emby plugin itself.
+
+    The UI asks before offering a download, so it can fall back to the GitHub
+    link rather than presenting a button that 404s.
+    """
+    path = _resolve_emby_plugin_dll()
+    return {
+        "available": bool(path and os.path.isfile(path)),
+        "filename": os.path.basename(path) if path else None,
+    }
+
+
+@app.get("/emby/plugin/download")
+def download_emby_plugin():
+    """Download the NeXroll Intros (Emby) plugin DLL, served by this build."""
+    dll_path = _resolve_emby_plugin_dll()
+    if not dll_path or not os.path.isfile(dll_path):
+        raise HTTPException(
+            status_code=404,
+            detail=("Plugin assembly isn't bundled with this build. Get NeXroll.Emby.dll "
+                    "from the NeXroll GitHub releases page."),
+        )
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        dll_path,
+        media_type="application/octet-stream",
+        filename="NeXroll.Emby.dll",
+    )
+
 # --- Emby Integration ---
 class EmbyConnectRequest(BaseModel):
     url: str
