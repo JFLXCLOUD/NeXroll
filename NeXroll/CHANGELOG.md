@@ -2,7 +2,7 @@
 
 <!-- Stable 2.2.0 release preparation: use the user-approved README-2.2.0-draft.md and refreshed screenshots. Complete docs/RELEASE_PLAN_v2.2.0.md before tagging stable; keep this pending during beta. -->
 
-## [Unreleased]
+## [2.2.0-beta.10] - 09-16-2026 (beta)
 
 > The dashboard told Jellyfin and Emby users their server was not connected while
 > the Connections page, the Servers tile and the scheduler all agreed it was. Then a
@@ -37,6 +37,13 @@
 - **"Create schedule" left you on a blank form.** The schedule was created, but the wizard cleared itself in place, which is indistinguishable from a click that did nothing - and invites a second click and a duplicate schedule. Saving now lands on My Schedules, where the new schedule is.
 - **A library holding only generated prerolls looked empty.** The grid hides NeX-Up output by default while the header counts it, so a library whose only item was a generated Coming Soon list showed "1 preroll" above "No prerolls found". The empty state now says how many generated items are hidden and offers to show them.
 - **"1 item need attention".**
+- **A Plex that was down took Jellyfin and Emby down with it.** NeXroll reaches media servers two opposite ways: Plex is a push, where NeXroll writes paths into Plex's own preroll setting and that call can fail, while Jellyfin and Emby pull, their plugin asking NeXroll what to play at the moment of playback. Both were collapsed into one true/false answer, so an unreachable Plex reported failure and the filler, blend and sequence paths then skipped recording which category was active - the very state the plugin reads. The category marker the plugin uses was worse: it was only ever written on the branch taken when Plex was absent entirely, so a household running Plex alongside Jellyfin got a correct Plex and a Jellyfin stuck on whatever it last heard. Each channel now reports for itself, applying succeeds if any server took it, and clearing reaches both - a cleared Plex used to leave Jellyfin still advertising the old category. The scheduler log now names the server, because "apply failed" says nothing useful once more than one is configured.
+- **The sequence builder invented its own numbers.** Estimated duration was two minutes per block and variations were twelve per block, regardless of what the blocks contained. Two fixed clips totalling 23 seconds were announced as "4m 10s", a single deterministic block claimed twelve variations, and an empty builder said "0 blocks / estimated 1m 0s". Both figures now come from the actual blocks and your library: an estimate resting on content chosen at playback time is marked with a tilde rather than implying a measurement, and a sequence that plays identically every time reports one variation.
+- **A negative trailer count saved without complaint.** The field carried `min="1"`, which a browser treats as advice, so typing -5 stored -5 and the sequence reopened as Ready. It clamps on input now, like the blocks either side of it.
+- **Path Mappings looked mislabelled to anyone not on Plex.** The page is headed "(Plex)" and genuinely is Plex-only - Plex plays prerolls from its own filesystem and needs a path it can resolve, while the plugin streams the file to Jellyfin and Emby and never sees one. Rather than relabel a correct heading, the page now says so when Plex is not connected.
+- **The password reset instructions named the wrong port.** The recovery panel printed `localhost:9393` literally, so anyone whose container maps a different port was handed a command that reaches nothing on their own machine. It takes the port from the address you are already on, and says a `docker exec` needs the container's internal port instead.
+- **A successful trailer download announced itself twice.** The server returns a full sentence and the toast dropped it into the slot meant for the title, producing `Downloaded trailer for "Downloaded trailer for The Love Hypothesis"`.
+- **"1 blocks".**
 
 ## [2.2.0-beta.9] - 09-11-2026 (beta)
 
