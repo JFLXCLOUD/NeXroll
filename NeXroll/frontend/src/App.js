@@ -8836,7 +8836,13 @@ const DashboardTiles = {
         items = [
           { label: 'Version', value: systemVersion?.api_version || 'Loading' },
           { label: 'Scheduler', value: schedulerStatus.running ? 'Running' : 'Stopped', tone: schedulerStatus.running ? 'success' : 'warning' },
-          { label: 'Platform', value: systemVersion?.platform || navigator.platform || 'System', tone: 'info' },
+          // The server's platform, never the browser's. navigator.platform
+          // reported Win32 for anyone browsing from Windows, while the
+          // dependency list on the same page correctly said Linux x86_64.
+          { label: 'Platform', value: systemVersion?.platform
+              || (systemDependencies?.system?.platform
+                  ? `${systemDependencies.system.platform}${systemDependencies.system.architecture ? ' ' + systemDependencies.system.architecture : ''}`
+                  : 'Unknown'), tone: 'info' },
           { label: 'Theme', value: THEMES[resolveTheme(theme)].label }
         ];
       }
