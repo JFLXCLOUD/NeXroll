@@ -20,6 +20,63 @@ from backend.database import SessionLocal
 from backend.shuffle_bag import shuffle_bag_sample
 
 # Logging helpers - direct file writes to avoid circular imports
+class ApplyResult:
+    """What happened on each delivery channel for one apply.
+
+    NeXroll reaches media servers two opposite ways, and a single boolean could
+    not describe both. Plex is a *push*: NeXroll writes paths into Plex's own
+    preroll setting, and that call can fail. Jellyfin and Emby *pull*: their
+    plugin asks `/plugin/intros` at playback time and reads the state this same
+    tick is about to record, so there is nothing to fail at apply time - the
+    channel is live whenever such a server is configured.
+
+    Collapsing the two into one bool made the pull channel a hostage to the push
+    one. Callers wrote `if applied_ok:` before recording the active category, so
+    an unreachable Plex meant Jellyfin and Emby were never told what to play
+    either, despite nothing being wrong with them.
+
+    `bool(result)` is therefore "did at least one channel take this", which is
+    the question those callers were always really asking. Each field is True,
+    False, or None for "no such server configured".
+    """
+
+    __slots__ = ("plex", "plugin")
+
+    def __init__(self, plex=None, plugin=None):
+        self.plex = plex
+        self.plugin = plugin
+
+    def __bool__(self) -> bool:
+        return self.plex is True or self.plugin is True
+
+    @property
+    def configured(self) -> bool:
+        """Whether any media server is set up at all."""
+        return self.plex is not None or self.plugin is not None
+
+    def describe(self) -> str:
+        bits = []
+        for name, value in (("Plex", self.plex), ("Jellyfin/Emby", self.plugin)):
+            if value is None:
+                continue
+            bits.append(f"{name}: {'ok' if value else 'failed'}")
+        return ", ".join(bits) if bits else "no media server configured"
+
+    def __repr__(self) -> str:
+        return f"ApplyResult({self.describe()})"
+
+
+def _plugin_channel(setting) -> Optional[bool]:
+    """True when a Jellyfin or Emby server is configured, else None.
+
+    Never False: the plugin pulls, so there is no delivery to fail here. What it
+    serves is resolved from the database at playback time.
+    """
+    if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+        return True
+    return None
+
+
 def _get_log_path():
     """Get the log file path.
 
@@ -2025,8 +2082,19 @@ class Scheduler:
                     chosen_schedule.last_run = now
                     chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                 db.commit()
+                # Name the server. With more than one configured, "apply failed"
+                # on its own does not say which one, and a household with a
+                # healthy Jellyfin and a dead Plex reads as totally broken.
+                sched_name = chosen_schedule.name if chosen_schedule else 'N/A'
                 if not applied_ok:
-                    _scheduler_log(f"Plex apply failed for category {desired_category_id} (schedule '{chosen_schedule.name if chosen_schedule else 'N/A'}') — dashboard updated anyway", level="WARNING")
+                    _scheduler_log(
+                        f"Apply failed for category {desired_category_id} (schedule '{sched_name}') "
+                        f"— {getattr(applied_ok, 'describe', lambda: 'no detail')()} — dashboard updated anyway",
+                        level="WARNING")
+                elif getattr(applied_ok, "plex", None) is False:
+                    _scheduler_log(
+                        f"Partial apply for category {desired_category_id} (schedule '{sched_name}') "
+                        f"— {applied_ok.describe()}", level="WARNING")
             elif desired_category_id is None and not (chosen_schedule and _has_valid_sequence(chosen_schedule)):
                 state_key = "no_category_to_apply"
                 if self._last_logged_state != state_key:
@@ -2574,7 +2642,7 @@ class Scheduler:
         If no schedule provided, defaults to random (semicolon).
         """
         if not category_id:
-            return False
+            return ApplyResult()
 
         # Collect prerolls via the canonical helper (m2m union + enabled filter).
         prerolls = prerolls_for_category_query(db, category_id).all()
@@ -2588,7 +2656,7 @@ class Scheduler:
             except Exception:
                 pass
             _scheduler_log(f"No prerolls found for category_id={category_id} (name='{cat_name}'). Ensure prerolls are assigned to this category.", level="ERROR")
-            return False
+            return ApplyResult()
 
         # Build combined path string for Plex multi-preroll format
         # Determine delimiter from schedule settings (not category)
@@ -2602,28 +2670,32 @@ class Scheduler:
             delimiter = ";"  # Random playback (default)
 
         setting = db.query(models.Setting).first()
+        plugin = _plugin_channel(setting)
+
+        # The plugin channel is served from the database, so mark the category
+        # whenever such a server exists - whether or not Plex is also set up.
+        # This used to run only when Plex was absent, which is how a household
+        # with both ended up with a correct Plex and a stale Jellyfin.
+        if plugin:
+            try:
+                db.query(models.Category).update({"apply_to_plex": False})
+                cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+                if cat:
+                    cat.apply_to_plex = True
+                db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+
         # Allow secure-store token fallback via PlexConnector; only require URL here
         if not setting or not getattr(setting, "plex_url", None):
-            # If Jellyfin or Emby is configured, the plugin endpoint serves prerolls
-            # based on active_category — no need to push to Plex, just succeed so
-            # the caller sets active_category in the DB.
-            if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
-                _scheduler_log(f"Plex not configured; setting active category {category_id} for plugin-based server(s)")
-                # Mark category in DB for UI display
-                try:
-                    db.query(models.Category).update({"apply_to_plex": False})
-                    cat = db.query(models.Category).filter(models.Category.id == category_id).first()
-                    if cat:
-                        cat.apply_to_plex = True
-                    db.commit()
-                except Exception:
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                return True
-            _scheduler_log("Plex not configured (missing URL); cannot apply category.", level="WARNING")
-            return False
+            if plugin:
+                _scheduler_log(f"Plex not configured; active category {category_id} set for plugin-based server(s)")
+                return ApplyResult(plugin=True)
+            _scheduler_log("No media server configured (missing Plex URL); cannot apply category.", level="WARNING")
+            return ApplyResult()
 
         # Translate local paths to Plex-accessible paths using configured mappings
         mappings = []
@@ -2716,14 +2788,14 @@ class Scheduler:
 
         if mismatches:
             _scheduler_log(f"Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
-            return False
+            return ApplyResult(plex=False, plugin=plugin)
 
         combined = delimiter.join(preroll_paths_plex)
 
         # Determine mode from delimiter
         mode_str = 'sequential' if delimiter == ',' else 'random'
         if self._defer_preroll_write(setting, f"category {category_id}"):
-            return False
+            return ApplyResult(plex=False, plugin=plugin)
 
         _scheduler_log(f"Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode_str}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
@@ -2746,7 +2818,7 @@ class Scheduler:
                     db.rollback()
                 except Exception:
                     pass
-        return ok
+        return ApplyResult(plex=ok, plugin=plugin)
 
     def _clear_plex_prerolls(self, db: Session) -> bool:
         """
@@ -2754,21 +2826,27 @@ class Scheduler:
         Used when no schedules are active and clear_when_inactive is enabled.
         """
         setting = db.query(models.Setting).first()
-        if not setting or not getattr(setting, "plex_url", None):
-            # For Jellyfin/Emby, clearing means unsetting active_category (handled by caller)
-            if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
-                _scheduler_log("Plex not configured; clearing active category for plugin-based server(s)")
+        plugin = _plugin_channel(setting)
+
+        # Clear the plugin channel's marker whenever such a server exists, not
+        # only when Plex is absent. Otherwise a household with both would clear
+        # Plex and leave Jellyfin still advertising the last category.
+        if plugin:
+            try:
+                db.query(models.Category).update({"apply_to_plex": False})
+                db.commit()
+            except Exception:
                 try:
-                    db.query(models.Category).update({"apply_to_plex": False})
-                    db.commit()
+                    db.rollback()
                 except Exception:
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                return True
-            _scheduler_log("Plex not configured (missing URL); cannot clear prerolls.", level="WARNING")
-            return False
+                    pass
+
+        if not setting or not getattr(setting, "plex_url", None):
+            if plugin:
+                _scheduler_log("Plex not configured; cleared active category for plugin-based server(s)")
+                return ApplyResult(plugin=True)
+            _scheduler_log("No media server configured (missing Plex URL); cannot clear prerolls.", level="WARNING")
+            return ApplyResult()
 
         connector = PlexConnector(setting.plex_url, setting.plex_token)
         _scheduler_log("Clearing Plex preroll field (no active schedules, clear_when_inactive enabled)…")
@@ -2787,7 +2865,7 @@ class Scheduler:
                     db.rollback()
                 except Exception:
                     pass
-        return ok
+        return ApplyResult(plex=ok, plugin=plugin)
 
     def _apply_schedule_sequence_to_plex(self, schedule: models.Schedule, db: Session) -> bool:
         """
@@ -2798,15 +2876,15 @@ class Scheduler:
         """
         if not schedule or not _has_valid_sequence(schedule):
             _scheduler_log(f"Sequence apply skipped: schedule={'missing' if not schedule else schedule.name}, has_sequence={_has_valid_sequence(schedule)}", level="WARNING")
-            return False
+            return ApplyResult()
         try:
             seq = schedule.sequence
             if isinstance(seq, str):
                 seq = json.loads(seq)
             if not isinstance(seq, list):
-                return False
+                return ApplyResult()
         except Exception:
-            return False
+            return ApplyResult()
 
         # Build ordered list of file paths per sequence steps
         paths = []
@@ -2924,7 +3002,7 @@ class Scheduler:
 
         if not paths:
             _scheduler_log("Sequence produced no preroll paths; aborting.")
-            return False
+            return ApplyResult()
 
         _scheduler_log(f"Sequence built {len(paths)} paths:")
         for i, p in enumerate(paths):
@@ -2936,13 +3014,15 @@ class Scheduler:
 
         setting = db.query(models.Setting).first()
         # Allow secure-store token fallback via PlexConnector; only require URL here
+        plugin = _plugin_channel(setting)
         if not setting or not getattr(setting, "plex_url", None):
-            # For Jellyfin/Emby, the plugin endpoint resolves sequences from active_category
-            if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+            # The plugin resolves what to play from the database at playback time, so
+            # there is nothing to deliver here - the channel is live either way.
+            if plugin:
                 _scheduler_log(f"Plex not configured; setting sequence for plugin-based server(s) ({len(paths)} paths)")
-                return True
+                return ApplyResult(plugin=True)
             _scheduler_log("Plex not configured (missing URL); cannot apply sequence.", level="WARNING")
-            return False
+            return ApplyResult()
 
         # Translate each path to Plex-visible paths using configured mappings
         mappings = []
@@ -3039,12 +3119,12 @@ class Scheduler:
 
         if mismatches:
             _scheduler_log(f"Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
-            return False
+            return ApplyResult(plex=False, plugin=plugin)
 
         combined = delimiter.join(paths_plex)
 
         if self._defer_preroll_write(setting, f"sequence schedule {getattr(schedule, 'id', '?')}"):
-            return False
+            return ApplyResult(plex=False, plugin=plugin)
 
         _scheduler_log(f"Applying schedule sequence with {len(paths)} items (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
@@ -3064,7 +3144,7 @@ class Scheduler:
                     db.rollback()
                 except Exception:
                     pass
-        return ok
+        return ApplyResult(plex=ok, plugin=plugin)
 
     def _apply_blended_schedules_to_plex(self, schedules: List[models.Schedule], db: Session) -> bool:
         """
@@ -3072,7 +3152,7 @@ class Scheduler:
         Interleaves prerolls from each schedule for a mixed experience.
         """
         if not schedules:
-            return False
+            return ApplyResult()
         
         _scheduler_log(f"BLEND: Building blended playlist from {len(schedules)} schedules...")
 
@@ -3199,13 +3279,15 @@ class Scheduler:
         
         # Apply path mappings and send to Plex
         setting = db.query(models.Setting).first()
+        plugin = _plugin_channel(setting)
         if not setting or not getattr(setting, "plex_url", None):
-            # For Jellyfin/Emby, blended prerolls are served via the plugin endpoint
-            if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+            # The plugin resolves what to play from the database at playback time, so
+            # there is nothing to deliver here - the channel is live either way.
+            if plugin:
                 _scheduler_log(f"Plex not configured; applying blended schedules for plugin-based server(s)")
-                return True
+                return ApplyResult(plugin=True)
             _scheduler_log("Plex not configured (missing URL); cannot apply blended schedules.", level="WARNING")
-            return False
+            return ApplyResult()
         
         # Get path mappings
         mappings = []
@@ -3259,7 +3341,7 @@ class Scheduler:
         
         connector = PlexConnector(setting.plex_url, setting.plex_token)
         if self._defer_preroll_write(setting, "blended schedules"):
-            return False
+            return ApplyResult(plex=False, plugin=plugin)
 
         _scheduler_log(f"BLEND: Sending blended playlist to Plex ({len(paths_plex)} prerolls, random mode)...")
         ok = connector.set_preroll(combined)
@@ -3275,7 +3357,7 @@ class Scheduler:
                 "BLEND: Failed to apply blended preroll list to Plex",
                 "the blended preroll list")
         
-        return ok
+        return ApplyResult(plex=ok, plugin=plugin)
 
     def _apply_saved_sequence_to_plex(self, sequence_id: int, db: Session) -> bool:
         """
@@ -3404,13 +3486,15 @@ class Scheduler:
             
             # Apply path mappings and send to Plex
             setting = db.query(models.Setting).first()
+            plugin = _plugin_channel(setting)
             if not setting or not getattr(setting, "plex_url", None):
-                # For Jellyfin/Emby, filler sequences are served via the plugin endpoint
-                if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+                # The plugin resolves what to play from the database at playback time, so
+                # there is nothing to deliver here - the channel is live either way.
+                if plugin:
                     _scheduler_log(f"Plex not configured; applying filler sequence for plugin-based server(s)")
-                    return True
+                    return ApplyResult(plugin=True)
                 _scheduler_log("Plex not configured (missing URL); cannot apply filler sequence.", level="WARNING")
-                return False
+                return ApplyResult()
             
             # Get path mappings
             mappings = []
@@ -3463,7 +3547,7 @@ class Scheduler:
             
             connector = PlexConnector(setting.plex_url, setting.plex_token)
             if self._defer_preroll_write(setting, f"saved sequence {sequence_id}"):
-                return False
+                return ApplyResult(plex=False, plugin=plugin)
 
             _scheduler_log(f"FILLER: Sending sequence to Plex ({len(paths_plex)} prerolls)...")
             ok = connector.set_preroll(combined)
@@ -3476,10 +3560,10 @@ class Scheduler:
                     "FILLER: Failed to apply sequence to Plex",
                     "the filler sequence")
             
-            return ok
+            return ApplyResult(plex=ok, plugin=plugin)
         except Exception as e:
             _scheduler_log(f"Error applying filler sequence: {e}", level="ERROR")
-            return False
+            return ApplyResult()
 
     def _apply_coming_soon_list_to_plex(self, layout: str, db: Session) -> bool:
         """Apply a Coming Soon List video to Plex (used for filler mode)."""
@@ -3496,19 +3580,19 @@ class Scheduler:
             setting = db.query(models.Setting).first()
             if not setting:
                 _scheduler_log(f"Settings not found; cannot apply {label}", level="ERROR")
-                return False
+                return ApplyResult()
             
             # Find the Coming Soon List video file
             storage_path = getattr(setting, "nexup_storage_path", None)
             if not storage_path:
                 _scheduler_log(f"NeX-Up storage path not configured; cannot find {label}", level="WARNING")
-                return False
+                return ApplyResult()
             
             video_path = os.path.join(storage_path, "dynamic_prerolls", filename)
             
             if not os.path.exists(video_path):
                 _scheduler_log(f"{label} video not found: {video_path}", level="WARNING")
-                return False
+                return ApplyResult()
             
             video_path = os.path.abspath(video_path)
             _scheduler_log(f"FILLER: Applying {label} from {video_path}")
@@ -3558,13 +3642,13 @@ class Scheduler:
             
             plex_path = _translate_for_plex(video_path)
             
+            plugin = _plugin_channel(setting)
             if not setting.plex_url:
-                # For Jellyfin/Emby, Coming Soon videos are served via the plugin endpoint
-                if getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None):
+                if plugin:
                     _scheduler_log(f"Plex not configured; applying {label} for plugin-based server(s)")
-                    return True
+                    return ApplyResult(plugin=True)
                 _scheduler_log(f"Plex not configured; cannot apply {label}", level="WARNING")
-                return False
+                return ApplyResult()
             
             connector = PlexConnector(setting.plex_url, setting.plex_token)
             _scheduler_log(f"FILLER: Sending {label} to Plex...")
@@ -3575,10 +3659,10 @@ class Scheduler:
                 self._log_apply_outcome(
                     f"FILLER: Failed to apply {label} to Plex", label)
             
-            return ok
+            return ApplyResult(plex=ok, plugin=plugin)
         except Exception as e:
             _scheduler_log(f"Error applying {label}: {e}", level="ERROR")
-            return False
+            return ApplyResult()
 
     def _get_active_schedules(self) -> List[models.Schedule]:
         """Return a list of schedules currently active (for diagnostics/status)."""

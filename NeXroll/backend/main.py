@@ -18638,7 +18638,14 @@ def _apply_category_to_plex_and_track(db: Session, category_id: int, ttl: int = 
     then set Setting.active_category and a short-lived override window to prevent the scheduler
     from immediately reverting the change. ttl is in minutes.
     """
-    ok = scheduler._apply_category_to_plex(category_id, db)
+    result = scheduler._apply_category_to_plex(category_id, db)
+    # Truthy when any configured server took it. A Plex that is down no longer
+    # suppresses the active category that the Jellyfin/Emby plugin reads.
+    ok = bool(result)
+    try:
+        _file_log(f"Apply category {category_id}: {result.describe()}")
+    except Exception:
+        pass
     if ok:
         try:
             st = db.query(models.Setting).first()
