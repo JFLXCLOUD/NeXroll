@@ -24826,7 +24826,14 @@ const DashboardTiles = {
       const data = await res.json();
       
       if (data.success) {
-        alert(`Downloaded trailer for "${data.message || movieTitle || 'movie'}" (${data.file_size_mb?.toFixed(1) || '?'} MB)`);
+        // The server's message is already a full sentence ("Downloaded trailer
+        // for The Love Hypothesis"), so feeding it the title slot produced
+        // 'Downloaded trailer for "Downloaded trailer for The Love Hypothesis"'.
+        // Use the title; fall back to the message on its own.
+        const size = data.file_size_mb?.toFixed(1);
+        alert(movieTitle
+          ? `Downloaded trailer for "${movieTitle}"${size ? ` (${size} MB)` : ''}`
+          : `${data.message || 'Trailer downloaded'}${size ? ` (${size} MB)` : ''}`);
         loadNexupTrailers();
         loadNexupStorage();
         handleLoadNexupUpcoming(); // Refresh to show downloaded status
