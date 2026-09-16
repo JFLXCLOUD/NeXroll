@@ -163,10 +163,11 @@ def media_server_check(servers) -> dict:
         return make_check("media_server", "Media server", OK, "",
                           f"{configured[0]} connected")
     if len(configured) > 1:
-        return make_check(
-            "media_server", "Media server", WARN,
-            "More than one media server is connected - disconnect the extras",
-            " and ".join(configured))
+        # Several servers is a supported setup, not a fault. NeXroll applies
+        # whatever is scheduled to every one of them, so warning here docked
+        # points and told people to disconnect a server that was working fine.
+        return make_check("media_server", "Media server", OK, "",
+                          " and ".join(configured))
     return make_check(
         "media_server", "Media server", ERROR,
         "No media server is connected, so prerolls cannot be applied",

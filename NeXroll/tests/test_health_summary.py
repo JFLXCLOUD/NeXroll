@@ -273,16 +273,32 @@ class MediaServerCheckTests(unittest.TestCase):
 
         self.assertEqual(check["status"], ERROR)
 
-    def test_two_servers_still_warn_and_are_both_named(self):
+    def test_two_servers_are_healthy_and_both_named(self):
+        """Several servers is the supported setup, not a fault.
+
+        This used to warn and tell the user to disconnect the extras, which
+        docked health points for a configuration that works: NeXroll applies
+        whatever is scheduled to every connected server.
+        """
         check = media_server_check([
             ("Plex", "http://plex:32400", True, False),
             ("Jellyfin", "http://jellyfin:8096", True, False),
             ("Emby", None, False, False),
         ])
 
-        self.assertEqual(check["status"], WARN)
+        self.assertEqual(check["status"], OK)
         self.assertEqual(check["value"], "Plex and Jellyfin")
-        self.assertIn("disconnect the extras", check["detail"])
+        self.assertEqual(check["detail"], "")
+
+    def test_all_three_servers_are_healthy(self):
+        check = media_server_check([
+            ("Plex", "http://plex:32400", True, False),
+            ("Jellyfin", "http://jellyfin:8096", True, False),
+            ("Emby", "http://emby:8096", True, False),
+        ])
+
+        self.assertEqual(check["status"], OK)
+        self.assertEqual(check["value"], "Plex and Jellyfin and Emby")
 
     def test_the_media_server_check_carries_its_weight(self):
         # Worth 30, so a false error costs the dashboard exactly 30 points.

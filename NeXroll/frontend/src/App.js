@@ -7666,9 +7666,13 @@ const DashboardTiles = {
   },
 
   servers: () => {
-    const s = getActiveConnectedServer();
+    // Every connected server, not just the first. The tile is named "Servers"
+    // and was showing one of them, so a household running Jellyfin and Emby saw
+    // no sign the second was there at all.
+    const connected = getConnectedServers();
     const INFO = { plex: plexServerInfo, jellyfin: jellyfinServerInfo, emby: embyServerInfo };
     const LABEL = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+    const s = connected[0] || null;
     const info = INFO[s];
     return (
       <div className="card">
@@ -7678,7 +7682,31 @@ const DashboardTiles = {
             <ArrowRight size={14} />
           </button>
         </div>
-        {LABEL[s] ? (
+        {connected.length > 1 ? (
+          <>
+            <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {describeServers(connected)}
+              <span className="nx-chip nx-status ok" style={{ fontSize: '0.72rem' }}>{connected.length} connected</span>
+            </p>
+            <div className="nx-tile-rows">
+              {connected.map(id => {
+                const detail = INFO[id];
+                return (
+                  <div className="nx-tile-row" key={id}>
+                    <span className="nx-tile-row-k"><Server size={14} /> {LABEL[id]}</span>
+                    <span className="nx-tile-row-v" title={detail?.url || ''}>
+                      {detail?.name || detail?.friendlyName || (detail?.url || '').replace(/^https?:\/\//, '') || 'Connected'}
+                      {detail?.version ? ` · v${detail.version}` : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary, #666)', margin: '0.6rem 0 0' }}>
+              The same prerolls play on each.
+            </p>
+          </>
+        ) : LABEL[s] ? (
           <>
             <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               {LABEL[s]}

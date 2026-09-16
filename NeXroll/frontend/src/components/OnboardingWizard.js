@@ -37,6 +37,10 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
 
   // --- Step state ---
   const [serverType, setServerType] = useState('plex'); // plex | jellyfin | emby
+  // Which servers this wizard has already connected. NeXroll drives every
+  // connected server at once, so the step is not done after the first one -
+  // it offers to add the others rather than moving on as if you only have one.
+  const [connectedServers, setConnectedServers] = useState([]);
   const [serverUrl, setServerUrl] = useState('');
   const [serverApiKey, setServerApiKey] = useState('');
   const [serverBusy, setServerBusy] = useState(false);
@@ -156,7 +160,10 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       }
       const data = await safeJson(res);
       if (res.ok) {
+        setConnectedServers((prev) => (prev.includes(serverType) ? prev : [...prev, serverType]));
         setServerResult({ ok: true, msg: 'Connected successfully.' });
+        setServerUrl('');
+        setServerApiKey('');
       } else {
         setServerResult({ ok: false, msg: (data && (data.detail || data.message)) || 'Connection failed. Check the URL and token/key.' });
       }
@@ -204,6 +211,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             const cd = await safeJson(c);
             if (c.ok && cd && cd.connected) {
               setPlexOAuth((p) => ({ ...p, status: 'connected' }));
+              setConnectedServers((prev) => (prev.includes('plex') ? prev : [...prev, 'plex']));
               setServerResult({ ok: true, msg: cd.server_name ? `Connected to ${cd.server_name}.` : 'Connected to Plex.' });
             } else {
               setPlexOAuth((p) => ({ ...p, status: 'idle' }));
@@ -645,6 +653,47 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               </div>
             </details>
             <ResultBadge result={serverResult} />
+
+            {/* Prerolls apply to every connected server, so having connected one
+                is the moment to say a second is possible - not the Connect page
+                the user may not visit for weeks. */}
+            {connectedServers.length > 0 && (() => {
+              const LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+              const remaining = ['plex', 'jellyfin', 'emby'].filter((t) => !connectedServers.includes(t));
+              const naming = (ids) => ids.map((id) => LABELS[id]).join(' and ');
+              return (
+                <div style={{
+                  marginTop: '1rem', padding: '0.85rem 1rem', borderRadius: '10px',
+                  background: darkMode ? 'rgba(102,126,234,0.10)' : 'rgba(102,126,234,0.08)',
+                  border: `1px solid ${darkMode ? 'rgba(102,126,234,0.30)' : 'rgba(102,126,234,0.22)'}`,
+                }}>
+                  <div style={{ fontWeight: 700, color: txt, fontSize: '0.88rem', marginBottom: '0.3rem' }}>
+                    {naming(connectedServers)} connected
+                  </div>
+                  {remaining.length > 0 ? (
+                    <>
+                      <p style={{ color: sub, fontSize: '0.82rem', margin: '0 0 0.75rem', lineHeight: 1.55 }}>
+                        You can run more than one. Add {naming(remaining)} too and everything you
+                        schedule will play on all of them. Or continue — you can add more later
+                        from the Connect page.
+                      </p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        {remaining.map((t) => (
+                          <button key={t} type="button" style={ghostBtn}
+                            onClick={() => { setServerType(t); setServerResult(null); setServerUrl(''); setServerApiKey(''); }}>
+                            <Server size={15} /> Add {LABELS[t]}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p style={{ color: sub, fontSize: '0.82rem', margin: 0, lineHeight: 1.55 }}>
+                      All three are connected. Everything you schedule plays on each of them.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
