@@ -6825,6 +6825,20 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const hiddenGeneratedCount = React.useMemo(() => (
     showNexupGeneratedInLibrary ? 0 : prerolls.filter(isNexUpGeneratedPreroll).length
   ), [prerolls, showNexupGeneratedInLibrary]);
+  // Everything the list is holding back, generated output and downloaded
+  // trailers alike. The header reads "2 of 7" whenever this is non-zero, and
+  // the list said nothing about the other five unless it happened to be empty -
+  // reported four times across three sessions as the All filter undercounting.
+  const hiddenTrailerCount = React.useMemo(() => (
+    showNexupTrailersInLibrary ? 0 : prerolls.filter(isNexUpTrailerPreroll).length
+  ), [prerolls, showNexupTrailersInLibrary]);
+  const hiddenFromListCount = hiddenGeneratedCount + hiddenTrailerCount;
+  const revealHiddenPrerolls = () => {
+    setShowNexupGeneratedInLibrary(true);
+    setShowNexupTrailersInLibrary(true);
+    setCurrentPage(1);
+    try { localStorage.setItem('nx_show_generated', '1'); } catch (e) { /* private mode */ }
+  };
   const totalPages = Math.max(1, Math.ceil(totalPrerolls / pageSize));
   const currentPageClamped = Math.min(currentPage, totalPages);
   const pageStartIndex = (currentPageClamped - 1) * pageSize;
@@ -11787,7 +11801,25 @@ const DashboardTiles = {
         <div className={`nx-hybrid-layout${prerollView === 'list' ? ' is-list' : ''}${libraryInspectorOpen ? ' preview-open' : ''}`}>
           <main className="nx-hybrid-results">
             <div className="nx-hybrid-results-head">
-              <span><strong>{totalPrerolls}</strong> preroll{totalPrerolls === 1 ? '' : 's'}{activeQuickCategory ? ` in ${activeQuickCategory.name}` : ''}{filterCategory === 'uncategorized' ? ' with no category' : ''}</span>
+              <span>
+                <strong>{totalPrerolls}</strong> preroll{totalPrerolls === 1 ? '' : 's'}{activeQuickCategory ? ` in ${activeQuickCategory.name}` : ''}{filterCategory === 'uncategorized' ? ' with no category' : ''}
+                {hiddenFromListCount > 0 && (
+                  <>
+                    {' — '}
+                    <button
+                      type="button"
+                      onClick={revealHiddenPrerolls}
+                      title="Generated prerolls and downloaded trailers are hidden from this list by default"
+                      style={{
+                        background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                        font: 'inherit', color: 'var(--accent-color, #7c4dff)', textDecoration: 'underline',
+                      }}
+                    >
+                      {hiddenFromListCount} more hidden
+                    </button>
+                  </>
+                )}
+              </span>
               <div><span>Select items to organize them in bulk</span><label><input type="checkbox" checked={allSelectedOnPage} onChange={(event) => selectAllVisible(visibleIds, event.target.checked)} /> Select page</label></div>
             </div>
 
