@@ -31,6 +31,7 @@ import {
   yearlyOrHolidayDateRangesOverlap
 } from './utils/scheduleUtils';
 import { lockBodyScroll } from './utils/modalBehavior';
+import { describeEstimate } from './utils/sequenceEstimate';
 import {
   getCommunityCategorySelection,
   setCommunityCategorySelection
@@ -18079,7 +18080,7 @@ const DashboardTiles = {
                     {savedSequences.length === 0 ? (
                       <>No saved sequences. Go to <button type="button" onClick={() => setActiveTab('schedules/builder')} style={{ color: 'var(--button-bg)', textDecoration: 'underline', background: 'none', border: 0, padding: 0, font: 'inherit', cursor: 'pointer' }}>Sequence Builder</button> to create one.</>
                     ) : (
-                      `Select a sequence from your library or build a custom one below. Current: ${sequenceBlocks.length} blocks`
+                      `Select a sequence from your library or build a custom one below. Current: ${sequenceBlocks.length} ${sequenceBlocks.length === 1 ? 'block' : 'blocks'}`
                     )}
                   </p>
                 </div>
@@ -18675,7 +18676,7 @@ const DashboardTiles = {
                           borderRadius: '0.25rem',
                           fontWeight: 600
                         }}>
-                          {scheduleMode === 'sequence' ? <><Film size={14} style={{marginRight: '4px'}} /> {sequenceBlockCount} blocks</> : <><Folder size={14} style={{marginRight: '4px'}} /> Simple</>}
+                          {scheduleMode === 'sequence' ? <><Film size={14} style={{marginRight: '4px'}} /> {sequenceBlockCount} {sequenceBlockCount === 1 ? 'block' : 'blocks'}</> : <><Folder size={14} style={{marginRight: '4px'}} /> Simple</>}
                         </span>
                         <span style={{
                           color: 'var(--text-secondary)',
@@ -20239,7 +20240,12 @@ const DashboardTiles = {
 
           <section className="nx-draft-panel nx-draft-sequence-canvas">
             <header className="nx-draft-seq-meta">
-              <div><strong>{builderName}</strong><span>{sequenceBlocks.length} blocks / estimated {Math.max(1, sequenceBlocks.length * 2)}m {sequenceBlocks.length * 5}s</span></div>
+              <div><strong>{builderName}</strong><span>{(() => {
+                const est = describeEstimate(sequenceBlocks, prerolls);
+                const count = `${sequenceBlocks.length} ${sequenceBlocks.length === 1 ? 'block' : 'blocks'}`;
+                // An empty builder used to claim "estimated 1m 0s" for nothing.
+                return sequenceBlocks.length === 0 ? `${count} yet` : `${count} / estimated ${est.duration}`;
+              })()}</span></div>
               <span className={`nx-draft-badge${sequenceBlocks.length ? ' live' : ''}`}>{sequenceBlocks.length ? 'Ready' : 'Empty'}</span>
             </header>
             <div className="nx-draft-sequence-stack">
@@ -20272,10 +20278,20 @@ const DashboardTiles = {
                 </React.Fragment>
               ))}
             </div>
-            {/* The Math.max(1, ...) floors below apply only once there is at
-                least one block. An empty sequence was reporting "~1m" and
-                "1 variation" for nothing at all. */}
-            <div className="nx-draft-builder-stats"><div><span>Blocks</span><strong>{sequenceBlocks.length}</strong></div><div><span>Estimated duration</span><strong>{sequenceBlocks.length === 0 ? '—' : `~${Math.max(1, sequenceBlocks.length * 2)}m`}</strong></div><div><span>Variations</span><strong>{sequenceBlocks.length === 0 ? '—' : Math.max(1, sequenceBlocks.length * 12)}</strong></div></div>
+            {/* Derived from the blocks and the library, not from the block
+                count. Two minutes per block announced 23 seconds of clips as
+                "4m 10s", and twelve variations per block claimed a fixed
+                sequence could play twelve different ways. */}
+            {(() => {
+              const est = describeEstimate(sequenceBlocks, prerolls);
+              return (
+                <div className="nx-draft-builder-stats">
+                  <div><span>Blocks</span><strong>{est.blocks}</strong></div>
+                  <div><span>Estimated duration</span><strong>{est.duration}</strong></div>
+                  <div><span>Variations</span><strong title={est.plays}>{est.variations}</strong></div>
+                </div>
+              );
+            })()}
           </section>
 
           <aside className="nx-draft-panel nx-draft-inspector">
@@ -20323,7 +20339,10 @@ const DashboardTiles = {
                     <option value="random">Shuffled</option>
                     <option value="sequential">Newest first</option>
                   </select></label>
-                  <label className="nx-draft-field"><span>Trailer count</span><input type="number" min="1" max="10" value={selectedBlock.count || 2} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Number(event.target.value) } : block))} /></label>
+                  {/* Clamp on the way in. min/max on a number input are advisory - typing
+                      -5 stored -5, saved cleanly, and reopened as "Ready". The random
+                      and sequential blocks above already clamp; this one did not. */}
+                  <label className="nx-draft-field"><span>Trailer count</span><input type="number" min="1" max="10" value={selectedBlock.count || 2} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Math.max(1, Math.min(10, Number(event.target.value) || 1)) } : block))} /></label>
                 </>}
                 {['dynamic_preroll', 'coming_soon_list'].includes(selectedBlock.type) && <>
                   <label className="nx-draft-field"><span>Generated item</span><select
@@ -30558,10 +30577,31 @@ const DashboardTiles = {
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
         <FolderSync size={20} style={{ color: '#00d4ff' }} /> Path Mappings (Plex)
       </h2>
-      <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+      <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
         Define how local or UNC paths should be translated to Plex-readable paths when applying prerolls.
         Longest-prefix rule applies; Windows local prefixes are matched case-insensitively.
       </p>
+
+      {/* These rules really are Plex-only: Plex plays prerolls off its own
+          filesystem, so it needs a path it can resolve, whereas the Jellyfin and
+          Emby plugin streams the file from NeXroll and never sees a path at all.
+          A Jellyfin user reading a page headed "(Plex)" reasonably assumed it
+          was mislabelled, so say which servers it affects instead. */}
+      {plexStatus !== 'Connected' && (jellyfinStatus === 'Connected' || embyStatus === 'Connected') && (
+        <div style={{
+          marginBottom: '1.5rem', padding: '0.75rem 0.9rem', borderRadius: '8px',
+          fontSize: '0.85rem', lineHeight: 1.55,
+          color: darkMode ? '#cfd8dc' : '#455a64',
+          backgroundColor: darkMode ? 'rgba(0, 212, 255, 0.08)' : 'rgba(0, 150, 200, 0.06)',
+          border: `1px solid ${darkMode ? 'rgba(0, 212, 255, 0.2)' : 'rgba(0, 150, 200, 0.15)'}`
+        }}>
+          <strong>Nothing to do here for {embyStatus === 'Connected' ? 'Emby' : 'Jellyfin'}.</strong>{' '}
+          These rules only affect Plex, which plays prerolls from its own filesystem and so needs a
+          path it can resolve. The NeXroll plugin streams prerolls to
+          {' '}{embyStatus === 'Connected' ? 'Emby' : 'Jellyfin'} directly, so no translation is involved.
+          The settings below are kept in case you connect Plex later.
+        </div>
+      )}
 
       {/* Mappings List */}
       <div className="nx-setting-row">
@@ -34446,7 +34486,7 @@ const DashboardTiles = {
                       setSequenceBlocks(blocks);
                       if (name) setEditingSequenceName(name);
                       if (description) setEditingSequenceDescription(description);
-                      showAlert(`Sequence imported: ${blocks.length} blocks loaded`, 'success');
+                      showAlert(`Sequence imported: ${blocks.length} ${blocks.length === 1 ? 'block' : 'blocks'} loaded`, 'success');
                     } else {
                       showAlert('Invalid sequence file format', 'error');
                     }
