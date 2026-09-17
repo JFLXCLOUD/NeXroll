@@ -5850,8 +5850,6 @@ body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 
    Scoped to the dashboard so the existing sidebar and application pages
    retain their established visual language in both themes.
    ==================================================================== */
-.nx-dashboard-controls { display: none !important; }
-
 .nx-dash-page {
   display: flex;
   flex-direction: column;

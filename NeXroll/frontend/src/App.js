@@ -10028,180 +10028,12 @@ const DashboardTiles = {
       )}
 
  
-      {/* Dashboard toolbar: quick actions on the left, layout/edit controls on
-          the right. Replaces both the lonely edit-toggle card and the removed
-          Quick Actions page/tile. */}
-      <div className="card nx-dashboard-controls" style={{ marginBottom: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div className="nx-qa-bar">
-            <button
-              className="button button-outline nx-qa-btn"
-              disabled={thumbnailProgress?.phase === 'init'}
-              title="Regenerate thumbnails for all prerolls"
-              onClick={handleReinitThumbnails}
-            >
-              {thumbnailProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Rebuild Thumbs
-            </button>
-            <button
-              className="button button-outline nx-qa-btn"
-              disabled={librarySyncProgress?.phase === 'init'}
-              title="Refresh all data from the backend"
-              onClick={async () => {
-                if (librarySyncProgress?.phase === 'init') return;
-                setLibrarySyncProgress({ status: 'Syncing...', phase: 'init' });
-                try {
-                  await fetchData();
-                  setLibrarySyncProgress({ status: 'Synced!', phase: 'done' });
-                  setTimeout(() => setLibrarySyncProgress(null), 3000);
-                } catch (err) {
-                  setLibrarySyncProgress({ status: 'Sync failed', phase: 'error' });
-                  setTimeout(() => setLibrarySyncProgress(null), 5000);
-                }
-              }}
-            >
-              {librarySyncProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCcw size={14} />} Refresh Data
-            </button>
-            <button
-              className="button button-outline nx-qa-btn"
-              disabled={nexupSyncProgress?.phase === 'init'}
-              title="Sync trailers from Radarr and Sonarr"
-              onClick={handleNexupFullSync}
-            >
-              {nexupSyncProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <Download size={14} />} NeX-Up Sync
-            </button>
-            <button
-              className="button button-outline nx-qa-btn"
-              title="Scan the storage folder for added/removed prerolls"
-              onClick={() => handleRescanPrerolls()}
-            >
-              <HardDrive size={14} /> Scan Files
-            </button>
-            <button
-              className="button button-outline nx-qa-btn"
-              title="Rebuild the community prerolls index (runs in the background; progress shows on the Community page)"
-              onClick={async () => {
-                try {
-                  const res = await fetch(apiUrl('community-prerolls/build-index'));
-                  if (res.ok) {
-                    showAlert('Community index build started - progress on the Community page', 'success');
-                  } else {
-                    let detail = `Failed to start index build (HTTP ${res.status})`;
-                    try { const err = await res.json(); if (err?.detail) detail = err.detail; } catch {}
-                    showAlert(detail, 'error');
-                  }
-                } catch (e) {
-                  showAlert('Failed to start index build: ' + (e.message || e), 'error');
-                }
-              }}
-            >
-              <BookOpen size={14} /> Rebuild Index
-            </button>
-            <button
-              className="button button-outline nx-qa-btn"
-              disabled={backupProgress?.active}
-              title="Download a database backup (settings, schedules, categories)"
-              onClick={handleBackupDatabase}
-            >
-              {backupProgress?.active ? <Loader2 size={14} className="spin" /> : <Database size={14} />} Backup DB
-            </button>
-            <button
-              className="button button-outline nx-qa-btn"
-              disabled={updateCheckProgress?.phase === 'init'}
-              title="Check GitHub for a newer NeXroll release"
-              onClick={handleForceUpdateCheck}
-            >
-              {updateCheckProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <Rocket size={14} />} Check Updates
-            </button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
-          <label className="nx-rockerswitch" title={dashLayout.locked ? 'Unlock to rearrange' : 'Lock to finish'}>
-            <input
-              type="checkbox"
-              checked={dashLayout.locked}
-              onChange={toggleDashLock}
-              aria-label={dashLayout.locked ? 'Unlock layout' : 'Lock layout'}
-            />
-            <span className="nx-rockerswitch-slider"></span>
-          </label>
-          <span
-            className={`nx-lockstate ${dashLayout.locked ? 'is-locked' : 'is-editing'}`}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '2px 8px',
-              border: '1px solid var(--border-color)',
-              borderRadius: '9999px',
-              fontSize: '0.8rem',
-              lineHeight: 1,
-              background: 'var(--header-bg)',
-              color: dashLayout.locked ? 'var(--text-secondary)' : 'var(--text-color)',
-              opacity: dashLayout.locked ? 0.9 : 1
-            }}
-            aria-live="polite"
-          >
-            {dashLayout.locked ? 'Locked' : 'Editing'}
-          </span>
-          {dashSaving && <span className="nx-spinner" aria-hidden="true" title="Saving layout…"></span>}
-          {!dashLayout.locked && (
-            <span
-              className="nx-dash-hint"
-              style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', opacity: 0.72 }}
-            >
-              Drag to move • lock to save
-            </span>
-          )}
-          {!dashLayout.locked && (
-            <button
-              type="button"
-              className="button button-secondary"
-              style={{ padding: '2px 10px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-              onClick={() => setDashLayout(prev => ({ ...prev, order: DEFAULT_ORDER.slice(), sizes: {}, hidden: DEFAULT_HIDDEN.slice() }))}
-              title="Reset tile order and sizes to default"
-            >
-              <RotateCw size={12} /> Reset layout
-            </button>
-          )}
-          </div>
-        </div>
-        {(() => {
-          const qaStatus = thumbnailProgress || librarySyncProgress || nexupSyncProgress || updateCheckProgress;
-          return qaStatus ? (
-            <p style={{
-              margin: '0.5rem 0 0',
-              fontSize: '0.78rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem',
-              color: qaStatus.phase === 'error' ? '#dc3545' : qaStatus.phase === 'done' ? '#28a745' : 'var(--text-secondary)'
-            }}>
-              {qaStatus.phase === 'init' && <Loader2 size={13} className="spin" />}
-              {qaStatus.phase === 'done' && <Check size={13} />}
-              {qaStatus.phase === 'error' && <AlertTriangle size={13} />}
-              {qaStatus.status}
-            </p>
-          ) : null;
-        })()}
-        {!dashLayout.locked && (dashLayout?.hidden || []).length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Hidden tiles:</span>
-            {(dashLayout?.hidden || []).map(tileKey => (
-              <button
-                key={tileKey}
-                onClick={() => {
-                  const newHidden = (dashLayout.hidden || []).filter(h => h !== tileKey);
-                  setDashLayout({ ...dashLayout, hidden: newHidden });
-                }}
-                className="button button-secondary"
-                style={{ padding: '2px 8px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                title={`Show ${tileKey} tile`}
-              >
-                <Plus size={12} /> {tileKey}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* The dashboard toolbar that used to sit here was superseded by the
+          quick-action tile and the per-tile visibility switches, and was then
+          hidden with `display: none !important` rather than removed. Its
+          buttons stayed in the DOM: a second, zero-sized "Scan files" sat in
+          front of the real one, which is how a control that works came to be
+          reported as unclickable. Removed rather than re-hidden. */}
 
       {!dashLayout.locked && (
         <div className="nx-arrange-tip">
@@ -36666,9 +36498,14 @@ const DashboardTiles = {
                 <span>AI-generated</span>
                 <span className="nx-comm-ai-state">{communityIncludeAI ? 'Included' : 'Excluded'}</span>
               </button>
+              {/* "Show results", not "Browse". The sidebar sub-page is also called
+                  Browse, so this screen had two controls with the same name and
+                  different jobs - one navigates, one runs the query. Clicking the
+                  wrong one and seeing nothing happen accounted for five separate
+                  bug reports about Community Prerolls being broken. */}
               <button className="button" onClick={() => handleBrowse()} disabled={communityIsSearching}>
                 {communityIsSearching ? <Loader2 size={14} className="spin" /> : <Filter size={14} />}
-                {communityIsSearching ? 'Loading...' : 'Browse'}
+                {communityIsSearching ? 'Loading...' : 'Show results'}
               </button>
               {(browseCategory || browseCreator || browsePlatform) && (
                 <button className="button button-secondary" onClick={() => { setBrowseCategory(''); setBrowseCreator(''); setBrowsePlatform(''); handleBrowse({ category: '', creator: '', platform: '' }); }}>
