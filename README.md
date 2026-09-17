@@ -9,6 +9,11 @@
     <a href="https://discord.gg/R9eH7TbxEk">Discord</a> ·
     <a href="https://ko-fi.com/j_b__">Support on Ko-fi</a>
   </p>
+  <p>
+    <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://badgen.net/github/release/JFLXCLOUD/NeXroll/stable?label=stable&amp;color=yellow" alt="Latest Stable Release" /></a>
+    <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/jbrns/nexroll" alt="Docker Pulls" /></a>
+    <a href="https://github.com/JFLXCLOUD/NeXroll/releases"><img src="https://img.shields.io/github/downloads/JFLXCLOUD/NeXroll/total?include_prereleases&amp;color=DE7716" alt="GitHub Downloads" /></a>
+  </p>
 </div>
 
 > **2.2.0 beta.** This README describes the upcoming 2.2.0 release. [Try 2.2.0-beta.9](https://github.com/JFLXCLOUD/NeXroll/releases/tag/v2.2.0-beta.9), or use the [latest stable release](https://github.com/JFLXCLOUD/NeXroll/releases/latest).
