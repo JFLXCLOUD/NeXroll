@@ -30074,14 +30074,49 @@ def _resolve_current_intros(db: Session) -> dict:
                         _file_log(f"[PLUGIN] Could not generate pause block: {e}", level="WARNING")
 
             elif btype == "dynamic_preroll":
-                template = str(block.get("template", "")).lower()
-                theme = str(block.get("theme", "")).lower()
+                # Read `filename` first, exactly as the Plex path does.
+                #
+                # The builder writes `filename` when you pin one specific
+                # generated video - its own comment says it keeps "the field the
+                # scheduler reads". This branch only understood template/theme,
+                # which the builder never writes for that shape, so the guard
+                # below was always false and the block contributed no path. On
+                # Plex the same sequence played correctly; on Jellyfin and Emby
+                # the generated preroll was silently dropped and the sequence
+                # just started at the next block.
                 _setting = db.query(models.Setting).first()
                 _storage = getattr(_setting, "nexup_storage_path", None) if _setting else None
-                if _storage and template and theme:
-                    vf = os.path.join(_storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
-                    if os.path.exists(vf):
-                        paths.append(os.path.abspath(vf))
+                if not _storage:
+                    _file_log("[PLUGIN] NeX-Up storage path not configured; "
+                              "cannot resolve generated preroll", level="WARNING")
+                else:
+                    gen_dir = os.path.join(_storage, "dynamic_prerolls")
+                    candidates = []
+                    filename = block.get("filename")
+                    if filename:
+                        candidates.append(os.path.basename(str(filename)))
+                    template = str(block.get("template", "")).lower()
+                    if template:
+                        # The generator names its output "<template_id>_preroll.mp4";
+                        # the theme never appears in the filename. The older
+                        # "<template>_<theme>_preroll.mp4" guess therefore never
+                        # matched a real file, which is why sequences authored
+                        # before the builder recorded a filename came out with
+                        # the generated block silently missing.
+                        candidates.append(f"{template}_preroll.mp4")
+                        theme = str(block.get("theme", "")).lower()
+                        if theme:
+                            candidates.append(f"{template}_{theme}_preroll.mp4")
+                    found = next(
+                        (os.path.join(gen_dir, c) for c in candidates
+                         if os.path.exists(os.path.join(gen_dir, c))), None)
+                    if found:
+                        paths.append(os.path.abspath(found))
+                    else:
+                        _file_log(
+                            "[PLUGIN] Generated preroll not found; tried "
+                            + ", ".join(candidates or ["(nothing named on the block)"]),
+                            level="WARNING")
         return paths
 
     # --- Helper: resolve a SavedSequence into ordered paths ---

@@ -77,6 +77,23 @@ def _plugin_channel(setting) -> Optional[bool]:
     return None
 
 
+def _generated_preroll_path(storage: str, template: str, theme: str) -> str:
+    """Where a generated preroll lives when the block names no filename.
+
+    The generator writes "<template_id>_preroll.mp4"; the theme never appears in
+    the name. The original guess included it, so it never matched a real file -
+    sequences authored before the builder recorded a filename lost their
+    generated block silently. Prefer the real shape, keep the old one as a
+    fallback in case anything on disk still uses it.
+    """
+    gen_dir = os.path.join(storage, "dynamic_prerolls")
+    for candidate in (f"{template}_preroll.mp4", f"{template}_{theme}_preroll.mp4"):
+        path = os.path.join(gen_dir, candidate)
+        if os.path.exists(path):
+            return path
+    return os.path.join(gen_dir, f"{template}_preroll.mp4")
+
+
 def _get_log_path():
     """Get the log file path.
 
@@ -2970,7 +2987,7 @@ class Scheduler:
                     else:
                         template = str(step.get("template", "coming_soon")).lower()
                         theme = str(step.get("theme", "midnight")).lower()
-                        video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                        video_file = _generated_preroll_path(storage, template, theme)
                     if os.path.exists(video_file):
                         paths.append(os.path.abspath(video_file))
                     else:
@@ -3222,7 +3239,7 @@ class Scheduler:
                                     else:
                                         template = str(step.get("template", "coming_soon")).lower()
                                         theme = str(step.get("theme", "midnight")).lower()
-                                        video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                                        video_file = _generated_preroll_path(storage, template, theme)
                                     if os.path.exists(video_file):
                                         paths.append(os.path.abspath(video_file))
                             elif stype == "separator":
@@ -3451,7 +3468,7 @@ class Scheduler:
                         else:
                             template = str(block.get("template", "coming_soon")).lower()
                             theme = str(block.get("theme", "midnight")).lower()
-                            video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                            video_file = _generated_preroll_path(storage, template, theme)
                         if os.path.exists(video_file):
                             paths.append(os.path.abspath(video_file))
                         else:
