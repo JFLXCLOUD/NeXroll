@@ -568,6 +568,29 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               ))}
             </div>
 
+            {/* Jellyfin and Emby play prerolls only through the NeXroll Intros
+                plugin, and the wizard never said so - you could finish setup
+                with a healthy connection and still have nothing ever play.
+                Reported four times against the Emby step. */}
+            {(serverType === 'jellyfin' || serverType === 'emby') && (
+              <div style={{
+                marginBottom: '1rem', padding: '0.85rem 1rem', borderRadius: '10px',
+                background: darkMode ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)',
+                border: `1px solid ${darkMode ? 'rgba(245,158,11,0.30)' : 'rgba(245,158,11,0.25)'}`,
+              }}>
+                <div style={{ fontWeight: 700, color: txt, fontSize: '0.88rem', marginBottom: '0.3rem' }}>
+                  {serverType === 'emby' ? 'Emby' : 'Jellyfin'} also needs the NeXroll Intros plugin
+                </div>
+                <p style={{ color: sub, fontSize: '0.82rem', margin: 0, lineHeight: 1.55 }}>
+                  Connecting here lets NeXroll manage your prerolls, but{' '}
+                  {serverType === 'emby' ? 'Emby' : 'Jellyfin'} plays them through the plugin - without
+                  it nothing appears before your films. Finish this wizard, then open{' '}
+                  <strong>Connect</strong>, where NeXroll offers the plugin for download along with
+                  the install steps for your server.
+                </p>
+              </div>
+            )}
+
             {serverType === 'plex' ? (
               <div style={{
                 marginBottom: '1rem', padding: '0.9rem 1rem', borderRadius: '10px',
