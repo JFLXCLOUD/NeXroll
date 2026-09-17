@@ -4286,11 +4286,23 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // step, which is the only way to make prerolls play.
   useEffect(() => {
     if (userPickedServerRef.current) return;
-    const connected = getActiveConnectedServer();
-    if (connected && connected !== activeServer) {
-      setActiveServer(connected);
+    const connected = getConnectedServers();
+    if (!connected.length) return;
+    // With several servers connected, open on the one that needs attention.
+    // The panel used to take the first in the list, so a household with a
+    // healthy Jellyfin and an Emby flagged "plugin not detected" landed on
+    // Jellyfin's plugin instructions - the wrong server's, for a problem
+    // Jellyfin did not have.
+    const needsPlugin = connected.find(id => {
+      if (id === 'jellyfin') return !(jellyfinServerInfo?.plugin_clients?.length > 0);
+      if (id === 'emby') return !(embyServerInfo?.plugin_clients?.length > 0);
+      return false;
+    });
+    const target = needsPlugin || connected[0];
+    if (target && target !== activeServer) {
+      setActiveServer(target);
     }
-  }, [plexStatus, jellyfinStatus, embyStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [plexStatus, jellyfinStatus, embyStatus, jellyfinServerInfo, embyServerInfo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply to every connected server, not whichever one happened to be first.
   // Plex needs an explicit push; Jellyfin and Emby read the active category
@@ -11754,7 +11766,12 @@ const DashboardTiles = {
           </div>
           <div className="nx-hybrid-filters">
             <span className="nx-hybrid-filter-label">Quick filters</span>
-            <button type="button" className={`nx-hybrid-filter-chip${!filterCategory && !filterMatchStatus && !inputTagsValue ? ' is-active' : ''}`} onClick={() => { setFilterCategory(''); setFilterMatchStatus(''); handleTagsChange(''); setCurrentPage(1); }}>All</button>
+            {/* "All" means all. It used to clear the category filters while
+                leaving generated prerolls and trailers hidden, so the one chip
+                that promises everything showed 2 of 7 - reported in four
+                separate sessions, and a "5 more hidden" note beside it did not
+                settle the argument, because the chip is the promise. */}
+            <button type="button" className={`nx-hybrid-filter-chip${!filterCategory && !filterMatchStatus && !inputTagsValue ? ' is-active' : ''}`} onClick={() => { setFilterCategory(''); setFilterMatchStatus(''); handleTagsChange(''); revealHiddenPrerolls(); setCurrentPage(1); }}>All</button>
             {quickCategories.map(category => (
               <button type="button" key={category.id} className={`nx-hybrid-filter-chip${String(category.id) === String(filterCategory) ? ' is-active' : ''}`} onClick={() => { setFilterCategory(String(category.id)); setFilterMatchStatus(''); setCurrentPage(1); }}>{category.name}</button>
             ))}
@@ -30660,7 +30677,13 @@ const DashboardTiles = {
           Emby plugin streams the file from NeXroll and never sees a path at all.
           A Jellyfin user reading a page headed "(Plex)" reasonably assumed it
           was mislabelled, so say which servers it affects instead. */}
-      {plexStatus !== 'Connected' && (jellyfinStatus === 'Connected' || embyStatus === 'Connected') && (
+      {plexStatus !== 'Connected' && (jellyfinStatus === 'Connected' || embyStatus === 'Connected') && (() => {
+        // Name every plugin server that is connected. This read the Emby status
+        // and fell back to "Jellyfin", so a household running both was told
+        // "Nothing to do here for Emby" with no mention of its Jellyfin at all.
+        const pluginServers = getConnectedServers().filter(id => id !== 'plex');
+        const named = describeServers(pluginServers);
+        return (
         <div style={{
           marginBottom: '1.5rem', padding: '0.75rem 0.9rem', borderRadius: '8px',
           fontSize: '0.85rem', lineHeight: 1.55,
@@ -30668,13 +30691,14 @@ const DashboardTiles = {
           backgroundColor: darkMode ? 'rgba(0, 212, 255, 0.08)' : 'rgba(0, 150, 200, 0.06)',
           border: `1px solid ${darkMode ? 'rgba(0, 212, 255, 0.2)' : 'rgba(0, 150, 200, 0.15)'}`
         }}>
-          <strong>Nothing to do here for {embyStatus === 'Connected' ? 'Emby' : 'Jellyfin'}.</strong>{' '}
+          <strong>Nothing to do here for {named}.</strong>{' '}
           These rules only affect Plex, which plays prerolls from its own filesystem and so needs a
-          path it can resolve. The NeXroll plugin streams prerolls to
-          {' '}{embyStatus === 'Connected' ? 'Emby' : 'Jellyfin'} directly, so no translation is involved.
+          path it can resolve. The NeXroll plugin streams prerolls to {named}
+          {' '}directly, so no translation is involved.
           The settings below are kept in case you connect Plex later.
         </div>
-      )}
+        );
+      })()}
 
       {/* Mappings List */}
       <div className="nx-setting-row">

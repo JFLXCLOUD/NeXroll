@@ -99,8 +99,20 @@ export function estimateSequence(blocks = [], prerolls = []) {
       }
       case 'coming_soon_list':
       case 'dynamic_preroll': {
-        seconds += ASSUMED.generated;
-        exact = false;
+        // A generated block names one specific file and plays it every time -
+        // its own caption says so. When the library knows that file's duration
+        // there is nothing to estimate, and reporting "~30s" for a clip we have
+        // measured was reported as the estimate still being wrong.
+        const named = block.filename
+          ? prerolls.find(p => p.filename === block.filename)
+          : null;
+        const measured = Number(named?.duration);
+        if (Number.isFinite(measured) && measured > 0) {
+          seconds += measured;
+        } else {
+          seconds += ASSUMED.generated;
+          exact = false;
+        }
         break;
       }
       case 'separator':

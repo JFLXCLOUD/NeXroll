@@ -61,6 +61,24 @@ describe('estimateSequence', () => {
     }
   });
 
+  test('a generated block uses the real duration of the file it names', () => {
+    // It plays one specific file every time, so there is nothing to estimate
+    // once the library has measured it.
+    const withGenerated = [...prerolls, { id: 9, filename: 'ident.mp4', duration: 7 }];
+    const result = estimateSequence(
+      [{ type: 'dynamic_preroll', filename: 'ident.mp4' }], withGenerated);
+    expect(result.seconds).toBe(7);
+    expect(result.exact).toBe(true);
+    expect(result.variations).toBe(1);
+  });
+
+  test('a generated block falls back when the file is unknown', () => {
+    const result = estimateSequence(
+      [{ type: 'dynamic_preroll', filename: 'missing.mp4' }], prerolls);
+    expect(result.seconds).toBe(ASSUMED.generated);
+    expect(result.exact).toBe(false);
+  });
+
   test('separators take no time', () => {
     expect(estimateSequence([{ type: 'separator' }], prerolls).seconds).toBe(0);
   });
