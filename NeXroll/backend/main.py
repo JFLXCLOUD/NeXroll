@@ -59,6 +59,7 @@ from backend.scheduler import (
     _localized_now,
 )
 from backend import secure_store
+from backend import plugin_url_repair
 from backend.changelog_text import strip_html_comments
 from backend import settings_singleton
 from backend.qr_render import QR_MODULE_STYLES
@@ -25972,9 +25973,22 @@ def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
         suggested_url = str(request.base_url).rstrip("/")
 
         log_event('INFO', 'jellyfin', f'Plugin detected: {plugin.get("Name")} v{plugin.get("Version")}', source='detect_jellyfin_plugin')
+
+        # A plugin pointed at localhost is pointed at Jellyfin, not at NeXroll,
+        # and fails without reporting anything: the plugin list still says
+        # Active and no intro ever plays. Fix it here rather than leave the user
+        # to notice that prerolls work on Plex and not on Jellyfin.
+        auto_configured = _auto_repair_plugin_url(
+            "jellyfin", config, suggested_url,
+            lambda: configure_jellyfin_plugin(
+                JellyfinPluginConfigureRequest(nexroll_url=suggested_url), db),
+            db)
+        if auto_configured:
+            config = connector.get_plugin_configuration(plugin_id) or config
+
         return {
             "detected": True,
-            "auto_configured": False,
+            "auto_configured": auto_configured,
             "plugin": {
                 "id": plugin_id,
                 "name": plugin.get("Name") or plugin.get("name") or "NeXroll Intros",
@@ -25987,6 +26001,37 @@ def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         log_event('WARNING', 'jellyfin', f'Plugin detection failed: {e}', source='detect_jellyfin_plugin')
         return {"detected": False, "error": str(e)}
+
+
+def _plugin_has_checked_in(server_type: str) -> bool:
+    """Whether a plugin of this server type has ever reached /plugin/intros."""
+    want = (server_type or "").lower()
+    return any((c.get("server_type") or "").lower() == want for c in PLUGIN_CLIENTS.values())
+
+
+def _auto_repair_plugin_url(server_type: str, config: dict, suggested_url: str,
+                            configure, db) -> bool:
+    """Repoint a plugin that cannot reach NeXroll, and say so in the log.
+
+    Only ever acts on a plugin that has never checked in - see
+    plugin_url_repair.should_repair for why touching a working one is the more
+    dangerous mistake.
+    """
+    configured = (config or {}).get("NexrollUrl") or ""
+    if not plugin_url_repair.should_repair(
+            configured, suggested_url, _plugin_has_checked_in(server_type)):
+        return False
+    try:
+        configure()
+    except Exception as exc:
+        log_event('WARNING', server_type,
+                  f'Could not repoint the plugin automatically: {exc}',
+                  source='auto_repair_plugin_url', db=db)
+        return False
+    log_event('INFO', server_type,
+              plugin_url_repair.describe_repair(configured, suggested_url),
+              source='auto_repair_plugin_url', db=db)
+    return True
 
 
 class JellyfinPluginConfigureRequest(BaseModel):
@@ -26497,9 +26542,19 @@ def detect_emby_plugin(request: Request, db: Session = Depends(get_db)):
         suggested_url = str(request.base_url).rstrip("/")
 
         log_event('INFO', 'emby', f'Plugin detected: {plugin.get("Name")} v{plugin.get("Version")}', source='detect_emby_plugin')
+
+        # Same trap as Jellyfin: localhost resolves inside Emby, not to NeXroll.
+        auto_configured = _auto_repair_plugin_url(
+            "emby", config, suggested_url,
+            lambda: configure_emby_plugin(
+                EmbyPluginConfigureRequest(nexroll_url=suggested_url), db),
+            db)
+        if auto_configured:
+            config = connector.get_plugin_configuration(plugin_id) or config
+
         return {
             "detected": True,
-            "auto_configured": False,
+            "auto_configured": auto_configured,
             "plugin": {
                 "id": plugin_id,
                 "name": plugin.get("Name") or plugin.get("name") or "NeXroll Intros",
