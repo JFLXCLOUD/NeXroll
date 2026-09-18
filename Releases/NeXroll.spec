@@ -32,6 +32,14 @@ _plugin_datas = [
     (z, 'plugins')
     for z in _glob.glob(os.path.join(project_root, 'Plugins', 'NeXroll.Jellyfin', 'NeXroll.Jellyfin*.zip'))
 ]
+# The Emby plugin assembly, served the same way from /emby/plugin/download.
+# Prebuilt and committed rather than compiled here: Emby ships no NuGet SDK, so
+# building it needs MediaBrowser DLLs lifted from an Emby install. Without this
+# the Windows build falls back to linking at GitHub, which is what the in-app
+# download exists to avoid.
+_emby_dll = os.path.join(project_root, 'Plugins', 'NeXroll.Emby.dll')
+if os.path.exists(_emby_dll):
+    _plugin_datas.append((_emby_dll, 'plugins'))
 
 a = Analysis(
     ['..\\NeXroll\\backend\\main.py'],
