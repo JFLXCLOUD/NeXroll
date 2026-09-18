@@ -2395,16 +2395,24 @@ class Scheduler:
                 _scheduler_verbose(f"  Actual:   {actual_normalized}")
                 _scheduler_verbose(f"  Reapplying category {setting.active_category}...")
                 
-                # Reapply the current category
-                success = self._apply_category_to_plex(
+                # Reapply the current category. This check is about Plex and
+                # only Plex - it got here by comparing Plex's own preroll string
+                # - so read the Plex channel rather than the result's truthiness,
+                # which is true when any server took the work. Otherwise a failed
+                # Plex write on a host that also runs Jellyfin reported
+                # "Successfully reapplied" and left the mismatch in place.
+                result = self._apply_category_to_plex(
                     setting.active_category,
                     db,
                     schedule=tracked_schedule,
                 )
-                if success:
-                    _scheduler_log(f"VERIFICATION: Successfully reapplied prerolls")
+                if getattr(result, "plex", None) is True:
+                    _scheduler_log("VERIFICATION: Successfully reapplied prerolls to Plex")
                 else:
-                    _scheduler_log(f"VERIFICATION: Failed to reapply prerolls")
+                    _scheduler_log(
+                        f"VERIFICATION: Failed to reapply prerolls to Plex — "
+                        f"{getattr(result, 'describe', lambda: 'no detail')()}",
+                        level="WARNING")
             
             # Update last verification time
             self._last_verification_time = now
