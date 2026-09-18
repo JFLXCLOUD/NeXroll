@@ -2,7 +2,7 @@
 
 The Connect page links NeXroll to your media server. Until one is connected, NeXroll can organise and schedule prerolls but has nowhere to send them.
 
-NeXroll supports **Plex**, **Jellyfin** and **Emby**, one at a time.
+NeXroll supports **Plex**, **Jellyfin** and **Emby**, and you can connect as many of them as you run. Whatever you schedule plays on every connected server.
 
 ---
 
@@ -58,9 +58,15 @@ Set this up under **Settings → Path Mappings**, or answer the Paths step durin
 
 ---
 
-## Switching servers
+## Using more than one server
 
-Connecting a second server type disconnects the first — NeXroll drives one server at a time. Your library, categories and schedules are untouched; only the destination changes.
+Plex, Jellyfin and Emby can all be connected at once — for example Plex in the lounge and Jellyfin for the kids. Connecting another server does not disconnect the one you already have, and there is nothing to choose between: the same schedules, sequences and categories apply to all of them.
+
+Each server is reached its own way. Plex has the preroll setting written to it directly, while Jellyfin and Emby ask the NeXroll Intros plugin what to play when playback starts. So one server being offline does not stop the others, and the scheduler log names which server an apply succeeded or failed on.
+
+Disconnecting a server only removes that destination. Your library, categories and schedules are untouched.
+
+Before 2.2.0-beta.10, NeXroll allowed only one server and asked you to disconnect the first before connecting another. That limit is gone.
 
 ---
 

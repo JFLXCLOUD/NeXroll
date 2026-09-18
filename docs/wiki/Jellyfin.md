@@ -40,7 +40,7 @@ Add the matching repository in **Jellyfin Dashboard > Plugins > Repositories**, 
 - Jellyfin 12: `https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/Plugins/jellyfin/manifest.json`
 - Jellyfin 10.11: `https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/Plugins/jellyfin/manifest-10.11.json`
 
-Future versions use Jellyfin's **Update Plugins** task. Existing manual installs need a one-time migration to enable updates; see the [repository instructions](../../Plugins/jellyfin/README.md). Use only the feed matching your server version.
+Future versions use Jellyfin's **Update Plugins** task. Existing manual installs need a one-time migration to enable updates; see the [repository instructions](https://github.com/JFLXCLOUD/NeXroll/blob/main/Plugins/jellyfin/README.md). Use only the feed matching your server version.
 
 The API permission warning on Jellyfin 12 in older NeXroll versions requires the separate application connector fix prepared for **2.2.0-beta.9**; installing the plugin alone does not update NeXroll.
 
@@ -78,7 +78,7 @@ If NeXroll is already connected to Jellyfin, it can detect and configure the plu
    cd Plugins/NeXroll.Jellyfin
    dotnet publish -c Release -o ./publish
    ```
-3. Run `./package.ps1` and extract only the resulting ZIP's three files into the plugin directory. Do not copy server dependency DLLs from `publish/`. For Jellyfin 12, build from `Plugins/NeXroll.Jellyfin12` using .NET 10; see its [build instructions](../../Plugins/NeXroll.Jellyfin12/README.md).
+3. Run `./package.ps1` and extract only the resulting ZIP's three files into the plugin directory. Do not copy server dependency DLLs from `publish/`. For Jellyfin 12, build from `Plugins/NeXroll.Jellyfin12` using .NET 10; see its [build instructions](https://github.com/JFLXCLOUD/NeXroll/blob/main/Plugins/NeXroll.Jellyfin12/README.md).
 4. Restart Jellyfin
 
 ## Step 3: Configure the Plugin

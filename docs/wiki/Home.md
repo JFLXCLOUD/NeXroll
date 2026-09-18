@@ -1,6 +1,9 @@
 # Home
 
-![NeXroll Logo](https://github.com/JFLXCLOUD/NeXroll/raw/main/NeXroll/frontend/NeXroll_Logo_WHT.png?raw=true)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/assets/nexroll-logo-white.png#gh-dark-mode-only" alt="NeXroll" width="380" />
+  <img src="https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/assets/nexroll-logo-black.png#gh-light-mode-only" alt="NeXroll" width="380" />
+</p>
 
 **NeXroll** is a modern preroll management system for **Plex**, **Jellyfin**, and **Emby** with a beautiful web UI, powerful scheduling, and seamless media server integration.
 
@@ -36,6 +39,10 @@
 - **Sign in with Plex from inside the wizard**, rather than being sent away from it.
 - **Run Setup Wizard** from Settings → System to walk through setup again without resetting anything.
 - **Backups now include every setting** — connections, path mappings, NeX-Up and generator defaults, dashboard layout — so a restore on a new machine comes back configured. System backups also carry generated prerolls and brand assets.
+
+### Media servers
+
+- **Connect more than one media server.** Plex, Jellyfin and Emby can all be connected at once, and whatever you schedule plays on every one of them. See [Connect](Connect#using-more-than-one-server).
 
 ### Fixed
 
@@ -128,6 +135,7 @@
 - **Plex**: Direct API integration with path translation support
 - **Jellyfin**: Preroll injection via NeXroll Intros plugin — download the plugin straight from the Connect page, auto-detect it, and push its config (URL, API key, path mapping, Max Intros, movies/episodes) remotely
 - **Emby**: Preroll injection via NeXroll Intros plugin with Cinema Mode integration
+- **Several servers at once**: connect Plex, Jellyfin and Emby together and the same schedules apply to all of them
 - **No shared mount required**: the plugin streams and caches prerolls from NeXroll, so it works even when the media server can't see the files directly
 - Secure credential storage with encryption
 
