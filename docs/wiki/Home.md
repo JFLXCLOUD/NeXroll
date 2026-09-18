@@ -1,8 +1,10 @@
 # Home
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/assets/nexroll-logo-white.png#gh-dark-mode-only" alt="NeXroll" width="380" />
-  <img src="https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/assets/nexroll-logo-black.png#gh-light-mode-only" alt="NeXroll" width="380" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/assets/nexroll-logo-white.png" />
+    <img src="https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/assets/nexroll-logo-black.png" alt="NeXroll" width="380" />
+  </picture>
 </p>
 
 **NeXroll** is a modern preroll management system for **Plex**, **Jellyfin**, and **Emby** with a beautiful web UI, powerful scheduling, and seamless media server integration.
