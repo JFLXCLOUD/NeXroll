@@ -79,6 +79,15 @@ Your sequence is now in your library and can be:
 - Exported and shared
 - Edited later
 
+## Advanced Mode and Flow View
+
+Two optional switches at the top of the sequence add more control:
+
+- **Advanced** mode lets any block decide *when* it plays, such as only when trailers are available, only late at night, or only before horror movies on Jellyfin and Emby, and what plays in its place when it doesn't.
+- **Flow** view draws the sequence as a workflow you can pan, zoom and drag, with conditions shown as branches.
+
+See [Advanced Sequences](Advanced-Sequences) for the full guide, including what Plex, Jellyfin and Emby can each check.
+
 ## NeX-Up Preset Sequences
 
 If you're using NeX-Up, preset sequence templates are available in the **NeX-Up → Generator** tab:

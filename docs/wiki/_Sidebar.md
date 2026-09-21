@@ -21,6 +21,7 @@
 * [Preroll Library](Preroll-Library)
 * [Scheduling Guide](Scheduling)
 * [Sequences](Sequences)
+* [Advanced Sequences](Advanced-Sequences)
 * [NeX-Up (Trailers)](NeX-Up)
 * [Community Prerolls](Community-Prerolls)
 * [Sharing Sequences](Sharing-Patterns)

@@ -103,6 +103,87 @@ Each item shows:
 1. Click **Download All Available**
 2. NeX-Up downloads trailers for all upcoming content that has YouTube trailers available
 
+## Library Trailers
+
+**NeX-Up > Library Trailers** keeps trailers for movies you **already own**, so a sequence can show them the way a cinema shows trailers before the feature.
+
+It is separate from the rest of NeX-Up on purpose. Coming Soon trailers are for movies that aren't in your library yet, and are removed once a movie arrives. Library trailers are for movies that have arrived. They have their own settings, their own storage folder and their own limits, and nothing on this page is affected by Coming Soon's retention or cleanup.
+
+### Turning it on
+
+1. Connect Radarr under **NeX-Up > Connections**. Library Trailers reads your library from Radarr.
+2. Open **NeX-Up > Library Trailers** and switch on **Keep trailers for movies in my library**
+3. Choose which movies (below), then click **Save changes** and **Sync now**
+
+After that, Library Trailers refreshes with NeX-Up's automatic refresh (**NeX-Up > Settings > Automatic refresh**).
+
+### Which movies
+
+Choose movies one of two ways, using the switch at the top of **Which movies**. Your filters and your picks are both kept when you switch.
+
+#### Hand-pick movies
+
+Browse your whole Radarr library as posters and click the ones you want trailers for. Search by title, narrow by genre, sort by title, newest in your library, highest rated or newest release, and switch between **All**, **Picked** and **Not picked**. **Pick all shown** picks everything in the current view, for example every horror movie rated highly.
+
+Each poster shows whether the movie already has a trailer: **Next to movie**, **Downloaded**, **No trailer found**, or **No trailer link** when Radarr has none to download.
+
+Hand-picked trailers don't rotate out; they stay until you unpick the movie. Unpicking keeps the trailer and marks it **Outside filters**, like any other trailer that no longer matches. If you pick more movies than your download limit allows, the page tells you, and the first ones by **Download first** are fetched.
+
+#### Use filters
+
+Every filter is optional. Filters you leave empty don't narrow anything, and the ones you set work together.
+
+| Filter | What it does |
+|--------|--------------|
+| **Quick presets** | One-click starting points: Everything, Family night (G and PG), Critically acclaimed (85%+ on Rotten Tomatoes), Horror night, Classics (before 1990, rated 7+), New arrivals (last 60 days) |
+| **Genres** | Click a genre once to **include** it, twice to **exclude** it, and again to clear it. Included genres match any of them; an excluded genre always wins |
+| **Age ratings** | G, PG, PG-13, R, NC-17, or Unrated (movies with no rating or NR) |
+| **Original language** | The movie's original language |
+| **Release years** | From and to, inclusive |
+| **Minimum scores** | IMDb and Rotten Tomatoes. Movies without that score are left out when it's set |
+| **Recently added** | Only movies added to your library within a period |
+| **Radarr tags** | Shown when your Radarr uses tags: movies with any of the chosen tags |
+| **Specific movies** | Search your library and mark a movie **Always include** or **Never include**, whatever the other filters say |
+
+Each chip shows how many movies in your library it covers. Below the filters, a summary says how many movies match and how many have a trailer link in Radarr, with posters of the first movies in line for a trailer. Nothing is saved or downloaded until you click **Save changes** and **Sync now**.
+
+### Where trailers come from
+
+1. **Trailers next to your movies.** Files named like `Movie (Year)-trailer.mp4`, `trailer.mp4`, or anything in a `Trailers` folder inside the movie's folder. This is the naming Plex, Jellyfin and Emby use for local trailers. NeXroll only reads these files and never moves or deletes them.
+2. **Downloads from YouTube** for movies without a trailer file, using the trailer link Radarr has for the movie and NeX-Up's quality and YouTube settings. Downloads are kept in a `library` folder inside your NeX-Up storage folder.
+
+Either can be switched off. With downloads off, only trailer files you already have are used.
+
+**Folder mapping:** Radarr reports each movie's folder as Radarr sees it. If NeXroll sees the same folders under a different path, for example in Docker or over a network share, add a folder mapping such as `/movies` to `D:\Movies`, so NeXroll can find the trailer files.
+
+### Limits and rotation
+
+- **Maximum downloaded trailers** and **Maximum download storage** apply to downloads only. Trailers next to your movies take no extra space and are always included.
+- **Download first** decides which matching movies get downloads when more match than your limit allows: newest in your library, highest rated, most popular, or random. Movies you always include come first.
+- Once a limit is reached, each sync swaps up to three downloads that have been kept for at least a week for movies that don't have a trailer yet, so the selection keeps changing.
+- **Changing filters never deletes trailers you already have.** A trailer whose movie no longer matches is kept, still plays, and is marked **Outside filters**. Those are the first to be replaced when a limit is reached and new matches need room. To remove them straight away, use **Remove them** under Download limits.
+- Turning off YouTube downloads keeps the trailers already downloaded.
+- A trailer is removed on its own only when its movie leaves your library, or its file is deleted. A download is also replaced if a trailer file appears next to the movie.
+- If a trailer can't be found for a movie, it is shown as **Not found** and retried after a few days.
+
+### Sync progress
+
+While a sync runs, a progress card shows each stage (reading your library, checking your folders, downloading, finished), a progress bar with the movie downloading now, running totals, and a live activity feed of what was found, downloaded, rotated out or couldn't be found. When it finishes the card stays as a summary until you hide it; **Last sync** brings it back.
+
+### The trailer list
+
+Every library trailer is shown as a poster card, marked **Next to movie** or **Downloaded**. Click play to watch it on the page, and use the switch to stop a trailer from playing without removing it.
+
+### Playing library trailers
+
+Add a **Library trailers** block in the [Sequence Builder](Sequences). Choose:
+
+- **How many** trailers, **shuffled** or **newest in your library first**
+- **Only these genres** (optional), to limit the block to, for example, horror
+- **Same genre as the movie that's starting** (Jellyfin & Emby), to pick trailers that share a genre with the movie about to play. Plex doesn't say which movie is starting, so on Plex trailers come from the whole selection.
+
+The trailer for the movie that's about to play is never picked for it. A Library trailers block can also be a condition's **Otherwise**; see [Advanced Sequences](Advanced-Sequences).
+
 ## YouTube Downloads (Cookie-Free)
 
 NeXroll downloads trailers from YouTube **without cookies** using a built-in **PO-token provider** — a small local helper that clears YouTube's "Sign in to confirm you're not a bot" wall.
