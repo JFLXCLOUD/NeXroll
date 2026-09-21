@@ -22,8 +22,8 @@ ShowInstDetails show
 Icon "NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "2.2.0-beta.10"
-VIProductVersion "2.2.0.10"
+!define APP_VERSION "2.2.0-beta.11"
+VIProductVersion "2.2.0.11"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
