@@ -1,7 +1,8 @@
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Edit, Copy, Trash2, ChevronUp, ChevronDown, Shuffle, ListOrdered, Film, Pin, Tag, Link, LayoutGrid, Sparkles } from 'lucide-react';
+import { Edit, Copy, Trash2, ChevronUp, ChevronDown, Shuffle, ListOrdered, Film, Pin, Tag, Link, LayoutGrid, Sparkles, GitBranch } from 'lucide-react';
+import { hasCondition, describeBlockCondition, needsPlaybackInfo } from '../utils/sequenceConditions';
 
 /**
  * SequenceBlock - Individual block in the sequence (random or fixed)
@@ -19,6 +20,7 @@ const SequenceBlock = ({
   onDuplicate,
   isFirst,
   isLast,
+  advanced = false,
 }) => {
   const {
     attributes,
@@ -288,6 +290,32 @@ const SequenceBlock = ({
                 ))}
               </div>
             )}
+          </div>
+        </>
+      );
+    } else if (blockType === 'library_trailers') {
+      const genres = (block.genres || []).join(', ') || 'Any genre';
+      return (
+        <>
+          <div style={{
+            minWidth: '48px',
+            height: '48px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #34d399 0%, #0f9f6e 100%)',
+          }}>
+            <Film size={24} color="white" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-color)', marginBottom: '6px' }}>
+              {block.label || 'Library Trailers'}
+            </div>
+            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+              {block.count || 2} trailer{(block.count || 2) === 1 ? '' : 's'} for movies you own / {genres}
+              {block.match_playing ? ' / same genre as the movie (Jellyfin & Emby)' : ''}
+            </div>
           </div>
         </>
       );
@@ -589,6 +617,28 @@ const SequenceBlock = ({
       }}>
         {renderBlockContent()}
       </div>
+
+      {hasCondition(block) && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: '8px',
+          marginBottom: '12px',
+          padding: '8px 10px',
+          borderRadius: '6px',
+          border: '1px dashed var(--accent-color)',
+          fontSize: '12px',
+          lineHeight: 1.5,
+          color: 'var(--text-color)',
+        }}>
+          <GitBranch size={14} style={{ flexShrink: 0, marginTop: '2px', color: 'var(--accent-color)' }} />
+          {advanced ? (
+            <span>{describeBlockCondition(block.condition, block.otherwise, getCategoryName)}</span>
+          ) : (
+            <span style={{ fontWeight: 600 }}>{needsPlaybackInfo(block.condition) ? 'Conditional (Jellyfin & Emby)' : 'Conditional'}</span>
+          )}
+        </div>
+      )}
 
       <div style={{
         display: 'flex',

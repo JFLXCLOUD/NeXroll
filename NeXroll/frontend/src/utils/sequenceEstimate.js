@@ -91,7 +91,8 @@ export function estimateSequence(blocks = [], prerolls = []) {
         }
         break;
       }
-      case 'nexup_trailers': {
+      case 'nexup_trailers':
+      case 'library_trailers': {
         const count = Math.max(1, Number(block.count) || 2);
         seconds += count * ASSUMED.trailer;
         exact = false; // the trailers are chosen when it plays

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Download,
   Film, FolderOpen, Loader2, Play, Plus, RefreshCw, Search,
@@ -395,6 +395,735 @@ function TrailersPage(props) {
   );
 }
 
+const LIBRARY_RECENT = [[0, 'Any time'], [30, 'Last 30 days'], [60, 'Last 60 days'], [90, 'Last 90 days'], [180, 'Last 6 months'], [365, 'Last year']];
+const LIBRARY_MAX_DOWNLOADS = [[10, '10 trailers'], [25, '25 trailers'], [50, '50 trailers'], [100, '100 trailers'], [0, 'None (use only files next to movies)']];
+const LIBRARY_MAX_GB = [[2, '2 GB'], [5, '5 GB'], [10, '10 GB'], [25, '25 GB']];
+const LIBRARY_IMDB = [[0, 'Any score'], [6, '6.0 or higher'], [7, '7.0 or higher'], [7.5, '7.5 or higher'], [8, '8.0 or higher']];
+const LIBRARY_RT = [[0, 'Any score'], [60, '60% or higher'], [75, '75% or higher'], [85, '85% or higher'], [90, '90% or higher']];
+const LIBRARY_PRIORITY = [
+  ['newest', 'Newest in your library', 'Movies you added most recently get trailers first.'],
+  ['rating', 'Highest rated', 'Best IMDb scores first.'],
+  ['popular', 'Most popular', 'What is popular on TMDB right now first.'],
+  ['random', 'Random', 'A different mix every time the selection refreshes.'],
+];
+// The movie filters, and what "no filter" means for each. Presets start from these.
+const LIBRARY_FILTER_DEFAULTS = {
+  genres: [], exclude_genres: [], certifications: [], languages: [], tags: [],
+  year_from: 0, year_to: 0, min_imdb: 0, min_rt: 0, recent_days: 0,
+};
+const LIBRARY_PRESETS = [
+  { id: 'everything', label: 'Everything', copy: 'Every movie in your library', filters: {} },
+  { id: 'family', label: 'Family night', copy: 'G and PG only', filters: { certifications: ['G', 'PG'] } },
+  { id: 'acclaimed', label: 'Critically acclaimed', copy: '85%+ on Rotten Tomatoes', filters: { min_rt: 85 } },
+  { id: 'horror', label: 'Horror night', copy: 'Horror and thrillers', filters: { genres: ['Horror', 'Thriller'] } },
+  { id: 'classics', label: 'Classics', copy: 'Before 1990, rated 7+', filters: { year_to: 1989, min_imdb: 7 } },
+  { id: 'new', label: 'New arrivals', copy: 'Added in the last 60 days', filters: { recent_days: 60 } },
+];
+const SYNC_STEPS = [['read', 'Read your library'], ['local', 'Check your folders'], ['download', 'Download trailers'], ['done', 'Finished']];
+const SYNC_STEP_OF = { read: 0, local: 1, tidy: 2, download: 2, done: 3, error: 3 };
+
+const libraryJson = async (url, options) => {
+  const res = await fetch(url, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+  return body;
+};
+
+// The backend writes UTC timestamps without a zone; read them as UTC.
+const utcDate = value => (value ? new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(value) ? value : `${value}Z`) : null);
+const sinceText = (value, now) => {
+  const date = utcDate(value);
+  if (!date) return '';
+  const seconds = Math.max(0, Math.round((now - date.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return formatTimeAgo(date.toISOString());
+};
+const elapsedText = (from, to) => {
+  const start = utcDate(from);
+  if (!start) return '';
+  const seconds = Math.max(0, Math.round(((to ? utcDate(to).getTime() : Date.now()) - start.getTime()) / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+};
+
+const SYNC_EVENT = {
+  found: { icon: FolderOpen, label: 'Found next to movie', tone: 'good' },
+  downloaded: { icon: Download, label: 'Downloaded', tone: 'good' },
+  failed: { icon: AlertTriangle, label: 'No trailer found', tone: 'warn' },
+  rotated: { icon: RefreshCw, label: 'Rotated out', tone: '' },
+  replaced: { icon: RefreshCw, label: 'Replaced to make room', tone: '' },
+  removed: { icon: Trash2, label: 'Removed', tone: '' },
+};
+
+function LibrarySyncCard({ sync, onHide }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!sync?.running) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [sync?.running]);
+  const running = Boolean(sync?.running);
+  const failed = Boolean(sync?.error) && !running;
+  const step = failed ? -1 : (SYNC_STEP_OF[sync?.stage] ?? 0);
+  const counts = sync?.counts || sync?.result || {};
+  const toDownload = Number(sync?.to_download || 0);
+  const done = Number(sync?.download_done || 0);
+  const percent = toDownload ? Math.round((done / toDownload) * 100) : (step >= 3 ? 100 : 0);
+  const log = sync?.log || [];
+
+  return (
+    <section className={`nx-ap-panel nx-lt-sync${running ? ' running' : ''}${failed ? ' failed' : ''}`} aria-live="polite">
+      <header className="nx-lt-sync-head">
+        <div className="nx-lt-sync-title">
+          <span className="nx-lt-sync-icon">{running ? <Loader2 size={16} className="spin" /> : failed ? <AlertTriangle size={16} /> : <Check size={16} />}</span>
+          <div>
+            <strong>{running ? 'Syncing library trailers' : failed ? 'Sync stopped' : 'Sync finished'}</strong>
+            <span>{failed ? sync.error : sync?.status}{sync?.started_at ? ` / ${elapsedText(sync.started_at, running ? null : sync.finished_at)}` : ''}</span>
+          </div>
+        </div>
+        {!running && <button type="button" className="nx-ap-btn" onClick={onHide}><X size={11} /> Hide</button>}
+      </header>
+
+      <ol className="nx-lt-steps">
+        {SYNC_STEPS.map(([key, label], index) => {
+          const state = failed ? (index < (SYNC_STEP_OF[sync?.stage] ?? 0) ? 'done' : 'todo') : index < step || (index === step && step === 3) ? 'done' : index === step ? 'active' : 'todo';
+          return (
+            <li key={key} className={state}>
+              <span className="dot">{state === 'done' ? <Check size={11} /> : index + 1}</span>
+              <span className="label">{label}</span>
+            </li>
+          );
+        })}
+      </ol>
+
+      <div className="nx-lt-sync-body">
+        <div className="nx-lt-sync-main">
+          {toDownload > 0 && (
+            <div className="nx-lt-progress">
+              <div className="nx-lt-progress-bar"><span style={{ width: `${percent}%` }} /></div>
+              <span>{done} of {toDownload} trailer{toDownload === 1 ? '' : 's'}</span>
+            </div>
+          )}
+          {running && sync?.current && (
+            <div className="nx-lt-current">
+              <div className="nx-lt-current-poster">{sync.current.poster_url ? <img src={sync.current.poster_url} alt="" /> : <Film size={18} />}</div>
+              <div><span>Downloading now</span><strong>{sync.current.title}{sync.current.year ? ` (${sync.current.year})` : ''}</strong></div>
+            </div>
+          )}
+          {running && sync?.stage === 'local' && (
+            <p className="nx-lt-muted">Checked {sync.scanned || 0} of {sync.candidates || 0} movie folders for trailer files...</p>
+          )}
+          <div className="nx-lt-counters">
+            <div><span>Matching movies</span><strong>{counts.candidates ?? sync?.candidates ?? 0}</strong></div>
+            <div className="good"><span>Found next to movies</span><strong>{counts.local_found || 0}</strong></div>
+            <div className="good"><span>Downloaded</span><strong>{counts.downloaded || 0}</strong></div>
+            <div className={counts.failed ? 'warn' : ''}><span>No trailer found</span><strong>{counts.failed || 0}</strong></div>
+            <div><span>Removed or rotated</span><strong>{(counts.removed || 0) + (counts.rotated || 0)}</strong></div>
+          </div>
+        </div>
+        <div className="nx-lt-feed">
+          <span className="nx-lt-feed-title">Activity</span>
+          {log.length === 0
+            ? <p className="nx-lt-muted">{running ? 'Waiting for the first result...' : 'Nothing changed in this sync.'}</p>
+            : (
+              <ul>
+                {log.slice(0, 12).map((entry, i) => {
+                  const kind = SYNC_EVENT[entry.kind] || SYNC_EVENT.removed;
+                  const Icon = kind.icon;
+                  return (
+                    <li key={`${entry.at}-${i}`} className={kind.tone}>
+                      <span className="thumb">{entry.poster_url ? <img src={entry.poster_url} alt="" loading="lazy" /> : <Icon size={12} />}</span>
+                      <span className="what"><strong>{entry.title}</strong><small><Icon size={10} /> {kind.label}</small></span>
+                      <time>{sinceText(entry.at, now)}</time>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const BROWSE_PAGE = 60;
+const BROWSE_SORTS = [['title', 'Title'], ['added', 'Newest in library'], ['rating', 'Highest rated'], ['year', 'Newest release']];
+const TRAILER_STATE = {
+  local: ['Next to movie', 'good'],
+  download: ['Downloaded', 'good'],
+  error: ['No trailer found', 'warn'],
+};
+
+// Hand-pick mode: browse the Radarr library and choose the movies to keep
+// trailers for. Selection lives in config.picked, owned by the page.
+function LibraryMovieBrowser({ picked, onChange, genres, maxDownloads, download }) {
+  const [q, setQ] = useState('');
+  const [genre, setGenre] = useState('');
+  const [sort, setSort] = useState('title');
+  const [show, setShow] = useState('all');
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const pickedSet = useMemo(() => new Set(picked), [picked]);
+  // In the Selected / Not selected views the list depends on the picks, so a
+  // change refetches; in All it only changes the ticks.
+  const pickedKey = show === 'all' ? '' : picked.join(',');
+
+  const load = useCallback(async (offset, append) => {
+    setLoading(true);
+    try {
+      const body = await libraryJson('/nexup/library/browse', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q, genre, sort, show, picked, offset, limit: BROWSE_PAGE }),
+      });
+      setItems(previous => (append ? [...previous, ...body.movies] : body.movies));
+      setTotal(body.total);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, genre, sort, show, pickedKey]);
+  useEffect(() => {
+    const timer = setTimeout(() => load(0, false), q ? 300 : 0);
+    return () => clearTimeout(timer);
+  }, [load, q]);
+
+  const toggle = id => onChange(pickedSet.has(id) ? picked.filter(x => x !== id) : [...picked, id]);
+  const selectShown = () => onChange([...picked, ...items.map(m => m.id).filter(id => !pickedSet.has(id))]);
+  const clearAll = () => {
+    if (picked.length > 10 && !window.confirm(`Clear all ${picked.length} picked movies? Trailers you already have are kept.`)) return;
+    onChange([]);
+  };
+  const over = download && maxDownloads > 0 && picked.length > maxDownloads;
+
+  return (
+    <div className="nx-lt-browser">
+      <div className="nx-lt-browser-bar">
+        <label className="nx-lt-browser-search"><Search size={13} /><input aria-label="Search your library" value={q} onChange={event => setQ(event.target.value)} placeholder="Search your library by title..." /></label>
+        <select aria-label="Genre" value={genre} onChange={event => setGenre(event.target.value)}>
+          <option value="">All genres</option>
+          {(genres || []).map(g => <option key={g.name} value={g.name}>{g.name} ({g.count})</option>)}
+        </select>
+        <select aria-label="Sort by" value={sort} onChange={event => setSort(event.target.value)}>{BROWSE_SORTS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>
+        <div className="nx-ap-segmented">
+          <button type="button" className={show === 'all' ? 'active' : ''} onClick={() => setShow('all')}>All</button>
+          <button type="button" className={show === 'picked' ? 'active' : ''} onClick={() => setShow('picked')}>Picked ({picked.length})</button>
+          <button type="button" className={show === 'unpicked' ? 'active' : ''} onClick={() => setShow('unpicked')}>Not picked</button>
+        </div>
+      </div>
+
+      <div className="nx-lt-browser-actions">
+        <span>{loading && !items.length ? 'Loading your library...' : `${total} ${total === 1 ? 'movie' : 'movies'}${q || genre ? ' found' : ''}`}</span>
+        <div>
+          <button type="button" className="nx-ap-btn" disabled={!items.length} onClick={selectShown}><Check size={11} /> Pick all shown</button>
+          <button type="button" className="nx-ap-btn ghost" disabled={!picked.length} onClick={clearAll}><X size={11} /> Clear picks</button>
+        </div>
+      </div>
+
+      {over && (
+        <div className="nx-lt-outside-row" role="status">
+          <span><strong>You&apos;ve picked {picked.length} movies, and your download limit is {maxDownloads}.</strong> Trailers next to your movies don&apos;t count toward it. For the rest, raise Maximum downloaded trailers, or the first {maxDownloads} by Download first are fetched.</span>
+        </div>
+      )}
+      {error && <p className="nx-ap-library-progress warn">{error}</p>}
+
+      <div className="nx-lt-browser-grid">
+        {items.map(m => {
+          const on = pickedSet.has(m.id);
+          const state = TRAILER_STATE[m.trailer] || (m.has_trailer_link ? null : ['No trailer link', 'muted']);
+          return (
+            <button type="button" key={m.id} className={`nx-lt-pick${on ? ' on' : ''}`} aria-pressed={on} onClick={() => toggle(m.id)} title={`${m.title}${m.year ? ` (${m.year})` : ''}${on ? ' - picked' : ''}`}>
+              <span className="art">
+                {m.poster_url ? <img src={m.poster_url} alt="" loading="lazy" /> : <span className="fallback"><Film size={16} /><small>{m.title}</small></span>}
+                <span className="tick">{on ? <Check size={13} /> : <Plus size={13} />}</span>
+                {state && <span className={`state ${state[1]}`}>{state[0]}</span>}
+              </span>
+              <strong>{m.title}</strong>
+              <small>{[m.year, m.certification !== 'Unrated' ? m.certification : null, m.imdb ? `IMDb ${m.imdb}` : null].filter(Boolean).join(' / ')}</small>
+            </button>
+          );
+        })}
+      </div>
+      {!loading && items.length === 0 && <p className="nx-ap-library-muted">{show === 'picked' ? 'No movies picked yet. Switch to All and click posters to pick them.' : 'No movies match.'}</p>}
+      {items.length < total && (
+        <div className="nx-lt-browser-more">
+          <button type="button" className="nx-ap-btn" disabled={loading} onClick={() => load(items.length, true)}>{loading ? <Loader2 size={11} className="spin" /> : null} Show more ({total - items.length} left)</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LibraryChip({ on, off, count, onClick, children, title }) {
+  return (
+    <button type="button" className={`nx-lt-chip${on ? ' on' : ''}${off ? ' off' : ''}`} aria-pressed={on || off} title={title} onClick={onClick}>
+      {off && <X size={10} />}{children}{count != null && <small>{count}</small>}
+    </button>
+  );
+}
+
+// Library Trailers: trailers for movies already in the library. Deliberately
+// its own page with its own settings - Coming Soon removes a trailer once its
+// movie arrives, and nothing here should be caught by that.
+function LibraryTrailersPage({ onNavigate }) {
+  const [info, setInfo] = useState(null);
+  const [config, setConfig] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
+  const [trailers, setTrailers] = useState([]);
+  const [sync, setSync] = useState(null);
+  const [showSync, setShowSync] = useState(false);
+  const [search, setSearch] = useState('');
+  const [source, setSource] = useState('all');
+  const [playing, setPlaying] = useState(null);
+  const [movieQuery, setMovieQuery] = useState('');
+  const [movieResults, setMovieResults] = useState([]);
+  const [pinnedInfo, setPinnedInfo] = useState({});
+
+  const loadTrailers = useCallback(async () => {
+    try { setTrailers((await libraryJson('/nexup/library/trailers')).trailers || []); } catch (_) { /* shown as empty */ }
+  }, []);
+  const loadSettings = useCallback(async () => {
+    try {
+      const body = await libraryJson('/nexup/library/settings');
+      setInfo(body);
+      setConfig(body.config);
+      setSync(body.sync);
+      if (body.sync?.running) setShowSync(true);
+      setDirty(false);
+    } catch (error) {
+      setNotice({ tone: 'warn', text: error.message });
+    }
+  }, []);
+  useEffect(() => { loadSettings(); loadTrailers(); }, [loadSettings, loadTrailers]);
+
+  // What the current choices cover, before anything is saved.
+  const selectionKey = config ? JSON.stringify(['mode', 'picked', 'genres', 'exclude_genres', 'certifications', 'languages', 'tags', 'year_from', 'year_to', 'min_imdb', 'min_rt', 'recent_days', 'always_include', 'never_include', 'priority'].map(k => config[k])) : '';
+  useEffect(() => {
+    if (!config || !info?.radarr_connected) return undefined;
+    setPreviewing(true);
+    const timer = setTimeout(async () => {
+      try {
+        const body = await libraryJson('/nexup/library/preview', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config),
+        });
+        setPreview(body);
+        setPinnedInfo(previous => {
+          const next = { ...previous };
+          [...(body.pinned?.always || []), ...(body.pinned?.never || [])].forEach(m => { next[m.id] = m; });
+          return next;
+        });
+        setPreviewError(null);
+      } catch (error) {
+        setPreviewError(error.message);
+      } finally {
+        setPreviewing(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionKey, info?.radarr_connected]);
+
+  // Follow a running sync, then refresh the list once it finishes.
+  useEffect(() => {
+    if (!sync?.running) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const status = await libraryJson('/nexup/library/sync/status');
+        setSync(status);
+        if (!status.running) { loadTrailers(); loadSettings(); }
+      } catch (_) { /* keep polling */ }
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [sync?.running, loadTrailers, loadSettings]);
+
+  useEffect(() => {
+    const q = movieQuery.trim();
+    if (q.length < 2 || !info?.radarr_connected) { setMovieResults([]); return undefined; }
+    const timer = setTimeout(async () => {
+      try { setMovieResults((await libraryJson(`/nexup/library/movies?q=${encodeURIComponent(q)}`)).movies || []); } catch (_) { setMovieResults([]); }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [movieQuery, info?.radarr_connected]);
+
+  const change = patch => { setConfig(previous => ({ ...previous, ...patch })); setDirty(true); };
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body = await libraryJson('/nexup/library/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config),
+      });
+      setConfig(body.config);
+      setDirty(false);
+      setNotice({ tone: 'live', text: 'Saved. Sync to apply the new selection now, or it applies at the next NeX-Up refresh.' });
+      return true;
+    } catch (error) {
+      setNotice({ tone: 'warn', text: error.message });
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+  const startSync = async () => {
+    if (dirty && !(await save())) return;
+    try {
+      await libraryJson('/nexup/library/sync', { method: 'POST' });
+      setSync({ running: true, stage: 'read', status: 'Starting...', log: [], started_at: new Date().toISOString() });
+      setShowSync(true);
+      setNotice(null);
+    } catch (error) {
+      setNotice({ tone: 'warn', text: error.message });
+    }
+  };
+  const cleanupOutside = async () => {
+    const count = info?.summary?.outside || 0;
+    if (!window.confirm(`Remove ${count} trailer${count === 1 ? '' : 's'} outside your filters? Downloaded files are deleted; trailer files next to your movies are left alone.`)) return;
+    try {
+      const body = await libraryJson('/nexup/library/cleanup', { method: 'POST' });
+      setNotice({ tone: 'live', text: `Removed ${body.removed} trailer${body.removed === 1 ? '' : 's'} outside your filters.` });
+      loadTrailers();
+      loadSettings();
+    } catch (error) {
+      setNotice({ tone: 'warn', text: error.message });
+    }
+  };
+  const toggleTrailer = async trailer => {
+    try {
+      const row = await libraryJson(`/nexup/library/trailers/${trailer.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_enabled: !trailer.is_enabled }),
+      });
+      setTrailers(list => list.map(t => (t.id === row.id ? row : t)));
+    } catch (error) {
+      setNotice({ tone: 'warn', text: error.message });
+    }
+  };
+
+  const has = (list, name) => (list || []).some(x => String(x).toLowerCase() === String(name).toLowerCase());
+  const without = (list, name) => (list || []).filter(x => String(x).toLowerCase() !== String(name).toLowerCase());
+  // Genres cycle: not used -> included -> excluded -> not used.
+  const cycleGenre = name => {
+    if (has(config.genres, name)) change({ genres: without(config.genres, name), exclude_genres: [...without(config.exclude_genres, name), name] });
+    else if (has(config.exclude_genres, name)) change({ exclude_genres: without(config.exclude_genres, name) });
+    else change({ genres: [...config.genres, name] });
+  };
+  const toggleIn = (key, value) => change({ [key]: has(config[key], value) ? without(config[key], value) : [...config[key], value] });
+  const toggleTag = id => change({ tags: config.tags.includes(id) ? config.tags.filter(t => t !== id) : [...config.tags, id] });
+  const pin = (movie, list) => {
+    const other = list === 'always_include' ? 'never_include' : 'always_include';
+    setPinnedInfo(previous => ({ ...previous, [movie.id]: movie }));
+    change({ [list]: config[list].includes(movie.id) ? config[list] : [...config[list], movie.id], [other]: config[other].filter(id => id !== movie.id) });
+  };
+  const unpin = (id, list) => change({ [list]: config[list].filter(x => x !== id) });
+  const applyPreset = preset => change({ ...LIBRARY_FILTER_DEFAULTS, ...preset.filters });
+  const activePreset = LIBRARY_PRESETS.find(preset => Object.keys(LIBRARY_FILTER_DEFAULTS).every(key => {
+    const want = preset.filters[key] ?? LIBRARY_FILTER_DEFAULTS[key];
+    const have = config?.[key];
+    return Array.isArray(want) ? JSON.stringify([...want].sort()) === JSON.stringify([...(have || [])].sort()) : Number(want) === Number(have);
+  }));
+  const filtersUsed = config ? Object.keys(LIBRARY_FILTER_DEFAULTS).some(key => {
+    const value = config[key];
+    return Array.isArray(value) ? value.length > 0 : Number(value) > 0;
+  }) : false;
+
+  const visible = useMemo(() => trailers.filter(t => (
+    (source === 'all'
+      || (source === 'error' ? t.status === 'error'
+        : source === 'outside' ? t.status === 'available' && t.in_selection === false
+          : t.source === source && t.status === 'available'))
+    && `${t.title} ${(t.genres || []).join(' ')}`.toLowerCase().includes(search.trim().toLowerCase())
+  )), [trailers, source, search]);
+
+  if (!config) {
+    return <div className="nx-ap-page"><EmptyState icon={Film} title="Loading Library Trailers" copy={notice?.text || 'Reading your settings...'} /></div>;
+  }
+  const summary = info?.summary || {};
+  const running = Boolean(sync?.running);
+  const facets = preview?.facets;
+  const years = facets?.year_min && facets?.year_max ? [facets.year_min, facets.year_max] : null;
+  const priority = LIBRARY_PRIORITY.find(p => p[0] === config.priority) || LIBRARY_PRIORITY[0];
+
+  return (
+    <div className="nx-ap-page nx-ap-library" data-nexup-page="library">
+      <Stats five items={[
+        { label: 'Ready to play', value: (summary.local || 0) + (summary.downloaded || 0), tone: 'good' },
+        { label: 'Next to your movies', value: summary.local || 0 },
+        { label: 'Downloaded', value: summary.downloaded || 0, tone: 'blue' },
+        { label: 'Download storage', value: `${Number(summary.downloaded_gb || 0).toFixed(1)} / ${Number(config.max_gb).toFixed(0)} GB`, tone: 'violet' },
+        { label: summary.outside ? 'Outside filters' : 'Not found', value: summary.outside || summary.errors || 0, tone: summary.outside || summary.errors ? 'warn' : '' },
+      ]} />
+
+      <div className="nx-ap-notice nx-ap-library-intro">
+        <div>
+          <strong>Trailers for movies you already own.</strong>
+          <span>
+            Separate from Coming Soon: nothing here is removed when a movie arrives, and Coming Soon&apos;s settings don&apos;t apply.
+            Play them with a <em>Library trailers</em> block in the Sequence Builder, on Plex, Jellyfin and Emby. On Jellyfin and Emby the block can also pick trailers in the same genre as the movie that&apos;s starting.
+          </span>
+        </div>
+      </div>
+
+      {notice && <div className={`nx-ap-library-message ${notice.tone}`} role="status">{notice.text}</div>}
+      {showSync && sync && <LibrarySyncCard sync={sync} onHide={() => setShowSync(false)} />}
+
+      <div className="nx-ap-settings-grid">
+        <section className="nx-ap-panel">
+          <header className="nx-ap-panel-head"><div><strong>Library Trailers</strong><span>Turn on, then sync</span></div><Badge tone={config.enabled ? 'live' : ''}>{config.enabled ? 'On' : 'Off'}</Badge></header>
+          <div className="nx-ap-panel-body">
+            <div className="nx-ap-status-line no-icon"><div><strong>Keep trailers for movies in my library</strong><span>{info?.auto_refresh_hours ? `Refreshes with NeX-Up's automatic refresh, every ${info.auto_refresh_hours} hours.` : "NeX-Up's automatic refresh is off, so sync here when you want an update."}</span></div><Switch checked={config.enabled} onChange={checked => change({ enabled: checked })} label="Library Trailers" /></div>
+            <div className="nx-ap-status-line no-icon"><div><strong>Radarr</strong><span>{info?.radarr_connected ? `Connected. ${preview ? `${preview.in_library} movies in your library.` : 'Your library is read from Radarr.'}` : 'Not connected.'}</span></div>{info?.radarr_connected ? <Badge tone="live">Connected</Badge> : <button type="button" className="nx-ap-btn" onClick={() => onNavigate('nexup')}>Connect</button>}</div>
+            <div className="nx-ap-library-actions">
+              <button type="button" className="nx-ap-btn amber" disabled={!dirty || saving} onClick={save}>{saving ? <Loader2 size={11} className="spin" /> : <Check size={11} />} Save changes</button>
+              <button type="button" className="nx-ap-btn" disabled={running || !config.enabled || !info?.radarr_connected} onClick={startSync}>{running ? <Loader2 size={11} className="spin" /> : <RefreshCw size={11} />} {running ? 'Syncing...' : 'Sync now'}</button>
+              {!showSync && sync?.finished_at && !running && <button type="button" className="nx-ap-btn ghost" onClick={() => setShowSync(true)}>Last sync</button>}
+            </div>
+          </div>
+        </section>
+
+        <section className="nx-ap-panel">
+          <header className="nx-ap-panel-head"><div><strong>Where trailers come from</strong><span>Files you already have first</span></div></header>
+          <div className="nx-ap-panel-body">
+            <div className="nx-ap-status-line no-icon"><div><strong>Use trailers next to my movies</strong><span>Files like &quot;Movie-trailer.mp4&quot; or a &quot;Trailers&quot; folder. NeXroll only reads these, never deletes them.</span></div><Switch checked={config.use_local} onChange={checked => change({ use_local: checked })} label="Use trailers next to my movies" /></div>
+            {config.use_local && (
+              <div className="nx-ap-library-mappings">
+                <span className="nx-ap-library-muted">If NeXroll sees your movie folders under a different path than Radarr does (Docker, a network share), map it here:</span>
+                {config.path_mappings.map((m, i) => (
+                  <div className="nx-ap-library-mapping" key={i}>
+                    <input aria-label="Folder as Radarr sees it" placeholder="Radarr: /movies" value={m.radarr} onChange={event => change({ path_mappings: config.path_mappings.map((x, j) => (j === i ? { ...x, radarr: event.target.value } : x)) })} />
+                    <span className="nx-ap-library-arrow" aria-hidden="true">&rarr;</span>
+                    <input aria-label="Folder as NeXroll sees it" placeholder="NeXroll: D:\Movies" value={m.local} onChange={event => change({ path_mappings: config.path_mappings.map((x, j) => (j === i ? { ...x, local: event.target.value } : x)) })} />
+                    <button type="button" className="nx-ap-btn danger square" aria-label="Remove folder mapping" onClick={() => change({ path_mappings: config.path_mappings.filter((_, j) => j !== i) })}><X size={11} /></button>
+                  </div>
+                ))}
+                <button type="button" className="nx-ap-btn" onClick={() => change({ path_mappings: [...config.path_mappings, { radarr: '', local: '' }] })}><Plus size={11} /> Add folder mapping</button>
+              </div>
+            )}
+            <div className="nx-ap-status-line no-icon"><div><strong>Download the rest from YouTube</strong><span>Uses Radarr&apos;s trailer link and NeX-Up&apos;s quality and YouTube settings.</span></div><Switch checked={config.download} onChange={checked => change({ download: checked })} label="Download the rest from YouTube" /></div>
+          </div>
+        </section>
+
+        <section className="nx-ap-panel nx-lt-filters">
+          <header className="nx-ap-panel-head">
+            <div><strong>Which movies</strong><span>{config.mode === 'picked' ? 'Only the movies you pick get trailers' : 'Every filter is optional; together they narrow your library down'}</span></div>
+            <div className="nx-lt-filter-head-actions">
+              {previewing && <Loader2 size={13} className="spin" />}
+              {config.mode === 'picked'
+                ? <Badge tone="violet">{config.picked.length} picked</Badge>
+                : preview && <Badge tone="violet">{preview.matching} of {preview.in_library} movies</Badge>}
+              {config.mode !== 'picked' && filtersUsed && <button type="button" className="nx-ap-btn ghost" onClick={() => change(LIBRARY_FILTER_DEFAULTS)}>Clear filters</button>}
+            </div>
+          </header>
+          <div className="nx-ap-panel-body">
+            {!info?.radarr_connected ? <p className="nx-ap-library-muted">Connect Radarr under NeX-Up &gt; Connections to choose movies from your library.</p> : <>
+              <div className="nx-lt-mode">
+                <div className="nx-ap-segmented" role="group" aria-label="How to choose movies">
+                  <button type="button" className={config.mode !== 'picked' ? 'active' : ''} onClick={() => change({ mode: 'filters' })}>Use filters</button>
+                  <button type="button" className={config.mode === 'picked' ? 'active' : ''} onClick={() => change({ mode: 'picked' })}>Hand-pick movies</button>
+                </div>
+                <span>{config.mode === 'picked'
+                  ? 'Browse your library and click posters to pick them. Picked trailers stay until you unpick them.'
+                  : 'Describe the movies you want; new matches are picked up on every sync.'} Your filters and your picks are both kept when you switch.</span>
+              </div>
+              {config.mode === 'picked' ? (
+                <LibraryMovieBrowser picked={config.picked} onChange={ids => change({ picked: ids })} genres={facets?.genres} maxDownloads={config.max_downloads} download={config.download} />
+              ) : <>
+              <div className="nx-lt-presets">
+                {LIBRARY_PRESETS.map(preset => (
+                  <button type="button" key={preset.id} className={`nx-lt-preset${activePreset?.id === preset.id ? ' on' : ''}`} onClick={() => applyPreset(preset)}>
+                    <strong>{preset.label}</strong><span>{preset.copy}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="nx-lt-filter-grid">
+                <div className="nx-lt-filter wide">
+                  <div className="nx-lt-filter-label"><strong>Genres</strong><span>Click once to include, twice to exclude, again to clear</span></div>
+                  <div className="nx-lt-chips">
+                    {(facets?.genres || []).map(g => (
+                      <LibraryChip key={g.name} on={has(config.genres, g.name)} off={has(config.exclude_genres, g.name)} count={g.count} onClick={() => cycleGenre(g.name)}
+                        title={has(config.genres, g.name) ? 'Included - click to exclude' : has(config.exclude_genres, g.name) ? 'Excluded - click to clear' : 'Click to include'}>{g.name}</LibraryChip>
+                    ))}
+                    {!facets && <span className="nx-ap-library-muted">Loading your library...</span>}
+                  </div>
+                </div>
+
+                <div className="nx-lt-filter">
+                  <div className="nx-lt-filter-label"><strong>Age ratings</strong><span>None chosen means every rating</span></div>
+                  <div className="nx-lt-chips">
+                    {(facets?.certifications || []).map(c => <LibraryChip key={c.name} on={has(config.certifications, c.name)} count={c.count} onClick={() => toggleIn('certifications', c.name)}>{c.name}</LibraryChip>)}
+                  </div>
+                </div>
+
+                <div className="nx-lt-filter">
+                  <div className="nx-lt-filter-label"><strong>Original language</strong><span>None chosen means any language</span></div>
+                  <div className="nx-lt-chips">
+                    {(facets?.languages || []).slice(0, 10).map(l => <LibraryChip key={l.name} on={has(config.languages, l.name)} count={l.count} onClick={() => toggleIn('languages', l.name)}>{l.name}</LibraryChip>)}
+                  </div>
+                </div>
+
+                <div className="nx-lt-filter">
+                  <div className="nx-lt-filter-label"><strong>Release years</strong><span>{years ? `Your library spans ${years[0]} to ${years[1]}` : 'Leave blank for any year'}</span></div>
+                  <div className="nx-lt-range">
+                    <input type="number" aria-label="From year" placeholder={years ? String(years[0]) : 'From'} value={config.year_from || ''} onChange={event => change({ year_from: Number(event.target.value) || 0 })} />
+                    <span>to</span>
+                    <input type="number" aria-label="To year" placeholder={years ? String(years[1]) : 'To'} value={config.year_to || ''} onChange={event => change({ year_to: Number(event.target.value) || 0 })} />
+                  </div>
+                </div>
+
+                <div className="nx-lt-filter">
+                  <div className="nx-lt-filter-label"><strong>Minimum scores</strong><span>Movies without a score are left out when set</span></div>
+                  <div className="nx-lt-range">
+                    <label><small>IMDb</small><select aria-label="Minimum IMDb score" value={config.min_imdb} onChange={event => change({ min_imdb: Number(event.target.value) })}>{LIBRARY_IMDB.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label>
+                    <label><small>Rotten Tomatoes</small><select aria-label="Minimum Rotten Tomatoes score" value={config.min_rt} onChange={event => change({ min_rt: Number(event.target.value) })}>{LIBRARY_RT.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label>
+                  </div>
+                </div>
+
+                <div className="nx-lt-filter">
+                  <div className="nx-lt-filter-label"><strong>Recently added</strong><span>Only movies added within this time</span></div>
+                  <select aria-label="Recently added" value={config.recent_days} onChange={event => change({ recent_days: Number(event.target.value) })}>{LIBRARY_RECENT.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>
+                </div>
+
+                {facets?.tags?.length > 0 && (
+                  <div className="nx-lt-filter">
+                    <div className="nx-lt-filter-label"><strong>Radarr tags</strong><span>Movies with any of these tags</span></div>
+                    <div className="nx-lt-chips">{facets.tags.map(t => <LibraryChip key={t.id} on={config.tags.includes(t.id)} onClick={() => toggleTag(t.id)}>{t.label}</LibraryChip>)}</div>
+                  </div>
+                )}
+
+                <div className="nx-lt-filter wide">
+                  <div className="nx-lt-filter-label"><strong>Specific movies</strong><span>Always include or never include a movie, whatever the filters say</span></div>
+                  <div className="nx-lt-movie-search">
+                    <label><Search size={13} /><input aria-label="Search your library" value={movieQuery} onChange={event => setMovieQuery(event.target.value)} placeholder="Search your library by title..." /></label>
+                    {movieResults.length > 0 && (
+                      <ul className="nx-lt-movie-results">
+                        {movieResults.map(m => (
+                          <li key={m.id}>
+                            <span className="thumb">{m.poster_url ? <img src={m.poster_url} alt="" loading="lazy" /> : <Film size={12} />}</span>
+                            <span className="what"><strong>{m.title}</strong><small>{[m.year, m.certification, m.imdb ? `IMDb ${m.imdb}` : null].filter(Boolean).join(' / ')}</small></span>
+                            <button type="button" className={`nx-ap-btn${config.always_include.includes(m.id) ? ' active' : ''}`} onClick={() => pin(m, 'always_include')}><Check size={11} /> Always</button>
+                            <button type="button" className={`nx-ap-btn${config.never_include.includes(m.id) ? ' danger' : ''}`} onClick={() => pin(m, 'never_include')}><X size={11} /> Never</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  {(config.always_include.length > 0 || config.never_include.length > 0) && (
+                    <div className="nx-lt-pins">
+                      {config.always_include.map(id => <span key={`a${id}`} className="nx-lt-pin always"><Check size={10} /> {pinnedInfo[id]?.title || `Movie ${id}`}<button type="button" aria-label="Remove from always include" onClick={() => unpin(id, 'always_include')}><X size={10} /></button></span>)}
+                      {config.never_include.map(id => <span key={`n${id}`} className="nx-lt-pin never"><X size={10} /> {pinnedInfo[id]?.title || `Movie ${id}`}<button type="button" aria-label="Remove from never include" onClick={() => unpin(id, 'never_include')}><X size={10} /></button></span>)}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              </>}
+              {previewError && <p className="nx-ap-library-progress warn">{previewError}</p>}
+              {preview && config.mode !== 'picked' && (
+                <div className="nx-lt-result">
+                  <div className="nx-lt-result-text">
+                    {preview.matching === 0
+                      ? <strong>No movies in your library match these filters.</strong>
+                      : <><strong>{preview.matching} {preview.matching === 1 ? 'movie matches' : 'movies match'}</strong><span>{preview.with_trailer_link} have a trailer link in Radarr. {config.download && config.max_downloads ? `Up to ${config.max_downloads} will be downloaded, ${priority[1].toLowerCase()} first; trailers next to your movies are always included.` : 'Only trailers next to your movies will be used.'}</span></>}
+                    <span className="nx-lt-keep-note">Changing filters never deletes trailers you already have. Ones that no longer match are kept, still play, and are the first replaced when room is needed.</span>
+                  </div>
+                  {preview.examples?.length > 0 && (
+                    <div className="nx-lt-strip" aria-label="First movies in the selection">
+                      {preview.examples.slice(0, 10).map(m => (
+                        <figure key={m.id} title={`${m.title}${m.year ? ` (${m.year})` : ''}`}>
+                          {m.poster_url ? <img src={m.poster_url} alt="" loading="lazy" /> : <div className="nx-lt-strip-fallback"><Film size={14} /></div>}
+                          <figcaption>{m.title}</figcaption>
+                        </figure>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>}
+          </div>
+        </section>
+
+        <section className="nx-ap-panel">
+          <header className="nx-ap-panel-head"><div><strong>Download limits</strong><span>Only downloads count toward these</span></div></header>
+          <div className="nx-ap-panel-body">
+            <div className="nx-ap-control-row"><div><strong>Maximum downloaded trailers</strong><span>Trailers next to your movies are always included on top of this.</span></div><select aria-label="Maximum downloaded trailers" value={config.max_downloads} disabled={!config.download} onChange={event => change({ max_downloads: Number(event.target.value) })}>{LIBRARY_MAX_DOWNLOADS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>
+            <div className="nx-ap-control-row"><div><strong>Maximum download storage</strong><span>Kept in a Library folder inside NeX-Up storage.</span></div><select aria-label="Maximum download storage" value={config.max_gb} disabled={!config.download} onChange={event => change({ max_gb: Number(event.target.value) })}>{LIBRARY_MAX_GB.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>
+            <div className="nx-ap-control-row"><div><strong>Download first</strong><span>{priority[2]} Movies you always include come first.</span></div><select aria-label="Download first" value={config.priority} disabled={!config.download} onChange={event => change({ priority: event.target.value })}>{LIBRARY_PRIORITY.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>
+            <p className="nx-ap-library-muted">When a limit is reached, trailers outside your filters make room first. After that, each sync swaps up to three downloads that have played for at least a week for movies that don&apos;t have a trailer yet, so the selection keeps changing.</p>
+            {(summary.outside || 0) > 0 && (
+              <div className="nx-lt-outside-row">
+                <span><strong>{summary.outside} trailer{summary.outside === 1 ? ' is' : 's are'} outside your filters.</strong> {summary.outside === 1 ? 'It still plays' : 'They still play'} until room is needed.</span>
+                <button type="button" className="nx-ap-btn danger" disabled={running} onClick={cleanupOutside}><Trash2 size={11} /> Remove them</button>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="nx-ap-command">
+        <label><Search size={13} /><input aria-label="Search library trailers" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by title or genre..." /></label>
+        <select aria-label="Trailer source" value={source} onChange={event => setSource(event.target.value)}>
+          <option value="all">Every trailer</option><option value="local">Next to movies</option><option value="download">Downloaded</option><option value="outside">Outside your filters</option><option value="error">Not found</option>
+        </select>
+      </div>
+
+      <div className={`nx-ap-trailer-layout${playing ? ' has-preview' : ''}`}>
+        <section className="nx-ap-panel nx-ap-trailer-table">
+          {trailers.length === 0
+            ? <EmptyState icon={Film} title="No library trailers yet" copy={!config.enabled ? 'Turn Library Trailers on, choose your movies, then sync.' : config.download ? 'Sync to find trailers next to your movies and download the rest.' : 'Sync to find trailers next to your movies.'} action={config.enabled && info?.radarr_connected && !running ? startSync : null} actionLabel="Sync now" />
+            : (
+              <div className="nx-ap-poster-grid">
+                {visible.map(t => {
+                  const ready = t.status === 'available';
+                  return (
+                    <article key={t.id} className={`nx-ap-poster-card${playing?.id === t.id ? ' selected' : ''}${ready && t.is_enabled ? '' : ' disabled'}`}>
+                      <Poster url={t.poster_url} title={t.title}>
+                        <span className={`nx-ap-poster-state is-${ready && t.is_enabled ? 'ready' : 'unavailable'}`}>{!ready ? 'Not found' : t.source === 'local' ? 'Next to movie' : 'Downloaded'}</span>
+                        {ready && t.in_selection === false && <span className="nx-lt-outside" title="This movie no longer matches your filters. The trailer is kept and still plays; it is replaced first when room is needed.">Outside filters</span>}
+                        {ready && <button type="button" className="nx-ap-poster-play" onClick={() => setPlaying(t)} aria-label={`Play ${t.title}`}><Play size={17} /></button>}
+                      </Poster>
+                      <div className="nx-ap-poster-meta">
+                        <strong title={t.title}>{t.title}{t.year ? ` (${t.year})` : ''}</strong>
+                        <span title={ready ? (t.genres || []).join(', ') : t.error_message || ''}>{ready ? ((t.genres || []).slice(0, 3).join(', ') || 'No genres') : 'Retried in a few days'}</span>
+                      </div>
+                      {ready && (
+                        <div className="nx-ap-poster-actions">
+                          <button type="button" className={`nx-ap-btn square toggle${t.is_enabled ? ' on' : ''}`} onClick={() => toggleTrailer(t)} title={t.is_enabled ? 'Stop playing this trailer' : 'Play this trailer'} aria-pressed={t.is_enabled}>{t.is_enabled ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}</button>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+                {visible.length === 0 && <EmptyState icon={Search} title="Nothing matches" copy="Try a different search or source." />}
+              </div>
+            )}
+        </section>
+        {playing && (
+          <aside className="nx-ap-panel nx-ap-preview-rail">
+            <video key={playing.id} className="nx-ap-library-video" src={playing.video_url} controls autoPlay />
+            <div className="nx-ap-preview-body">
+              <Badge tone={playing.is_enabled ? 'live' : ''}>{playing.source === 'local' ? 'Next to your movie' : 'Downloaded'}</Badge>
+              <h3>{playing.title}{playing.year ? ` (${playing.year})` : ''}</h3>
+              <p>{(playing.genres || []).join(', ') || 'No genres'}</p>
+              <dl className="nx-ap-info-list">
+                <div><dt>Added to library</dt><dd>{formatDate(playing.added_to_library)}</dd></div>
+                <div><dt>Size</dt><dd>{playing.source === 'local' ? 'Your file' : formatSize(playing)}</dd></div>
+              </dl>
+              <div><button type="button" className="nx-ap-btn" onClick={() => setPlaying(null)}><X size={11} /> Close</button></div>
+            </div>
+          </aside>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Retained temporarily as a parity reference while Generator Studio ships.
 // eslint-disable-next-line no-unused-vars
 function GeneratorPage(props) {
@@ -494,6 +1223,7 @@ function SettingsPage(props) {
 export default function NexUpApprovedPages(props) {
   if (props.activeTab === 'nexup/upcoming') return <UpcomingPage {...props} />;
   if (props.activeTab === 'nexup/trailers') return <TrailersPage {...props} />;
+  if (props.activeTab === 'nexup/library') return <LibraryTrailersPage {...props} />;
   if (props.activeTab === 'nexup/generator') return <NeXUpGeneratorStudio {...props} />;
   if (props.activeTab === 'nexup/settings') return <SettingsPage {...props} />;
   return <ConnectionsPage {...props} />;

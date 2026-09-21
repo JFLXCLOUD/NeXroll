@@ -53,7 +53,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
         stats.totalDuration += categoryPrerolls.reduce((sum, p) => sum + (p.duration || 30), 0);
         stats.estimatedPrerollCount += categoryPrerolls.length;
         stats.categories.add(block.category_id);
-      } else if (block.type === 'nexup_trailers') {
+      } else if (block.type === 'nexup_trailers' || block.type === 'library_trailers') {
         const count = block.count || 2;
         stats.totalDuration += count * 90; // ~90s per trailer
         stats.estimatedPrerollCount += count;
@@ -102,6 +102,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
       random: '#f59e0b',
       sequential: '#10b981',
       nexup_trailers: '#e11d48',
+      library_trailers: '#0f9f6e',
       coming_soon_list: '#0891b2',
       dynamic_preroll: '#16a34a',
       queue: '#ec4899',
@@ -120,6 +121,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
       sequential: '',
       queue: '⏭️',
       nexup_trailers: '',
+      library_trailers: '',
       coming_soon_list: '',
       dynamic_preroll: '',
       sequence: '',
@@ -136,6 +138,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
       random: 'Random Selection',
       sequential: 'Sequential Play',
       nexup_trailers: 'NeX-Up Trailers',
+      library_trailers: 'Library Trailers',
       coming_soon_list: 'Coming Soon List',
       dynamic_preroll: 'Dynamic Preroll',
       queue: 'Queue Items',

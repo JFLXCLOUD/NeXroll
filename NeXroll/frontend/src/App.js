@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import ReactMarkdown from 'react-markdown';
@@ -8,12 +8,15 @@ import SequenceBuilder from './components/SequenceBuilder';
 import PatternImport from './components/PatternImport';
 import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
+import SequenceConditionPanel from './components/SequenceConditionPanel';
+import GenrePicker from './components/GenrePicker';
+import { blocksHaveConditions, hasCondition, needsPlaybackInfo, useBuilderMode, useBuilderView } from './utils/sequenceConditions';
 import Sidebar from './components/Sidebar';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import NexUpApprovedPages from './components/NexUpApprovedPages';
 import { captureDynamicPrerollFrame, drawThemeBackdropFrame, fontStackFor, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
-import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
+import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
 import {
   buildBlendBothChanges,
   buildRecurrencePattern,
@@ -53,8 +56,12 @@ import {
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, TrendingUp, Server, Timer, ArrowUp, ArrowDown,
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
-    Music, Wand2, GitCompare, Square, Plug, GripVertical, Maximize2, Copy
+    Music, Wand2, GitCompare, Square, Plug, GripVertical, Maximize2, Copy, GitBranch
   } from 'lucide-react';
+
+// The Flow view's canvas library only loads when someone switches to it.
+const SequenceFlowView = React.lazy(() => import('./components/SequenceFlowView'));
+
 // Grid units. A small rowHeight lets a tile's height land close to its measured
 // content height. Tile HEIGHT is always auto-fit to content (so no scrollbars);
 // only WIDTH and POSITION are user-controlled.
@@ -145,6 +152,7 @@ const WIKI_PAGES = {
   'nexup':                'NeX-Up',
   'nexup/upcoming':       'NeX-Up#upcoming-releases',
   'nexup/trailers':       'NeX-Up#managing-your-trailers',
+  'nexup/library':        'NeX-Up#library-trailers',
   'nexup/generator':      'NeX-Up#generator-studio',
   'nexup/settings':       'NeX-Up#nex-up-settings',
   'connect':              'Connect',
@@ -2151,6 +2159,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [isCreatingSchedule, setIsCreatingSchedule] = useState(false);
   const [highlightSettingsTarget, setHighlightSettingsTarget] = useState(null);
   const [scheduleBuilderSelectedIndex, setScheduleBuilderSelectedIndex] = useState(0);
+  // Sequence Builder Simple / Advanced (Advanced adds IF/THEN conditions to blocks)
+  const [sequenceBuilderMode, setSequenceBuilderMode] = useBuilderMode();
+  // Sequence Builder List / Flow (Flow draws the sequence as a node workflow)
+  const [sequenceBuilderView, setSequenceBuilderView] = useBuilderView();
   const [draggedBlockIndex, setDraggedBlockIndex] = useState(null);
   const [fixedBlockPrerollSearch, setFixedBlockPrerollSearch] = useState('');
   const [sequenceLibrarySearch, setSequenceLibrarySearch] = useState('');
@@ -8540,6 +8552,7 @@ const DashboardTiles = {
     'nexup':            { icon: Clapperboard, section: 'NeX-Up', title: 'Connections', desc: 'Connect Radarr and Sonarr to discover upcoming media and automatically fetch trailers.' },
     'nexup/upcoming':   { icon: ClipboardList, section: 'NeX-Up', title: 'Upcoming', desc: 'Review future releases from Radarr and Sonarr and control trailer eligibility.' },
     'nexup/trailers':   { icon: Film, section: 'NeX-Up', title: 'Your Trailers', desc: 'Manage downloaded movie and television trailers and their automatic retention.' },
+    'nexup/library':    { icon: Clapperboard, section: 'NeX-Up', title: 'Library Trailers', desc: 'Trailers for movies already in your library, found next to your movies or downloaded, filtered by genre.' },
     'nexup/generator':  { icon: Sparkles, section: 'NeX-Up', title: 'Preroll Generator', desc: 'Create cinematic videos from NeX-Up media and save them directly into your preroll library.' },
     'nexup/settings':   { icon: Settings, section: 'NeX-Up', title: 'NeX-Up Settings', desc: 'Configure trailer downloads, storage, release windows, providers, and cleanup behavior.' },
     'connect':          { icon: Link2, section: 'Connect', title: 'Connections', desc: 'Connect NeXroll to Plex, Jellyfin, or Emby and verify playback integration.' },
@@ -20110,16 +20123,17 @@ const DashboardTiles = {
       ...generatedPrerolls.map(item => ({ filename: item.filename, name: item.name || item.template_id, kind: 'dynamic' })),
       ...generatedComingSoonLists.map(item => ({ filename: item.filename, name: item.name || `Coming Soon (${item.layout})`, kind: 'coming_soon' }))
     ];
-    const addBlock = type => {
+    const addBlock = (type, atIndex = sequenceBlocks.length) => {
       const presets = {
         random: { type: 'random', category_id: categories[0]?.id || null, count: 1, label: 'Category' },
         fixed: { type: 'fixed', preroll_ids: prerolls[0] ? [prerolls[0].id] : [], label: 'Fixed preroll' },
         nexup_trailers: { type: 'nexup_trailers', source: 'both', count: 2, mode: 'random', label: 'NeX-Up trailers' },
+        library_trailers: { type: 'library_trailers', count: 2, mode: 'random', genres: [], match_playing: false, label: 'Library trailers' },
         dynamic_preroll: { type: 'dynamic_preroll', filename: generatedItems[0]?.filename || null, label: 'Generated preroll' }
       };
       const next = cloneSequenceWithIds([presets[type]])[0];
-      setSequenceBlocks(blocks => [...blocks, next]);
-      setScheduleBuilderSelectedIndex(sequenceBlocks.length);
+      setSequenceBlocks(blocks => [...blocks.slice(0, atIndex), next, ...blocks.slice(atIndex)]);
+      setScheduleBuilderSelectedIndex(atIndex);
     };
     const removeBlock = index => {
       setSequenceBlocks(blocks => blocks.filter((_, blockIndex) => blockIndex !== index));
@@ -20135,7 +20149,7 @@ const DashboardTiles = {
       });
       setScheduleBuilderSelectedIndex(toIndex);
     };
-    const blockTitle = block => block?.label || ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'Upcoming trailers', dynamic_preroll: 'Generated preroll', separator: 'Pause / separator', coming_soon_list: 'Generated preroll' }[block?.type] || 'Sequence block');
+    const blockTitle = block => block?.label || ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'Upcoming trailers', library_trailers: 'Library trailers', dynamic_preroll: 'Generated preroll', separator: 'Pause / separator', coming_soon_list: 'Generated preroll' }[block?.type] || 'Sequence block');
     const blockDescription = block => {
       if (block?.type === 'random' || block?.type === 'sequential') return `${categories.find(category => String(category.id) === String(block.category_id))?.name || 'Choose category'} / ${block.type}`;
       if (block?.type === 'fixed') return `${block.preroll_ids?.length || 0} selected preroll${block.preroll_ids?.length === 1 ? '' : 's'}`;
@@ -20143,6 +20157,10 @@ const DashboardTiles = {
       // many exist. Reading as inventory, it claimed "2 trailers" on an install
       // with none downloaded, which then played as an empty block.
       if (block?.type === 'nexup_trailers') return `up to ${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}`;
+      if (block?.type === 'library_trailers') {
+        const genres = (block.genres || []).join(', ') || 'any genre';
+        return `up to ${block.count || 2} from your library / ${genres}${block.match_playing ? ' / same genre as the movie' : ''}`;
+      }
       if (block?.type === 'dynamic_preroll') return generatedItems.find(item => item.filename === block.filename)?.name || 'Choose a generated item';
       if (block?.type === 'coming_soon_list') return block.layout === 'list' ? 'Latest Coming Soon list' : 'Latest Coming Soon grid';
       if (block?.type === 'separator') return `${block.duration ?? 3}s blank gap`;
@@ -20151,10 +20169,19 @@ const DashboardTiles = {
     const selectedBlock = sequenceBlocks[scheduleBuilderSelectedIndex] || sequenceBlocks[0] || null;
     const selectedIndex = selectedBlock ? Math.max(0, sequenceBlocks.indexOf(selectedBlock)) : 0;
     const builderName = editingSequenceName || 'Untitled Sequence';
+    const advancedBuilder = sequenceBuilderMode === 'advanced';
+    const flowView = sequenceBuilderView === 'flow';
+    const categoryName = id => categories.find(category => String(category.id) === String(id))?.name || 'a category';
+    const connectedServers = getConnectedServers();
+    const hasPlex = connectedServers.includes('plex');
+    const pluginServers = connectedServers.filter(server => server !== 'plex');
+    const conditionBadge = block => (needsPlaybackInfo(block.condition) ? 'Conditional / Jellyfin & Emby' : 'Conditional');
 
     return (
       <div className="nx-schedule-draft nx-draft-builder-page">
-        <div className="nx-draft-builder">
+        {/* Flow view drops the block library: its canvas inserts blocks with
+            the + on each connection and needs the width more. */}
+        <div className={`nx-draft-builder${flowView ? ' flow' : ''}`}>
           <aside className="nx-draft-panel nx-draft-palette">
             <header><div><strong>Block library</strong><span>Click to add to the sequence</span></div></header>
             <div className="nx-draft-panel-body">
@@ -20162,6 +20189,7 @@ const DashboardTiles = {
                 ['random', 'CAT', 'Category', 'Random or sequential preroll'],
                 ['fixed', 'FIX', 'Fixed preroll', 'One selected video'],
                 ['nexup_trailers', 'TRL', 'NeX-Up trailers', 'Upcoming or matched media'],
+                ['library_trailers', 'LIB', 'Library trailers', 'Movies you already own'],
                 ['dynamic_preroll', 'GEN', 'Generated preroll', 'Anything made in NeX-Up Generator']
               ].map(([type, icon, title, copy]) => (
                 <button type="button" key={type} className="nx-draft-block-choice" onClick={() => addBlock(type)}><i>{icon}</i><span><strong>{title}</strong><small>{copy}</small></span><Plus size={12} /></button>
@@ -20177,8 +20205,60 @@ const DashboardTiles = {
                 // An empty builder used to claim "estimated 1m 0s" for nothing.
                 return sequenceBlocks.length === 0 ? `${count} yet` : `${count} / estimated ${est.duration}`;
               })()}</span></div>
-              <span className={`nx-draft-badge${sequenceBlocks.length ? ' live' : ''}`}>{sequenceBlocks.length ? 'Ready' : 'Empty'}</span>
+              <div className="nx-draft-seq-meta-actions">
+                <div className="nx-draft-segmented" role="group" aria-label="Builder view">
+                  <button type="button" className={flowView ? '' : 'active'} aria-pressed={!flowView} title="Blocks as a list" onClick={() => setSequenceBuilderView('list')}>List</button>
+                  <button type="button" className={flowView ? 'active' : ''} aria-pressed={flowView} title="Blocks as a workflow you can pan, zoom and drag" onClick={() => setSequenceBuilderView('flow')}>Flow</button>
+                </div>
+                <div className="nx-draft-segmented" role="group" aria-label="Builder mode">
+                  <button type="button" className={advancedBuilder ? '' : 'active'} aria-pressed={!advancedBuilder} title="Blocks play in order, every time" onClick={() => setSequenceBuilderMode('simple')}>Simple</button>
+                  <button type="button" className={advancedBuilder ? 'active' : ''} aria-pressed={advancedBuilder} title="Add IF/THEN conditions to blocks" onClick={() => setSequenceBuilderMode('advanced')}>Advanced</button>
+                </div>
+                <span className={`nx-draft-badge${sequenceBlocks.length ? ' live' : ''}`}>{sequenceBlocks.length ? 'Ready' : 'Empty'}</span>
+              </div>
             </header>
+            {!advancedBuilder && blocksHaveConditions(sequenceBlocks) && (
+              <p className="nx-draft-mode-note" role="status">
+                Some blocks only play under certain conditions. They still apply in Simple mode.
+                <button type="button" className="nx-draft-link" onClick={() => setSequenceBuilderMode('advanced')}>Switch to Advanced to change them</button>
+              </p>
+            )}
+            {/* Conditions reach further on Jellyfin and Emby than on Plex. Say so
+                plainly, so a Plex household knows what it gets and why. */}
+            {advancedBuilder && (
+              <details className="nx-server-card" open={hasPlex}>
+                <summary>What each server can check{hasPlex ? ', including Plex' : ''}</summary>
+                <ul>
+                  <li><strong>Every server</strong><span>Trailers available, and Time of day. Jellyfin and Emby check them the moment playback starts; Plex re-checks every 10 minutes.</span></li>
+                  <li><strong>Jellyfin &amp; Emby</strong><span>Genre, and movie or episode. Their plugin tells NeXroll which title is about to play, so a Horror movie can open with your Halloween prerolls.</span></li>
+                  <li><strong>Plex</strong><span>Plex plays one preroll list, set in advance, before every movie, so it never tells NeXroll which movie is starting. A genre rule is never met on Plex: that block plays its Otherwise instead, so give it one your Plex viewers will enjoy.{hasPlex ? ' To theme Plex by occasion, schedule a category: a Halloween category through October works on every server.' : ''}</span></li>
+                </ul>
+                {hasPlex && pluginServers.length === 0 && <p className="nx-server-card-you">You are connected to Plex only, so genre rules will always take their Otherwise here.</p>}
+                {hasPlex && pluginServers.length > 0 && <p className="nx-server-card-you">You run Plex alongside {describeServers(pluginServers)}: the same sequence plays genre-matched blocks there and each block's Otherwise on Plex.</p>}
+              </details>
+            )}
+            {flowView ? (
+              <Suspense fallback={<div className="nx-flow nx-flow-loading">Loading flow view...</div>}>
+                <SequenceFlowView
+                  blocks={sequenceBlocks}
+                  advanced={advancedBuilder}
+                  selectedIndex={selectedIndex}
+                  onSelect={setScheduleBuilderSelectedIndex}
+                  onMove={moveBlock}
+                  onPositionsChange={changes => setSequenceBlocks(blocks => blocks.map((block, index) => {
+                    const updates = changes.filter(change => change.index === index);
+                    if (!updates.length) return block;
+                    return { ...block, flow_positions: { ...block.flow_positions,
+                      ...Object.fromEntries(updates.map(change => [change.key, change.position])) } };
+                  }))}
+                  onInsert={addBlock}
+                  blockTitle={blockTitle}
+                  blockDescription={blockDescription}
+                  getCategoryName={categoryName}
+                  darkMode={darkMode}
+                />
+              </Suspense>
+            ) : (
             <div className="nx-draft-sequence-stack">
               {sequenceBlocks.length === 0 ? (
                 <div className="nx-draft-sequence-empty"><Layers size={28} /><strong>Build the viewer experience</strong><span>Add a block from the library on the left.</span></div>
@@ -20199,7 +20279,7 @@ const DashboardTiles = {
                     onDragEnd={() => setDraggedBlockIndex(null)}
                   >
                     <span className="drag"><GripVertical size={13} /></span><span className="order">{index + 1}</span>
-                    <span className="copy"><strong>{blockTitle(block)}</strong><small>{blockDescription(block)}</small></span>
+                    <span className="copy"><strong>{blockTitle(block)}</strong><small>{blockDescription(block)}</small>{hasCondition(block) && <em className="nx-draft-badge violet"><GitBranch size={10} /> {conditionBadge(block)}</em>}</span>
                     <span className="nx-draft-seq-move">
                       <span role="button" tabIndex={0} title="Move up" aria-disabled={index === 0} onClick={event => { event.stopPropagation(); moveBlock(index, index - 1); }} onKeyDown={event => { if (event.key === 'Enter') { event.stopPropagation(); moveBlock(index, index - 1); } }}><ChevronUp size={12} /></span>
                       <span role="button" tabIndex={0} title="Move down" aria-disabled={index === sequenceBlocks.length - 1} onClick={event => { event.stopPropagation(); moveBlock(index, index + 1); }} onKeyDown={event => { if (event.key === 'Enter') { event.stopPropagation(); moveBlock(index, index + 1); } }}><ChevronDown size={12} /></span>
@@ -20209,6 +20289,7 @@ const DashboardTiles = {
                 </React.Fragment>
               ))}
             </div>
+            )}
             {/* Derived from the blocks and the library, not from the block
                 count. Two minutes per block announced 23 seconds of clips as
                 "4m 10s", and twelve variations per block claimed a fixed
@@ -20275,6 +20356,19 @@ const DashboardTiles = {
                       and sequential blocks above already clamp; this one did not. */}
                   <label className="nx-draft-field"><span>Trailer count</span><input type="number" min="1" max="10" value={selectedBlock.count || 2} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Math.max(1, Math.min(10, Number(event.target.value) || 1)) } : block))} /></label>
                 </>}
+                {selectedBlock.type === 'library_trailers' && <>
+                  <label className="nx-draft-field"><span>Order</span><select value={selectedBlock.mode || 'random'} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, mode: event.target.value } : block))}>
+                    <option value="random">Shuffled</option>
+                    <option value="newest">Newest in your library first</option>
+                  </select></label>
+                  <label className="nx-draft-field"><span>Trailer count</span><input type="number" min="1" max="10" value={selectedBlock.count || 2} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Math.max(1, Math.min(10, Number(event.target.value) || 1)) } : block))} /></label>
+                  <div className="nx-draft-field"><span>Only these genres (optional)</span>
+                    <GenrePicker values={selectedBlock.genres || []} onChange={genres => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, genres } : block))} />
+                  </div>
+                  <label className="nx-draft-check"><input type="checkbox" checked={Boolean(selectedBlock.match_playing)} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, match_playing: event.target.checked } : block))} /><span>Same genre as the movie that's starting</span></label>
+                  <p className="nx-server-note"><strong>Jellyfin &amp; Emby</strong> say which movie is starting, so this can pick horror trailers before a horror movie. Plex doesn't, so on Plex trailers come from the whole selection. The trailer for the movie that's about to play is never picked.</p>
+                  <p className="nx-draft-field-hint">Plays trailers from NeX-Up &gt; Library Trailers. <button type="button" className="nx-draft-link" onClick={() => setActiveTab('nexup/library')}>Open Library Trailers</button></p>
+                </>}
                 {['dynamic_preroll', 'coming_soon_list'].includes(selectedBlock.type) && <>
                   <label className="nx-draft-field"><span>Generated item</span><select
                     value={selectedBlock.type === 'coming_soon_list' ? `latest:${selectedBlock.layout || 'grid'}` : (selectedBlock.filename ? `file:${selectedBlock.filename}` : '')}
@@ -20312,6 +20406,20 @@ const DashboardTiles = {
                   <label className="nx-draft-field"><span>Pause duration (seconds)</span><input type="number" min="1" max="60" value={selectedBlock.duration ?? 3} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, duration: Math.max(1, Number(event.target.value) || 1) } : block))} /></label>
                   <p className="nx-draft-field-hint">Inserts a blank black screen for this many seconds before continuing to the next block.</p>
                 </>}
+                {advancedBuilder ? (
+                  <SequenceConditionPanel
+                    condition={selectedBlock.condition || null}
+                    otherwise={selectedBlock.otherwise || null}
+                    categories={categories}
+                    onChange={({ condition, otherwise }) => setSequenceBlocks(blocks => blocks.map((block, index) => {
+                      if (index !== selectedIndex) return block;
+                      const { condition: _c, otherwise: _o, ...rest } = block;
+                      return condition ? { ...rest, condition, ...(otherwise ? { otherwise } : {}) } : rest;
+                    }))}
+                  />
+                ) : hasCondition(selectedBlock) && (
+                  <p className="nx-draft-field-hint">This block has conditions. <button type="button" className="nx-draft-link" onClick={() => setSequenceBuilderMode('advanced')}>Switch to Advanced to change them</button></p>
+                )}
                 <div className="nx-draft-info-row"><span>Position</span><strong>{selectedIndex + 1} of {sequenceBlocks.length}</strong></div>
                 <button type="button" className="nx-draft-btn danger" onClick={() => removeBlock(selectedIndex)}><Trash2 size={12} /> Remove block</button>
               </>}
@@ -34532,32 +34640,8 @@ const DashboardTiles = {
         throw new Error('Cannot save empty sequence. Please add at least one block.');
       }
       
-      const cleanedBlocks = sequenceBlocks.map(block => {
-        const cleaned = { type: block.type };
-        
-        // Preserve optional label
-        if (block.label && block.label.trim()) cleaned.label = block.label.trim();
-        
-        // Add type-specific fields
-        if (block.type === 'random') {
-          cleaned.category_id = block.category_id;
-          cleaned.count = block.count || 1;
-        } else if (block.type === 'fixed') {
-          cleaned.preroll_ids = block.preroll_ids || [];
-        } else if (block.type === 'nexup_trailers') {
-          cleaned.source = block.source || 'both';
-          cleaned.count = block.count || 2;
-          cleaned.mode = block.mode || 'random';
-        } else if (block.type === 'coming_soon_list') {
-          cleaned.layout = block.layout || 'grid';
-        } else if (block.type === 'dynamic_preroll') {
-          cleaned.filename = block.filename;
-        } else if (block.type === 'separator') {
-          cleaned.duration = block.duration || 3;
-        }
-        
-        return cleaned;
-      });
+      // Same shape a schedule's sequence is saved in, conditions included.
+      const cleanedBlocks = sanitizeSequence(sequenceBlocks);
       
       // Schedule creation must never overwrite the sequence that happened to
       // be open previously in the library builder.

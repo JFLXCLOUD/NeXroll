@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
-import { Download, Upload, Play, Save, Edit, Trash2, X, Film, Shuffle, Pin, LayoutGrid, BarChart3, Sparkles } from 'lucide-react';
+import { Download, Upload, Play, Save, Edit, Trash2, X, Film, Shuffle, Pin, LayoutGrid, BarChart3, Sparkles, SlidersHorizontal, GitBranch } from 'lucide-react';
 import SequenceBlock from './SequenceBlock';
 import BlockEditor from './BlockEditor';
 import SequencePreview from './SequencePreview';
@@ -10,6 +10,7 @@ import SequenceStats from './SequenceStats';
 import SequencePreviewModal from './SequencePreviewModal';
 import PatternExport from './PatternExport';
 import PatternImport from './PatternImport';
+import { blocksHaveConditions, useBuilderMode } from '../utils/sequenceConditions';
 
 /**
  * SequenceBuilder - Visual preroll sequence builder for NeXroll
@@ -31,6 +32,11 @@ import PatternImport from './PatternImport';
  *   {"type": "fixed", "preroll_ids": [12, 45, 67]},
  *   {"type": "random", "category_id": 8, "count": 1}
  * ]
+ *
+ * Advanced mode adds optional per-block conditions:
+ *   {"type": "coming_soon_list", "layout": "grid",
+ *    "condition": {"match": "all", "rules": [{"kind": "trailers_available", "min": 1}]},
+ *    "otherwise": {"type": "random", "category_id": 4, "count": 1}}
  */
 const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialSequence = [], categories = [], prerolls = [], onSave, onCancel, onDelete, scheduleId = null, apiUrl, isEditing = false, initialName = '', initialDescription = '', hideNameSection = false }) => {
   // Use external blocks if provided, otherwise use internal state
@@ -46,6 +52,9 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
   // eslint-disable-next-line no-unused-vars
   const [isModified, setIsModified] = useState(false);
   const [viewMode, setViewMode] = useState('card'); // 'card' or 'timeline'
+  const [builderMode, setBuilderMode] = useBuilderMode(); // 'simple' or 'advanced'
+  const advanced = builderMode === 'advanced';
+  const hiddenConditions = !advanced && blocksHaveConditions(blocks);
   const [showFullPreview, setShowFullPreview] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -254,6 +263,44 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
           flexWrap: 'wrap',
           justifyContent: 'flex-end'
         }}>
+          {/* Simple / Advanced mode */}
+          <div role="group" aria-label="Builder mode" style={{
+            display: 'flex',
+            gap: '0',
+            backgroundColor: 'var(--hover-bg)',
+            borderRadius: '5px',
+            padding: '3px',
+            border: '1px solid var(--border-color)'
+          }}>
+            {[
+              { key: 'simple', label: 'Simple', icon: LayoutGrid, title: 'Blocks play in order, every time' },
+              { key: 'advanced', label: 'Advanced', icon: SlidersHorizontal, title: 'Add IF/THEN conditions to blocks' },
+            ].map(({ key, label, icon: Icon, title }) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={builderMode === key}
+                title={title}
+                onClick={() => setBuilderMode(key)}
+                style={{
+                  padding: '8px 16px',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  backgroundColor: builderMode === key ? '#667eea' : 'transparent',
+                  color: builderMode === key ? 'white' : 'var(--text-color)',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Icon size={14} /> {label}
+              </button>
+            ))}
+          </div>
+
           {/* View Toggle */}
           {blocks.length > 0 && (
             <div style={{
@@ -533,6 +580,50 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
       </div>
       )}
 
+      {/* Conditions exist but Simple mode doesn't show their editor */}
+      {hiddenConditions && (
+        <div role="status" style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          flexWrap: 'wrap',
+          marginBottom: '20px',
+          padding: '10px 14px',
+          borderRadius: '8px',
+          border: '1px solid var(--border-color)',
+          background: 'var(--hover-bg)',
+          fontSize: '13px',
+          color: 'var(--text-color)'
+        }}>
+          <GitBranch size={16} />
+          <span style={{ flex: 1, minWidth: '200px' }}>
+            Some blocks in this sequence only play under certain conditions. They still apply in Simple mode;
+            switch to Advanced to see or change them.
+          </span>
+          <button
+            type="button"
+            onClick={() => setBuilderMode('advanced')}
+            style={{
+              padding: '6px 12px',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              background: '#667eea',
+              color: 'white'
+            }}
+          >
+            Switch to Advanced
+          </button>
+        </div>
+      )}
+
+      {advanced && blocks.length > 0 && !blocksHaveConditions(blocks) && (
+        <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+          Advanced mode: edit a block to decide when it plays, and what plays instead when it doesn't.
+        </p>
+      )}
+
       {/* Compact Statistics (always visible when blocks exist) */}
       {blocks.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
@@ -630,6 +721,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
                     onDuplicate={() => handleDuplicateBlock(block, index)}
                     isFirst={index === 0}
                     isLast={index === blocks.length - 1}
+                    advanced={advanced}
                   />
                 ))}
               </div>
@@ -791,6 +883,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
           isNew={editingIndex === null}
           onSave={handleSaveBlock}
           onCancel={handleCancelEdit}
+          advanced={advanced}
         />
       )}
 

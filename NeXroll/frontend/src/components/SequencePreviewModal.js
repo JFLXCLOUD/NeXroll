@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Film, Inbox, X } from 'lucide-react';
 import { lockBodyScroll } from '../utils/modalBehavior';
+import { blocksHaveConditions, describeCondition, genresInSequence, needsPlaybackInfo } from '../utils/sequenceConditions';
 // eslint-disable-next-line no-unused-vars
 import SequenceTimeline from './SequenceTimeline';
 // eslint-disable-next-line no-unused-vars
@@ -14,10 +15,15 @@ const BLOCK_LABELS = {
   random: 'Category block',
   sequential: 'Category block',
   nexup_trailers: 'NeX-Up trailers',
+  library_trailers: 'Library trailers',
   coming_soon_list: 'Coming Soon list',
   dynamic_preroll: 'Generated preroll',
   separator: 'Pause / separator',
 };
+
+// Stands in for a block whose condition is not met and has no alternative, so
+// later blocks keep their positions and it isn't reported as "nothing to play".
+const CONDITION_SKIPPED = '__condition_skipped';
 
 /**
  * SequencePreviewModal - Full-screen preview modal with playback simulator
@@ -43,6 +49,12 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   // to vanish from the preview with no trace, renumbering the blocks after
   // it, so a three-block sequence silently played as two.
   const [skippedBlocks, setSkippedBlocks] = useState([]);
+  // Blocks the Advanced-mode conditions replaced or left out for this preview
+  const [conditionNotes, setConditionNotes] = useState([]);
+  // Genre to preview a genre-conditioned sequence as; '' is "unknown", which
+  // is what Plex always is.
+  const [previewGenre, setPreviewGenre] = useState('');
+  const sequenceGenres = genresInSequence(blocks);
   const videoRef = React.useRef(null);
   const overlayRef = React.useRef(null);
   const isTransitioningRef = React.useRef(false);
@@ -122,128 +134,194 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       setPlaybackProgress(0);
       setPlaylist([]);
       setSkippedBlocks([]);
+      setConditionNotes([]);
       return;
     }
 
-    const snap = snapshotRef.current;
-    const newBlockTypes = ['nexup_trailers', 'coming_soon_list', 'dynamic_preroll'];
-    const blocksNeedingResolve = snap.blocks
-      .map((b, i) => ({ ...b, _idx: i }))
-      .filter(b => newBlockTypes.includes(b.type));
+    // Everything below builds the playlist for one set of blocks. When the
+    // sequence has conditions, the backend first says what each slot would
+    // play right now, and the playlist is built from that instead.
+    const buildPlaylist = (snap) => {
+      const newBlockTypes = ['nexup_trailers', 'library_trailers', 'coming_soon_list', 'dynamic_preroll'];
+      const blocksNeedingResolve = snap.blocks
+        .map((b, i) => ({ ...b, _idx: i }))
+        .filter(b => newBlockTypes.includes(b.type));
 
-    // Build local playlist items first (random, fixed, etc.)
-    const buildLocalItems = () => {
-      const items = [];
-      snap.blocks.forEach((block, blockIndex) => {
-        if (newBlockTypes.includes(block.type)) {
-          // Placeholder — will be filled from backend resolve
-          return;
-        }
-        const blockPrerolls = getBlockPrerolls(block, snap.prerolls);
-        if (block.type === 'random' && blockPrerolls.length > 0) {
-          const count = Math.max(1, Math.min(block.count || 1, blockPrerolls.length));
-          const shuffled = [...blockPrerolls].sort(() => Math.random() - 0.5);
-          shuffled.slice(0, count).forEach(preroll => {
-            items.push({ blockIndex, preroll, blockType: 'random' });
-          });
-        } else if (block.type === 'sequential' && blockPrerolls.length > 0) {
-          items.push({ blockIndex, preroll: blockPrerolls[0], blockType: 'sequential' });
-        } else if (block.type === 'preroll') {
-          const preroll = snap.prerolls.find(p => p.id === block.preroll_id);
-          if (preroll) {
-            items.push({ blockIndex, preroll, blockType: 'preroll' });
+      // Build local playlist items first (random, fixed, etc.)
+      const buildLocalItems = () => {
+        const items = [];
+        snap.blocks.forEach((block, blockIndex) => {
+          if (newBlockTypes.includes(block.type)) {
+            // Placeholder — will be filled from backend resolve
+            return;
           }
-        } else if (block.type === 'fixed' && block.preroll_ids) {
-          block.preroll_ids.forEach(prerollId => {
-            const preroll = snap.prerolls.find(p => p.id === prerollId);
+          const blockPrerolls = getBlockPrerolls(block, snap.prerolls);
+          if (block.type === 'random' && blockPrerolls.length > 0) {
+            const count = Math.max(1, Math.min(block.count || 1, blockPrerolls.length));
+            const shuffled = [...blockPrerolls].sort(() => Math.random() - 0.5);
+            shuffled.slice(0, count).forEach(preroll => {
+              items.push({ blockIndex, preroll, blockType: 'random' });
+            });
+          } else if (block.type === 'sequential' && blockPrerolls.length > 0) {
+            items.push({ blockIndex, preroll: blockPrerolls[0], blockType: 'sequential' });
+          } else if (block.type === 'preroll') {
+            const preroll = snap.prerolls.find(p => p.id === block.preroll_id);
             if (preroll) {
-              items.push({ blockIndex, preroll, blockType: 'fixed' });
+              items.push({ blockIndex, preroll, blockType: 'preroll' });
             }
-          });
-        }
-      });
-      return items;
-    };
-
-    // Any block with no items is reported rather than silently dropped.
-    const noteSkipped = (items) => {
-      const played = new Set(items.map(i => i.blockIndex));
-      setSkippedBlocks(
-        snap.blocks
-          .map((b, i) => ({ block: b, index: i }))
-          .filter(({ index }) => !played.has(index))
-          .map(({ block, index }) => ({
-            index,
-            label: block.label || BLOCK_LABELS[block.type] || 'Sequence block',
-            type: block.type,
-          }))
-      );
-      return items;
-    };
-
-    if (blocksNeedingResolve.length > 0) {
-      // Resolve new block types via backend
-      let active = true;
-      const controller = new AbortController();
-      fetch('/sequences/resolve-preview-blocks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(blocksNeedingResolve),
-        signal: controller.signal,
-      })
-        .then(res => {
-          if (!res.ok) throw new Error(`Preview resolution failed (${res.status})`);
-          return res.json();
-        })
-        .then(data => {
-          if (!active) return;
-          const localItems = buildLocalItems();
-          // Merge resolved items at the correct block positions
-          const resolvedByIdx = {};
-          (data.blocks || []).forEach((result, i) => {
-            const origIdx = blocksNeedingResolve[i]._idx;
-            resolvedByIdx[origIdx] = (result.items || []).map(item => ({
-              blockIndex: origIdx,
-              directUrl: item.url,
-              title: item.title,
-              blockType: snap.blocks[origIdx].type,
-              preroll: null
-            }));
-          });
-          // Build final ordered playlist
-          const finalPlaylist = [];
-          let localPointer = 0;
-          snap.blocks.forEach((block, blockIndex) => {
-            if (resolvedByIdx[blockIndex]) {
-              finalPlaylist.push(...resolvedByIdx[blockIndex]);
-            } else {
-              // Add all local items for this blockIndex
-              while (localPointer < localItems.length && localItems[localPointer].blockIndex === blockIndex) {
-                finalPlaylist.push(localItems[localPointer]);
-                localPointer++;
+          } else if (block.type === 'fixed' && block.preroll_ids) {
+            block.preroll_ids.forEach(prerollId => {
+              const preroll = snap.prerolls.find(p => p.id === prerollId);
+              if (preroll) {
+                items.push({ blockIndex, preroll, blockType: 'fixed' });
               }
-            }
-          });
-          // Append any remaining local items
-          while (localPointer < localItems.length) {
-            finalPlaylist.push(localItems[localPointer]);
-            localPointer++;
+            });
           }
-          setPlaylist(noteSkipped(finalPlaylist));
-        })
-        .catch((error) => {
-          if (!active || error.name === 'AbortError') return;
-          // Fallback: just use local items
-          setPlaylist(noteSkipped(buildLocalItems()));
         });
-      return () => {
-        active = false;
-        controller.abort();
+        return items;
       };
-    } else {
-      setPlaylist(noteSkipped(buildLocalItems()));
+
+      // Any block with no items is reported rather than silently dropped.
+      const noteSkipped = (items) => {
+        const played = new Set(items.map(i => i.blockIndex));
+        setSkippedBlocks(
+          snap.blocks
+            .map((b, i) => ({ block: b, index: i }))
+            .filter(({ block, index }) => !played.has(index) && block.type !== CONDITION_SKIPPED)
+            .map(({ block, index }) => ({
+              index,
+              label: block.label || BLOCK_LABELS[block.type] || 'Sequence block',
+              type: block.type,
+            }))
+        );
+        return items;
+      };
+
+      if (blocksNeedingResolve.length > 0) {
+        // Resolve new block types via backend
+        let active = true;
+        const controller = new AbortController();
+        fetch('/sequences/resolve-preview-blocks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(blocksNeedingResolve),
+          signal: controller.signal,
+        })
+          .then(res => {
+            if (!res.ok) throw new Error(`Preview resolution failed (${res.status})`);
+            return res.json();
+          })
+          .then(data => {
+            if (!active) return;
+            const localItems = buildLocalItems();
+            // Merge resolved items at the correct block positions
+            const resolvedByIdx = {};
+            (data.blocks || []).forEach((result, i) => {
+              const origIdx = blocksNeedingResolve[i]._idx;
+              resolvedByIdx[origIdx] = (result.items || []).map(item => ({
+                blockIndex: origIdx,
+                directUrl: item.url,
+                title: item.title,
+                blockType: snap.blocks[origIdx].type,
+                preroll: null
+              }));
+            });
+            // Build final ordered playlist
+            const finalPlaylist = [];
+            let localPointer = 0;
+            snap.blocks.forEach((block, blockIndex) => {
+              if (resolvedByIdx[blockIndex]) {
+                finalPlaylist.push(...resolvedByIdx[blockIndex]);
+              } else {
+                // Add all local items for this blockIndex
+                while (localPointer < localItems.length && localItems[localPointer].blockIndex === blockIndex) {
+                  finalPlaylist.push(localItems[localPointer]);
+                  localPointer++;
+                }
+              }
+            });
+            // Append any remaining local items
+            while (localPointer < localItems.length) {
+              finalPlaylist.push(localItems[localPointer]);
+              localPointer++;
+            }
+            setPlaylist(noteSkipped(finalPlaylist));
+          })
+          .catch((error) => {
+            if (!active || error.name === 'AbortError') return;
+            // Fallback: just use local items
+            setPlaylist(noteSkipped(buildLocalItems()));
+          });
+        return () => {
+          active = false;
+          controller.abort();
+        };
+      } else {
+        setPlaylist(noteSkipped(buildLocalItems()));
+      }
+      return undefined;
+    };
+
+    const original = snapshotRef.current;
+    if (!blocksHaveConditions(original.blocks)) {
+      setConditionNotes([]);
+      return buildPlaylist(original);
     }
-  }, [isOpen, modalOpenCounter, getBlockPrerolls]);
+
+    let active = true;
+    let innerCleanup;
+    const controller = new AbortController();
+    const genreQuery = previewGenre ? `?genres=${encodeURIComponent(previewGenre)}` : '';
+    fetch(`/sequences/evaluate-conditions${genreQuery}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // eslint-disable-next-line no-unused-vars
+      body: JSON.stringify(original.blocks.map(({ id, ...block }) => block)),
+      signal: controller.signal,
+    })
+      .then(res => {
+        if (!res.ok) throw new Error(`Condition check failed (${res.status})`);
+        return res.json();
+      })
+      .then(data => {
+        if (!active) return;
+        const results = data.blocks || [];
+        const notes = [];
+        const blocks = original.blocks.map((block, i) => {
+          const result = results[i];
+          if (result && result.outcome === 'plays' && block.condition) {
+            notes.push({
+              index: i,
+              label: block.label || BLOCK_LABELS[block.type] || 'Sequence block',
+              outcome: 'plays',
+              condition: block.condition,
+            });
+          }
+          if (!result || result.outcome === 'plays') return block;
+          notes.push({
+            index: i,
+            label: block.label || BLOCK_LABELS[block.type] || 'Sequence block',
+            outcome: result.outcome,
+            condition: block.condition,
+          });
+          if (result.outcome === 'skipped' || !result.block) return { id: block.id, type: CONDITION_SKIPPED };
+          return { ...result.block, id: block.id };
+        });
+        setConditionNotes(notes);
+        innerCleanup = buildPlaylist({ ...original, blocks });
+      })
+      .catch(error => {
+        if (!active || error.name === 'AbortError') return;
+        // Can't ask the server: preview every block as written.
+        setConditionNotes([]);
+        innerCleanup = buildPlaylist(original);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+      if (innerCleanup) innerCleanup();
+    };
+  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre]);
 
   // Start playback
   const startPlayback = () => {
@@ -463,6 +541,9 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
             borderBottom: '1px solid var(--border-color)',
             backgroundColor: 'var(--bg-color)',
             display: 'flex',
+            // The notices below take a full row of their own (flexBasis 100%),
+            // which only happens when the header is allowed to wrap.
+            flexWrap: 'wrap',
             justifyContent: 'space-between',
             alignItems: 'center',
           }}
@@ -504,6 +585,56 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               {skippedBlocks.length === 1 ? 'it is' : 'they are'} left out of this preview.
               {skippedBlocks.some(b => b.type === 'nexup_trailers') &&
                 ' NeX-Up trailer blocks need trailers downloaded first - check NeX-Up > Connections.'}
+            </div>
+          )}
+          {sequenceGenres.length > 0 && (
+            <label style={{
+              flexBasis: '100%', order: 98, marginTop: '0.6rem',
+              display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',
+              fontSize: '0.83rem', color: 'var(--text-secondary)',
+            }}>
+              Preview as
+              <select
+                value={previewGenre}
+                onChange={(event) => setPreviewGenre(event.target.value)}
+                style={{
+                  padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-color)',
+                  background: 'var(--input-bg)', color: 'var(--text-color)', fontSize: '0.83rem',
+                }}
+              >
+                <option value="">Plex (genre unknown)</option>
+                {sequenceGenres.map(genre => <option key={genre} value={genre}>A {genre} movie on Jellyfin or Emby</option>)}
+              </select>
+            </label>
+          )}
+          {conditionNotes.length > 0 && (
+            <div
+              role="status"
+              style={{
+                flexBasis: '100%', order: 99, marginTop: '0.6rem',
+                padding: '0.55rem 0.75rem', borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                background: 'var(--hover-bg)',
+                color: 'var(--text-color)', fontSize: '0.83rem', lineHeight: 1.45,
+              }}
+            >
+              <strong>
+                Conditions, checked as if {previewGenre ? `a ${previewGenre} movie` : 'a movie'} were starting now
+                {sequenceGenres.length > 0 && !previewGenre ? ' on Plex, where the genre is never known' : ''}:
+              </strong>
+              {conditionNotes.map(note => (
+                <div key={note.index}>
+                  Block {note.index + 1} ({note.label}){' '}
+                  {note.outcome === 'plays'
+                    ? <>plays, because {describeCondition(note.condition)}.</>
+                    : <>
+                      {note.outcome === 'skipped' ? 'is skipped' : 'plays its alternative'}
+                      {!previewGenre && needsPlaybackInfo(note.condition)
+                        ? ', because Plex cannot tell NeXroll the genre of what is playing.'
+                        : <>{' '}because this is not true: {describeCondition(note.condition)}.</>}
+                    </>}
+                </div>
+              ))}
             </div>
           )}
           <button

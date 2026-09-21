@@ -65,7 +65,7 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
   }
 
   const blockType = String(block.type).toLowerCase();
-  if (!['random', 'fixed', 'sequential', 'nexup_trailers', 'coming_soon_list', 'dynamic_preroll', 'separator'].includes(blockType)) {
+  if (!['random', 'fixed', 'sequential', 'nexup_trailers', 'library_trailers', 'coming_soon_list', 'dynamic_preroll', 'separator'].includes(blockType)) {
     errors.push(`Invalid block type: ${block.type}`);
     return errors;
   }
@@ -202,30 +202,57 @@ export const sanitizeSequence = (sequence) => {
   if (!Array.isArray(sequence)) return [];
 
   return sequence.map((block) => {
-    const sanitized = {
-      type: block.type,
-      ...(block.label && block.label.trim() ? { label: block.label.trim() } : {}),
-    };
-
-    if (block.type === 'random') {
-      sanitized.category_id = block.category_id;
-      sanitized.count = block.count;
-    } else if (block.type === 'fixed') {
-      sanitized.preroll_ids = block.preroll_ids || [];
-    } else if (block.type === 'nexup_trailers') {
-      sanitized.source = block.source || 'both';
-      sanitized.count = block.count || 2;
-      sanitized.mode = block.mode || 'random';
-    } else if (block.type === 'coming_soon_list') {
-      sanitized.layout = block.layout || 'grid';
-    } else if (block.type === 'dynamic_preroll') {
-      sanitized.filename = block.filename;
-    } else if (block.type === 'separator') {
-      sanitized.duration = block.duration || 3;
+    const sanitized = sanitizeBlockFields(block);
+    // Optional editor geometry travels with the block through save/load and reorder.
+    const positions = Object.entries(block.flow_positions || {}).filter(([key, point]) =>
+      /^(simple|advanced)_(b|if|o)$/.test(key) && Number.isFinite(point?.x) && Number.isFinite(point?.y));
+    if (positions.length) sanitized.flow_positions = Object.fromEntries(positions.map(([key, point]) =>
+      [key, { x: point.x, y: point.y }]));
+    // Advanced-mode condition, and the block to play when it isn't met
+    if (block.condition && Array.isArray(block.condition.rules) && block.condition.rules.length) {
+      sanitized.condition = block.condition;
+      if (block.otherwise && block.otherwise.type) {
+        // eslint-disable-next-line no-unused-vars
+        const { label, ...otherwise } = sanitizeBlockFields(block.otherwise);
+        sanitized.otherwise = otherwise;
+      }
     }
-
     return sanitized;
   });
+};
+
+// The fields a block of each type is saved with. Sequential blocks are
+// category blocks played in order; they were missing here, so saving one
+// dropped its category and count and it played nothing.
+const sanitizeBlockFields = (block) => {
+  const sanitized = {
+    type: block.type,
+    ...(block.label && block.label.trim() ? { label: block.label.trim() } : {}),
+  };
+
+  if (block.type === 'random' || block.type === 'sequential') {
+    sanitized.category_id = block.category_id;
+    sanitized.count = block.count || 1;
+  } else if (block.type === 'fixed') {
+    sanitized.preroll_ids = block.preroll_ids || [];
+  } else if (block.type === 'nexup_trailers') {
+    sanitized.source = block.source || 'both';
+    sanitized.count = block.count || 2;
+    sanitized.mode = block.mode || 'random';
+  } else if (block.type === 'library_trailers') {
+    sanitized.count = block.count || 2;
+    sanitized.mode = block.mode || 'random';
+    sanitized.genres = Array.isArray(block.genres) ? block.genres : [];
+    sanitized.match_playing = Boolean(block.match_playing);
+  } else if (block.type === 'coming_soon_list') {
+    sanitized.layout = block.layout || 'grid';
+  } else if (block.type === 'dynamic_preroll') {
+    sanitized.filename = block.filename;
+  } else if (block.type === 'separator') {
+    sanitized.duration = block.duration || 3;
+  }
+
+  return sanitized;
 };
 
 /**

@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Shuffle, Pin, X, ChevronUp, ChevronDown, Search, Tag, Check, Film, LayoutGrid, Sparkles } from 'lucide-react';
 import { lockBodyScroll } from '../utils/modalBehavior';
+import BlockConditionEditor from './BlockConditionEditor';
+import GenrePicker from './GenrePicker';
 
 /**
  * BlockEditor - Modal for configuring sequence blocks
- * Supports both random and fixed block types
+ * Supports both random and fixed block types. In the builder's Advanced mode
+ * it also edits the block's IF/THEN conditions.
  */
-const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) => {
+const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, advanced = false }) => {
   const overlayRef = useRef(null);
   const [blockType, setBlockType] = useState(block.type || 'random');
   const [categoryId, setCategoryId] = useState(block.category_id || (categories[0]?.id || null));
@@ -20,6 +23,9 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
   const [nexupSource, setNexupSource] = useState(block.source || 'both');
   const [nexupCount, setNexupCount] = useState(block.count || 2);
   const [nexupMode, setNexupMode] = useState(block.mode || 'random');
+  // Library trailers
+  const [libGenres, setLibGenres] = useState(block.genres || []);
+  const [libMatchPlaying, setLibMatchPlaying] = useState(Boolean(block.match_playing));
   // Coming Soon List state
   const [comingSoonLayout, setComingSoonLayout] = useState(block.layout || 'grid');
   // Dynamic Preroll state
@@ -27,6 +33,11 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
   const [dpTheme, setDpTheme] = useState(block.theme || '');
   const [dynamicPrerolls, setDynamicPrerolls] = useState([]);
   const [dynamicPrerollsLoading, setDynamicPrerollsLoading] = useState(false);
+  // Advanced mode: when this block plays, and what plays instead
+  const [conditionState, setConditionState] = useState({
+    condition: block.condition || null,
+    otherwise: block.otherwise || null,
+  });
 
   // Only reset state when opening a different block (detected by ID change)
   useEffect(() => {
@@ -42,6 +53,9 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
       setComingSoonLayout(block.layout || 'grid');
       setDpTemplate(block.template || '');
       setDpTheme(block.theme || '');
+      setConditionState({ condition: block.condition || null, otherwise: block.otherwise || null });
+      setLibGenres(block.genres || []);
+      setLibMatchPlaying(Boolean(block.match_playing));
     }
   }, [block.id, block, categories, initialBlockId]);
 
@@ -121,6 +135,17 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
       delete newBlock.layout;
       delete newBlock.template;
       delete newBlock.theme;
+    } else if (blockType === 'library_trailers') {
+      newBlock.count = nexupCount;
+      newBlock.mode = nexupMode === 'sequential' ? 'newest' : nexupMode;
+      newBlock.genres = libGenres;
+      newBlock.match_playing = libMatchPlaying;
+      delete newBlock.category_id;
+      delete newBlock.preroll_ids;
+      delete newBlock.source;
+      delete newBlock.layout;
+      delete newBlock.template;
+      delete newBlock.theme;
     } else if (blockType === 'coming_soon_list') {
       newBlock.layout = comingSoonLayout;
       delete newBlock.category_id;
@@ -137,6 +162,19 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
       delete newBlock.preroll_ids;
       delete newBlock.source;
       delete newBlock.layout;
+    }
+
+    // Conditions are only edited in Advanced mode. In Simple mode the block's
+    // existing condition rides along untouched via the spread above.
+    if (advanced) {
+      if (conditionState.condition) {
+        newBlock.condition = conditionState.condition;
+        if (conditionState.otherwise) newBlock.otherwise = conditionState.otherwise;
+        else delete newBlock.otherwise;
+      } else {
+        delete newBlock.condition;
+        delete newBlock.otherwise;
+      }
     }
 
     onSave(newBlock);
@@ -210,7 +248,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
     ? (categoryId !== null && count > 0)
     : blockType === 'fixed'
     ? (selectedPrerollIds.length > 0)
-    : blockType === 'nexup_trailers'
+    : blockType === 'nexup_trailers' || blockType === 'library_trailers'
     ? (nexupCount > 0)
     : blockType === 'coming_soon_list'
     ? true
@@ -343,6 +381,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                 { key: 'random', label: 'Random', desc: 'Random prerolls from category', icon: Shuffle, gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', bgActive: 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)', shadow: 'rgba(102, 126, 234, 0.2)' },
                 { key: 'fixed', label: 'Fixed', desc: 'Specific prerolls in order', icon: Pin, gradient: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', bgActive: 'linear-gradient(135deg, rgba(250, 112, 154, 0.1) 0%, rgba(254, 225, 64, 0.1) 100%)', shadow: 'rgba(250, 112, 154, 0.2)' },
                 { key: 'nexup_trailers', label: 'NeX-Up Trailers', desc: 'Coming soon movie/TV trailers', icon: Film, gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', bgActive: 'linear-gradient(135deg, rgba(240, 147, 251, 0.1) 0%, rgba(245, 87, 108, 0.1) 100%)', shadow: 'rgba(240, 147, 251, 0.2)' },
+                { key: 'library_trailers', label: 'Library Trailers', desc: 'Trailers for movies you own', icon: Film, gradient: 'linear-gradient(135deg, #34d399 0%, #0f9f6e 100%)', bgActive: 'linear-gradient(135deg, rgba(52, 211, 153, 0.1) 0%, rgba(15, 159, 110, 0.1) 100%)', shadow: 'rgba(15, 159, 110, 0.2)' },
                 { key: 'coming_soon_list', label: 'Coming Soon List', desc: 'Generated coming soon video', icon: LayoutGrid, gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', bgActive: 'linear-gradient(135deg, rgba(79, 172, 254, 0.1) 0%, rgba(0, 242, 254, 0.1) 100%)', shadow: 'rgba(79, 172, 254, 0.2)' },
                 { key: 'dynamic_preroll', label: 'Dynamic Preroll', desc: 'Themed generated preroll', icon: Sparkles, gradient: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)', bgActive: 'linear-gradient(135deg, rgba(67, 233, 123, 0.1) 0%, rgba(56, 249, 215, 0.1) 100%)', shadow: 'rgba(67, 233, 123, 0.2)' },
               ].map(({ key, label: typeLabel, desc, icon: Icon, gradient, bgActive, shadow }) => (
@@ -728,6 +767,41 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
           )}
 
           {/* NeX-Up Trailers Configuration */}
+          {blockType === 'library_trailers' && (
+            <div style={{ display: 'grid', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-color)' }}>
+                  How many
+                  <input type="number" min="1" max="10" value={nexupCount}
+                    onChange={(e) => setNexupCount(Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)))}
+                    style={{ display: 'block', width: '100%', marginTop: '6px', padding: '9px 12px', border: '2px solid var(--border-color)', borderRadius: '6px', background: 'var(--input-bg)', color: 'var(--text-color)', boxSizing: 'border-box' }} />
+                </label>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-color)' }}>
+                  Order
+                  <select value={nexupMode === 'newest' ? 'newest' : 'random'} onChange={(e) => setNexupMode(e.target.value)}
+                    style={{ display: 'block', width: '100%', marginTop: '6px', padding: '9px 12px', border: '2px solid var(--border-color)', borderRadius: '6px', background: 'var(--input-bg)', color: 'var(--text-color)' }}>
+                    <option value="random">Shuffled</option>
+                    <option value="newest">Newest in library first</option>
+                  </select>
+                </label>
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-color)' }}>
+                Only these genres (optional)
+                <div style={{ marginTop: '6px' }}><GenrePicker values={libGenres} onChange={setLibGenres} /></div>
+              </div>
+              <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '13px', color: 'var(--text-color)' }}>
+                <input type="checkbox" checked={libMatchPlaying} onChange={(e) => setLibMatchPlaying(e.target.checked)} />
+                <span>
+                  <strong>Same genre as the movie that's starting</strong> (Jellyfin &amp; Emby). Plex doesn't say which movie is
+                  starting, so on Plex trailers are picked from the whole selection.
+                </span>
+              </label>
+              <small style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>
+                Plays trailers from NeX-Up &gt; Library Trailers. The trailer for the movie that's about to play is never picked.
+              </small>
+            </div>
+          )}
+
           {blockType === 'nexup_trailers' && (
             <div style={{ marginBottom: '12px' }}>
               {/* Mode: Random shuffles the selected source pool; Sequential
@@ -915,6 +989,15 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                 </>
               )}
             </div>
+          )}
+
+          {advanced && (
+            <BlockConditionEditor
+              condition={conditionState.condition}
+              otherwise={conditionState.otherwise}
+              onChange={setConditionState}
+              categories={categories}
+            />
           )}
         </div>
 

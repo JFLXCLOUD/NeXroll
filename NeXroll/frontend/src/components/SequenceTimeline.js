@@ -71,6 +71,7 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
       random: { bg: 'linear-gradient(135deg, #f5af19 0%, #f12711 100%)', solid: '#f59e0b' },
       sequential: { bg: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)', solid: '#10b981' },
       nexup_trailers: { bg: 'linear-gradient(135deg, #f093fb 0%, #e11d48 100%)', solid: '#e11d48' },
+      library_trailers: { bg: 'linear-gradient(135deg, #34d399 0%, #0f9f6e 100%)', solid: '#0f9f6e' },
       coming_soon_list: { bg: 'linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)', solid: '#0891b2' },
       dynamic_preroll: { bg: 'linear-gradient(135deg, #4ade80 0%, #16a34a 100%)', solid: '#16a34a' },
       queue: { bg: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', solid: '#ec4899' },
@@ -91,6 +92,9 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
     } else if (block.type === 'random' || block.type === 'sequential') {
       const category = categories.find((c) => c.id === block.category_id);
       return category?.name || 'Unknown Category';
+    } else if (block.type === 'library_trailers') {
+      const genres = (block.genres || []).join(', ');
+      return `${genres || 'Any genre'} (${block.count || 2} trailers)`;
     } else if (block.type === 'nexup_trailers') {
       const src = block.source === 'movies' ? 'Movies' : block.source === 'tv' ? 'TV' : 'Movies & TV';
       return `${src} (${block.count || 2} trailers)`;
@@ -136,6 +140,7 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
       random: <Shuffle {...iconProps} />,
       sequential: <Play {...iconProps} />,
       nexup_trailers: <Film {...iconProps} />,
+      library_trailers: <Film {...iconProps} />,
       coming_soon_list: <LayoutGrid {...iconProps} />,
       dynamic_preroll: <Sparkles {...iconProps} />,
       queue: <Layers {...iconProps} />,
@@ -153,6 +158,7 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
       random: 'Random',
       sequential: 'Sequential',
       nexup_trailers: 'NeX-Up Trailers',
+      library_trailers: 'Library Trailers',
       coming_soon_list: 'Coming Soon',
       dynamic_preroll: 'Dynamic Preroll',
       queue: 'Queue',
