@@ -1469,15 +1469,33 @@ class Scheduler:
                 new_trailer = models.ComingSoonTrailer(
                     radarr_movie_id=movie['radarr_id'],
                     tmdb_id=movie.get('tmdb_id'),
+                    imdb_id=movie.get('imdb_id'),
                     title=movie['title'],
                     year=movie.get('year'),
+                    overview=movie.get('overview', ''),
                     release_date=datetime.datetime.strptime(movie['release_date'], '%Y-%m-%d').date() if movie.get('release_date') else None,
+                    release_type=movie.get('release_type'),
                     trailer_url=movie.get('trailer_url', ''),
                     local_path=result['path'],
                     downloaded_at=datetime.datetime.utcnow(),
                     file_size_mb=result.get('size_mb'),
                     duration_seconds=result.get('duration'),
-                    is_enabled=True
+                    resolution=result.get('resolution', ''),
+                    # Poster and fanart are what the generated "Coming Soon"
+                    # list slide draws; without them an auto-synced trailer
+                    # rendered as a blank tile next to the manually synced ones.
+                    poster_url=movie.get('poster_url'),
+                    fanart_url=movie.get('fanart_url'),
+                    # Every NeX-Up consumer keys on this exact string, including
+                    # eligible_nexup_trailers() above, so a row left at the model
+                    # default 'pending' is invisible to trailer blocks even with
+                    # a playable file on disk. Set inside the branch that has
+                    # already proved the download, matching the manual and
+                    # full-sync paths in main.py.
+                    status='downloaded',
+                    is_enabled=True,
+                    monitored=movie.get('monitored', True),
+                    play_count=0
                 )
                 db.add(new_trailer)
                 db.commit()
@@ -1631,15 +1649,31 @@ class Scheduler:
                 new_trailer = models.ComingSoonTVTrailer(
                     sonarr_series_id=show['sonarr_id'],
                     tvdb_id=show.get('tvdb_id'),
+                    imdb_id=show.get('imdb_id'),
                     title=show['title'],
                     year=show.get('year'),
+                    season_number=show.get('season_number'),
+                    overview=show.get('overview', ''),
+                    network=show.get('network'),
                     release_date=datetime.datetime.strptime(show['release_date'], '%Y-%m-%d').date() if show.get('release_date') else None,
+                    release_type=show.get('release_type'),
                     trailer_url=show.get('trailer_url', ''),
                     local_path=result['path'],
                     downloaded_at=datetime.datetime.utcnow(),
                     file_size_mb=result.get('size_mb'),
                     duration_seconds=result.get('duration'),
-                    is_enabled=True
+                    resolution=result.get('resolution', ''),
+                    poster_url=show.get('poster_url'),
+                    fanart_url=show.get('fanart_url'),
+                    # Same omission as the Radarr path above: without this the
+                    # row stays 'pending' and no trailer block will ever pick
+                    # it, and the aired-show expiry pass earlier in this
+                    # function only queries status == 'downloaded', so a
+                    # pending row would also never be reaped after it aired.
+                    status='downloaded',
+                    is_enabled=True,
+                    monitored=show.get('monitored', True),
+                    play_count=0
                 )
                 db.add(new_trailer)
                 db.commit()

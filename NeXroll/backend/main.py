@@ -421,29 +421,12 @@ def ensure_schema() -> None:
             if not _sqlite_has_column("coming_soon_tv_trailers", "excluded_from_list"):
                 _sqlite_add_column("coming_soon_tv_trailers", "excluded_from_list BOOLEAN DEFAULT 0")
 
-            # Repair trailers whose download finished but whose status was never
-            # advanced past the model default of 'pending'. A row with both a
-            # downloaded_at and a local_path is a completed download by
-            # definition, and roughly a dozen queries key off status ==
-            # 'downloaded' — retention, the applied-preroll guard, the upcoming
-            # "already downloaded" markers. Left as 'pending' the file is
-            # invisible to all of them: never reaped, never counted.
-            try:
-                with engine.connect() as conn:
-                    repaired = 0
-                    for _tbl in ("coming_soon_trailers", "coming_soon_tv_trailers"):
-                        res = conn.exec_driver_sql(
-                            f"UPDATE {_tbl} SET status = 'downloaded' "
-                            "WHERE downloaded_at IS NOT NULL "
-                            "AND local_path IS NOT NULL AND TRIM(local_path) != '' "
-                            "AND (status IS NULL OR status IN ('pending', 'downloading'))"
-                        )
-                        repaired += res.rowcount or 0
-                    if repaired:
-                        conn.commit()
-                        print(f"Schema: marked {repaired} completed trailer(s) as downloaded")
-            except Exception as _e:
-                print(f"Schema: trailer status repair skipped: {_e}")
+            # The repair for trailers stuck at 'pending' used to live here as raw
+            # SQL. It now runs from startup_event() via
+            # reconcile_nexup_trailer_status(), which can do the one thing this
+            # could not: check the file is actually on disk. The SQL version also
+            # swept 'downloading' rows in, which promoted an interrupted download
+            # to playable and put a part-written file in front of someone's movie.
 
             # Settings: NeX-Up unmonitored settings
             if not _sqlite_has_column("settings", "nexup_include_unmonitored_movies"):
@@ -2751,6 +2734,34 @@ def startup_event():
     except Exception as e:
         try:
             _file_log(f"Startup deduplication error: {e}", level="ERROR")
+        except Exception:
+            pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    # Repair NeX-Up trailers that downloaded but were left marked 'pending' by
+    # the older auto-sync, which would otherwise never reach a trailer block.
+    # See reconcile_nexup_trailer_status() for why, and for what it refuses to
+    # touch. Idempotent, so it is safe to run on every start.
+    try:
+        db = SessionLocal()
+        repaired = reconcile_nexup_trailer_status(db)
+        if repaired:
+            db.commit()
+            _file_log(
+                f"Startup: Marked {repaired} downloaded NeX-Up trailer(s) that were "
+                f"still recorded as pending; they are now eligible for sequences"
+            )
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            _file_log(f"Startup NeX-Up trailer status repair error: {e}", level="ERROR")
         except Exception:
             pass
     finally:
