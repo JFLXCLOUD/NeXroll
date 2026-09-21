@@ -18,6 +18,13 @@ from backend.plex_connector import PlexConnector
 from backend.jellyfin_connector import JellyfinConnector
 from backend.database import SessionLocal
 from backend.shuffle_bag import shuffle_bag_sample
+from backend.library_trailers import eligible_library_trailers
+from backend.sequence_conditions import (
+    PlaybackContext,
+    block_to_play,
+    describe_condition,
+    has_conditions,
+)
 
 # Logging helpers - direct file writes to avoid circular imports
 class ApplyResult:
@@ -215,18 +222,7 @@ def resolve_nexup_trailer_block(block: dict, db, rotation_key=None) -> list:
         count = 2
     count = max(count, 1)
 
-    rows = []
-    if source in ("movies", "both"):
-        rows += [t for t in db.query(models.ComingSoonTrailer).filter(
-            models.ComingSoonTrailer.status == 'downloaded',
-            models.ComingSoonTrailer.is_enabled == True,
-        ).all() if t.local_path and os.path.exists(t.local_path)]
-    if source in ("tv", "both"):
-        rows += [t for t in db.query(models.ComingSoonTVTrailer).filter(
-            models.ComingSoonTVTrailer.status == 'downloaded',
-            models.ComingSoonTVTrailer.is_enabled == True,
-        ).all() if t.local_path and os.path.exists(t.local_path)]
-
+    rows = eligible_nexup_trailers(db, source)
     if not rows:
         return []
     if mode == "sequential":
@@ -238,6 +234,323 @@ def resolve_nexup_trailer_block(block: dict, db, rotation_key=None) -> list:
         return random.sample(rows, count)
     random.shuffle(rows)
     return rows
+
+
+def eligible_nexup_trailers(db, source: str = "both") -> list:
+    """Every NeX-Up trailer a trailer block could play: downloaded, enabled,
+    and with its file on disk. Shared by the block and by the Advanced-mode
+    "trailers available" condition, so the two can never disagree."""
+    source = str(source or "both").lower()
+    rows = []
+    if source in ("movies", "both"):
+        rows += [t for t in db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.status == 'downloaded',
+            models.ComingSoonTrailer.is_enabled == True,
+        ).all() if t.local_path and os.path.exists(t.local_path)]
+    if source in ("tv", "both"):
+        rows += [t for t in db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.status == 'downloaded',
+            models.ComingSoonTVTrailer.is_enabled == True,
+        ).all() if t.local_path and os.path.exists(t.local_path)]
+    return rows
+
+
+def reconcile_nexup_trailer_status(db) -> int:
+    """Promote trailers that downloaded but were left marked 'pending'.
+
+    The scheduler's auto-sync used to build its rows without an explicit
+    status, so they took the model default 'pending' even when the download
+    succeeded. Since eligible_nexup_trailers() above (and every other NeX-Up
+    query) keys on status == 'downloaded', those trailers were never offered
+    to a trailer block and never expired: a library synced only by the
+    scheduler could hold a pool of exactly zero eligible trailers while the
+    files sat there playable on disk.
+
+    The write sites set the status now, but existing databases still carry the
+    bad rows, so this runs once at startup to repair them. A row qualifies
+    only with a downloaded_at AND its file still on disk, so nothing that did
+    not genuinely finish downloading gets promoted. Rows at 'downloading' are
+    left alone: those are in flight, or were interrupted, and are not ours to
+    reinterpret. Returns the number of rows repaired, and does not commit.
+    """
+    repaired = 0
+    for model in (models.ComingSoonTrailer, models.ComingSoonTVTrailer):
+        stale = db.query(model).filter(
+            or_(model.status == None, model.status == 'pending'),  # noqa: E711
+            model.local_path != None,  # noqa: E711
+            model.downloaded_at != None,  # noqa: E711
+        ).all()
+        for t in stale:
+            try:
+                if t.local_path and os.path.exists(t.local_path):
+                    t.status = 'downloaded'
+                    repaired += 1
+            except Exception:
+                continue
+    return repaired
+
+
+def playback_context(db, media_type: Optional[str] = None,
+                     now: Optional[datetime.datetime] = None,
+                     item_id: Optional[str] = None,
+                     server_type: Optional[str] = None,
+                     genres: Optional[list] = None) -> PlaybackContext:
+    """The facts a block condition may ask about, for one resolution pass.
+
+    ``media_type`` is what is about to play when the caller knows it: the
+    Jellyfin/Emby plugin sends it with every request, and Plex only ever runs
+    prerolls before movies, so its apply paths pass "movie".
+
+    Genres come from ``genres`` when the caller already has them (a preview),
+    or are looked up from the playing Jellyfin/Emby server by ``item_id`` - and
+    only if a genre rule actually asks. Plex callers pass neither, so genre
+    rules are unknown there and count as not met.
+    """
+    looked_up = {}
+
+    def details():
+        # One request answers both genre and TMDB id, and only if asked.
+        if "item" not in looked_up:
+            looked_up["item"] = None
+            if item_id:
+                from backend.media_genres import item_details
+                looked_up["item"] = item_details(db, item_id, server_type)
+        return looked_up["item"]
+
+    def genre_lookup():
+        if genres is not None:
+            return list(genres)
+        found = details()
+        return None if found is None else found.get("genres")
+
+    return PlaybackContext(
+        now=now or _localized_now(db),
+        media_type=(str(media_type).lower() if media_type else None),
+        trailer_count=lambda source: len(eligible_nexup_trailers(db, source)),
+        genre_lookup=genre_lookup,
+        tmdb_lookup=lambda: (details() or {}).get("tmdb"),
+    )
+
+
+def resolve_library_trailer_block(block: dict, db, rotation_key=None,
+                                  context: Optional[PlaybackContext] = None) -> list:
+    """Resolve a 'library_trailers' block to LibraryTrailer rows.
+
+      count: int     mode: 'random' | 'newest' (most recently added movies)
+      genres: [..]   only trailers for movies with any of these genres
+      match_playing: prefer trailers sharing a genre with what is about to
+                     play (Jellyfin/Emby); falls back to the whole pool when
+                     none do, or when the genre isn't known (Plex)
+
+    The trailer for the movie that is about to play is never picked for it.
+    """
+    try:
+        count = max(int(block.get("count") or 2), 1)
+    except (TypeError, ValueError):
+        count = 2
+    rows = eligible_library_trailers(db)
+
+    def overlaps(row, names):
+        have = {g.lower() for g in row.genre_list()}
+        return bool(have & {str(n).lower() for n in names})
+
+    wanted = [g for g in (block.get("genres") or []) if str(g).strip()]
+    if wanted:
+        rows = [r for r in rows if overlaps(r, wanted)]
+    if context is not None:
+        playing_tmdb = context.tmdb_id()
+        if playing_tmdb:
+            rows = [r for r in rows if str(r.tmdb_id or "") != playing_tmdb]
+        if block.get("match_playing"):
+            playing = context.genres()
+            if playing:
+                matched = [r for r in rows if overlaps(r, playing)]
+                if matched:
+                    rows = matched
+    if not rows:
+        return []
+    if str(block.get("mode", "random")).lower() == "newest":
+        rows.sort(key=lambda r: r.added_to_library or datetime.datetime.min, reverse=True)
+        return rows[:count]
+    if rotation_key is not None:
+        return shuffle_bag_sample(rotation_key, rows, count)
+    random.shuffle(rows)
+    return rows[:count]
+
+
+def _nexup_storage(db) -> Optional[str]:
+    setting = db.query(models.Setting).first()
+    return getattr(setting, "nexup_storage_path", None) if setting else None
+
+
+def resolve_block_paths(block: dict, db, rotation_key=None,
+                        fallback_category_id: Optional[int] = None,
+                        log_prefix: str = "Sequence",
+                        context: Optional[PlaybackContext] = None) -> List[str]:
+    """Resolve one sequence block to the absolute paths it plays, in order.
+
+    The single definition of what every block type means. The Plex apply
+    paths, the manual Apply button and the Jellyfin/Emby plugin all call this,
+    so a sequence plays the same thing whichever server it reaches. Files that
+    are missing on disk are skipped rather than handed to a media server.
+    """
+    try:
+        block_type = str(block.get("type", "")).lower()
+    except Exception:
+        return []
+    paths: List[str] = []
+
+    if block_type in {"random", "sequential"}:
+        picks = resolve_category_sequence_block(
+            block,
+            db,
+            fallback_category_id=fallback_category_id,
+            rotation_key=rotation_key,
+        )
+        if not picks:
+            raw_category_id = (
+                block.get("category_id") or block.get("categoryId") or fallback_category_id
+            )
+            _scheduler_log(
+                f"{log_prefix}: No prerolls with valid files for category {raw_category_id}",
+                level="WARNING",
+            )
+        paths.extend(os.path.abspath(p.path) for p in picks)
+
+    elif block_type == "fixed":
+        pids: List[int] = []
+        try:
+            ids_array = block.get("preroll_ids")
+            if ids_array and isinstance(ids_array, list):
+                pids = [int(x) for x in ids_array if x]
+            else:
+                pid = int(block.get("preroll_id") or 0)
+                if pid:
+                    pids = [pid]
+        except (TypeError, ValueError):
+            pids = []
+        for pid in pids:
+            p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+            if p and p.path and os.path.exists(p.path):
+                paths.append(os.path.abspath(p.path))
+
+    elif block_type == "nexup_trailers":
+        picked = resolve_nexup_trailer_block(block, db, rotation_key=rotation_key)
+        if picked:
+            paths.extend(os.path.abspath(t.local_path) for t in picked)
+        else:
+            _scheduler_log(
+                f"{log_prefix}: No NeX-Up trailers available (source={block.get('source', 'both')})",
+                level="WARNING",
+            )
+
+    elif block_type == "library_trailers":
+        picked = resolve_library_trailer_block(block, db, rotation_key=rotation_key, context=context)
+        if picked:
+            paths.extend(os.path.abspath(t.local_path) for t in picked)
+        else:
+            _scheduler_log(f"{log_prefix}: No library trailers available for this block", level="WARNING")
+
+    elif block_type == "coming_soon_list":
+        layout = str(block.get("layout", "grid")).lower()
+        storage = _nexup_storage(db)
+        if storage:
+            video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
+            if os.path.exists(video_file):
+                paths.append(os.path.abspath(video_file))
+            else:
+                _scheduler_log(f"{log_prefix}: Coming Soon List video not found: {video_file}", level="WARNING")
+        else:
+            _scheduler_log(f"{log_prefix}: NeX-Up storage path not configured for Coming Soon List", level="WARNING")
+
+    elif block_type == "dynamic_preroll":
+        # A specific already-generated NeX-Up video (preferred), or the
+        # legacy template+theme combination for older saved sequences.
+        storage = _nexup_storage(db)
+        if storage:
+            filename = block.get("filename")
+            if filename:
+                video_file = os.path.join(storage, "dynamic_prerolls", os.path.basename(str(filename)))
+            else:
+                template = str(block.get("template", "coming_soon")).lower()
+                theme = str(block.get("theme", "midnight")).lower()
+                video_file = _generated_preroll_path(storage, template, theme)
+            if os.path.exists(video_file):
+                paths.append(os.path.abspath(video_file))
+            else:
+                _scheduler_log(f"{log_prefix}: Generated preroll not found: {video_file}", level="WARNING")
+        else:
+            _scheduler_log(f"{log_prefix}: NeX-Up storage path not configured for generated preroll", level="WARNING")
+
+    elif block_type == "separator":
+        # Timed blank/black gap between blocks
+        try:
+            duration = float(block.get("duration") or 3)
+        except (TypeError, ValueError):
+            duration = 3.0
+        storage = _nexup_storage(db)
+        if storage:
+            try:
+                from backend.dynamic_preroll import DynamicPrerollGenerator
+                output_dir = os.path.join(storage, "dynamic_prerolls")
+                os.makedirs(output_dir, exist_ok=True)
+                blank_path = DynamicPrerollGenerator(output_dir).generate_blank_video(duration)
+                if blank_path:
+                    paths.append(os.path.abspath(blank_path))
+                else:
+                    _scheduler_log(f"{log_prefix}: Could not generate blank pause video (FFmpeg missing?)", level="WARNING")
+            except Exception as e:
+                _scheduler_log(f"{log_prefix}: Error generating pause block: {e}", level="ERROR")
+        else:
+            _scheduler_log(f"{log_prefix}: NeX-Up storage path not configured for pause block", level="WARNING")
+
+    return paths
+
+
+def resolve_sequence_paths(blocks, db, rotation_scope: tuple,
+                           fallback_category_id: Optional[int] = None,
+                           context: Optional[PlaybackContext] = None,
+                           log_prefix: str = "Sequence") -> List[str]:
+    """Resolve a whole sequence to ordered paths, honouring block conditions.
+
+    ``rotation_scope`` identifies the caller (e.g. ("plex", "schedule", 7)) so
+    each block keeps its own shuffle rotation. A conditional block that does
+    not hold is replaced by its ``otherwise`` block, which rotates separately,
+    or skipped.
+    """
+    if not isinstance(blocks, list):
+        return []
+    ctx = context
+    paths: List[str] = []
+    for block_index, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            continue
+        rotation_key = (*rotation_scope, "block", block_index)
+        chosen = block
+        if isinstance(block.get("condition"), dict):
+            if ctx is None:
+                ctx = playback_context(db)
+            chosen = block_to_play(block, ctx)
+            if chosen is not block:
+                summary = describe_condition(block.get("condition"))
+                if chosen is None:
+                    _scheduler_log(f"{log_prefix}: Skipped block {block_index + 1} ({block.get('type')}): "
+                                   f"condition not met ({summary})")
+                    continue
+                _scheduler_log(f"{log_prefix}: Block {block_index + 1} ({block.get('type')}) condition not met "
+                               f"({summary}); playing its alternative ({chosen.get('type')})")
+                rotation_key = (*rotation_key, "otherwise")
+        if ctx is None and str(chosen.get("type", "")).lower() == "library_trailers":
+            ctx = playback_context(db)
+        paths.extend(resolve_block_paths(
+            chosen,
+            db,
+            rotation_key=rotation_key,
+            fallback_category_id=fallback_category_id,
+            log_prefix=log_prefix,
+            context=ctx,
+        ))
+    return paths
 
 
 def _has_valid_sequence(schedule) -> bool:
@@ -900,6 +1213,20 @@ class Scheduler:
                 _scheduler_log(f"NeX-Up auto-sync: Coming Soon List regeneration error: {e}", level="ERROR")
                 import traceback
                 _scheduler_log(f"NeX-Up auto-sync: Traceback: {traceback.format_exc()}", level="ERROR")
+
+        # 4) Library Trailers (their own settings; skipped when turned off)
+        try:
+            from backend import library_trailers
+            if library_trailers.load_config(setting)["enabled"]:
+                _scheduler_log("NeX-Up auto-sync: Syncing Library Trailers...")
+                lib_db = SessionLocal()
+                try:
+                    outcome = await library_trailers.run_sync(lib_db)
+                    _scheduler_log(f"NeX-Up auto-sync: Library Trailers {outcome}")
+                finally:
+                    lib_db.close()
+        except Exception as e:
+            _scheduler_log(f"NeX-Up auto-sync: Library Trailers skipped: {e}", level="WARNING")
 
     def _regenerate_coming_soon_lists(self, db: Session, setting):
         """Regenerate Coming Soon List videos after sync"""
@@ -2144,13 +2471,15 @@ class Scheduler:
                             has_random = any(
                                 block.get("type") == "random"
                                 or (
-                                    block.get("type") == "nexup_trailers"
+                                    block.get("type") in ("nexup_trailers", "library_trailers")
                                     and str(block.get("mode", "random")).lower() == "random"
                                 )
                                 for block in seq
                                 if isinstance(block, dict)
                             )
-                            if has_random:
+                            # Plex holds a fixed list, so a conditional block is
+                            # only re-checked when the sequence is re-applied.
+                            if has_random or has_conditions(seq):
                                 last_rotation = self._last_rotation_time.get(chosen_schedule.id)
                                 if last_rotation is None or (now - last_rotation).total_seconds() >= self._rotation_interval_seconds:
                                     should_rotate = True
@@ -2911,119 +3240,15 @@ class Scheduler:
         except Exception:
             return ApplyResult()
 
-        # Build ordered list of file paths per sequence steps
-        paths = []
-        for step_index, step in enumerate(seq):
-            try:
-                stype = str(step.get("type", "")).lower()
-            except Exception:
-                stype = ""
-            rotation_key = ("plex", "schedule", schedule.id, "block", step_index)
-            if stype in {"random", "sequential"}:
-                picks = resolve_category_sequence_block(
-                    step,
-                    db,
-                    fallback_category_id=schedule.category_id,
-                    rotation_key=rotation_key,
-                )
-                if not picks:
-                    raw_category_id = (
-                        step.get("category_id")
-                        or step.get("categoryId")
-                        or schedule.category_id
-                    )
-                    _scheduler_log(
-                        f"Sequence: No prerolls with valid files for category {raw_category_id}",
-                        level="WARNING",
-                    )
-                    continue
-                for p in picks:
-                    paths.append(os.path.abspath(p.path))
-            elif stype == "fixed":
-                # Support both single preroll_id and array preroll_ids
-                pids = []
-                try:
-                    # Try array format first (preroll_ids)
-                    ids_array = step.get("preroll_ids")
-                    if ids_array and isinstance(ids_array, list):
-                        pids = [int(x) for x in ids_array if x]
-                    else:
-                        # Fall back to single preroll_id
-                        pid = int(step.get("preroll_id") or 0)
-                        if pid:
-                            pids = [pid]
-                except Exception:
-                    pass
-                
-                if not pids:
-                    continue
-                
-                # Query and add each preroll in order
-                for pid in pids:
-                    p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                    if p and p.path and os.path.exists(p.path):
-                        paths.append(os.path.abspath(p.path))
-            elif stype == "nexup_trailers":
-                # NeX-Up trailers from coming_soon_trailers / coming_soon_tv_trailers
-                picked = resolve_nexup_trailer_block(step, db, rotation_key=rotation_key)
-                if picked:
-                    paths.extend(os.path.abspath(t.local_path) for t in picked)
-                else:
-                    _scheduler_log(f"Sequence: No NeX-Up trailers available (source={step.get('source','both')})", level="WARNING")
-            elif stype == "coming_soon_list":
-                # Coming Soon List dynamic video (grid or list layout)
-                layout = str(step.get("layout", "grid")).lower()
-                setting_obj = db.query(models.Setting).first()
-                storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
-                if storage:
-                    video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
-                    if os.path.exists(video_file):
-                        paths.append(os.path.abspath(video_file))
-                    else:
-                        _scheduler_log(f"Sequence: Coming Soon List video not found: {video_file}", level="WARNING")
-                else:
-                    _scheduler_log("Sequence: NeX-Up storage path not configured for Coming Soon List", level="WARNING")
-            elif stype == "dynamic_preroll":
-                # A specific already-generated NeX-Up video (preferred), or the
-                # legacy template+theme combination for older saved sequences.
-                setting_obj = db.query(models.Setting).first()
-                storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
-                if storage:
-                    filename = step.get("filename")
-                    if filename:
-                        video_file = os.path.join(storage, "dynamic_prerolls", os.path.basename(str(filename)))
-                    else:
-                        template = str(step.get("template", "coming_soon")).lower()
-                        theme = str(step.get("theme", "midnight")).lower()
-                        video_file = _generated_preroll_path(storage, template, theme)
-                    if os.path.exists(video_file):
-                        paths.append(os.path.abspath(video_file))
-                    else:
-                        _scheduler_log(f"Sequence: Generated preroll not found: {video_file}", level="WARNING")
-                else:
-                    _scheduler_log("Sequence: NeX-Up storage path not configured for generated preroll", level="WARNING")
-            elif stype == "separator":
-                # Timed blank/black gap between blocks
-                duration = float(step.get("duration") or 3)
-                setting_obj = db.query(models.Setting).first()
-                storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
-                if storage:
-                    try:
-                        from backend.dynamic_preroll import DynamicPrerollGenerator
-                        output_dir = os.path.join(storage, "dynamic_prerolls")
-                        os.makedirs(output_dir, exist_ok=True)
-                        blank_path = DynamicPrerollGenerator(output_dir).generate_blank_video(duration)
-                        if blank_path:
-                            paths.append(os.path.abspath(blank_path))
-                        else:
-                            _scheduler_log("Sequence: Could not generate blank pause video (FFmpeg missing?)", level="WARNING")
-                    except Exception as e:
-                        _scheduler_log(f"Sequence: Error generating pause block: {e}", level="ERROR")
-                else:
-                    _scheduler_log("Sequence: NeX-Up storage path not configured for pause block", level="WARNING")
-            else:
-                # ignore unknown step types
-                continue
+        # Build ordered list of file paths per sequence steps. Plex only runs
+        # prerolls before movies, so a media-type condition is answered as one.
+        paths = resolve_sequence_paths(
+            seq,
+            db,
+            ("plex", "schedule", schedule.id),
+            fallback_category_id=schedule.category_id,
+            context=playback_context(db, media_type="movie"),
+        )
 
         if not paths:
             _scheduler_log("Sequence produced no preroll paths; aborting.")
@@ -3198,72 +3423,14 @@ class Scheduler:
                     if isinstance(seq, str):
                         seq = json.loads(seq)
                     if isinstance(seq, list):
-                        for step_index, step in enumerate(seq):
-                            stype = str(step.get("type", "")).lower()
-                            rotation_key = ("plex", "blend", schedule.id, "block", step_index)
-                            if stype in {"random", "sequential"}:
-                                for p in resolve_category_sequence_block(
-                                    step,
-                                    db,
-                                    fallback_category_id=schedule.category_id,
-                                    rotation_key=rotation_key,
-                                ):
-                                    paths.append(os.path.abspath(p.path))
-                            elif stype == "fixed":
-                                pids = []
-                                ids_array = step.get("preroll_ids")
-                                if ids_array and isinstance(ids_array, list):
-                                    pids = [int(x) for x in ids_array if x]
-                                else:
-                                    pid = step.get("preroll_id")
-                                    if pid:
-                                        pids = [int(pid)]
-                                for pid in pids:
-                                    p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                                    if p:
-                                        paths.append(os.path.abspath(p.path))
-                            elif stype == "nexup_trailers":
-                                paths.extend(os.path.abspath(t.local_path)
-                                             for t in resolve_nexup_trailer_block(
-                                                 step,
-                                                 db,
-                                                 rotation_key=rotation_key,
-                                             ))
-                            elif stype == "coming_soon_list":
-                                layout = str(step.get("layout", "grid")).lower()
-                                blend_setting = db.query(models.Setting).first()
-                                storage = getattr(blend_setting, "nexup_storage_path", None) if blend_setting else None
-                                if storage:
-                                    video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
-                                    if os.path.exists(video_file):
-                                        paths.append(os.path.abspath(video_file))
-                            elif stype == "dynamic_preroll":
-                                blend_setting = db.query(models.Setting).first()
-                                storage = getattr(blend_setting, "nexup_storage_path", None) if blend_setting else None
-                                if storage:
-                                    filename = step.get("filename")
-                                    if filename:
-                                        video_file = os.path.join(storage, "dynamic_prerolls", os.path.basename(str(filename)))
-                                    else:
-                                        template = str(step.get("template", "coming_soon")).lower()
-                                        theme = str(step.get("theme", "midnight")).lower()
-                                        video_file = _generated_preroll_path(storage, template, theme)
-                                    if os.path.exists(video_file):
-                                        paths.append(os.path.abspath(video_file))
-                            elif stype == "separator":
-                                duration = float(step.get("duration") or 3)
-                                blend_setting = db.query(models.Setting).first()
-                                storage = getattr(blend_setting, "nexup_storage_path", None) if blend_setting else None
-                                if storage:
-                                    try:
-                                        from backend.dynamic_preroll import DynamicPrerollGenerator
-                                        output_dir = os.path.join(storage, "dynamic_prerolls")
-                                        os.makedirs(output_dir, exist_ok=True)
-                                        blank_path = DynamicPrerollGenerator(output_dir).generate_blank_video(duration)
-                                        if blank_path:
-                                            paths.append(os.path.abspath(blank_path))
-                                    except Exception:
-                                        pass
+                        paths.extend(resolve_sequence_paths(
+                            seq,
+                            db,
+                            ("plex", "blend", schedule.id),
+                            fallback_category_id=schedule.category_id,
+                            context=playback_context(db, media_type="movie"),
+                            log_prefix="BLEND",
+                        ))
                 except Exception as e:
                     _scheduler_log(f"Error parsing sequence for blended schedule '{schedule.name}': {e}", level="WARNING")
             
@@ -3403,105 +3570,13 @@ class Scheduler:
             _scheduler_log(f"FILLER: Applying saved sequence '{saved_seq.name}' with {len(blocks)} blocks")
             
             # Build ordered list of file paths per sequence steps
-            paths = []
-            for block_index, block in enumerate(blocks):
-                try:
-                    block_type = str(block.get("type", "")).lower()
-                except Exception:
-                    block_type = ""
-                rotation_key = ("plex", "filler-sequence", sequence_id, "block", block_index)
-                
-                if block_type in {"random", "sequential"}:
-                    picks = resolve_category_sequence_block(
-                        block,
-                        db,
-                        rotation_key=rotation_key,
-                    )
-                    if not picks:
-                        raw_category_id = block.get("category_id") or block.get("categoryId")
-                        _scheduler_log(
-                            f"FILLER: No prerolls with valid files for category {raw_category_id}",
-                            level="WARNING",
-                        )
-                        continue
-                    for p in picks:
-                        paths.append(os.path.abspath(p.path))
-                        
-                elif block_type == "fixed":
-                    pids = []
-                    ids_array = block.get("preroll_ids")
-                    if ids_array and isinstance(ids_array, list):
-                        pids = [int(x) for x in ids_array if x]
-                    else:
-                        pid = block.get("preroll_id")
-                        if pid:
-                            pids = [int(pid)]
-                    
-                    for pid in pids:
-                        p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                        if p and p.path and os.path.exists(p.path):
-                            paths.append(os.path.abspath(p.path))
-                
-                elif block_type == "nexup_trailers":
-                    picked = resolve_nexup_trailer_block(
-                        block,
-                        db,
-                        rotation_key=rotation_key,
-                    )
-                    if picked:
-                        paths.extend(os.path.abspath(t.local_path) for t in picked)
-                    else:
-                        _scheduler_log(f"FILLER: No NeX-Up trailers available (source={block.get('source','both')})", level="WARNING")
-                
-                elif block_type == "coming_soon_list":
-                    layout = str(block.get("layout", "grid")).lower()
-                    setting_obj = db.query(models.Setting).first()
-                    storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
-                    if storage:
-                        video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
-                        if os.path.exists(video_file):
-                            paths.append(os.path.abspath(video_file))
-                        else:
-                            _scheduler_log(f"FILLER: Coming Soon List video not found: {video_file}", level="WARNING")
-                    else:
-                        _scheduler_log("FILLER: NeX-Up storage path not configured for Coming Soon List", level="WARNING")
-                
-                elif block_type == "dynamic_preroll":
-                    setting_obj = db.query(models.Setting).first()
-                    storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
-                    if storage:
-                        filename = block.get("filename")
-                        if filename:
-                            video_file = os.path.join(storage, "dynamic_prerolls", os.path.basename(str(filename)))
-                        else:
-                            template = str(block.get("template", "coming_soon")).lower()
-                            theme = str(block.get("theme", "midnight")).lower()
-                            video_file = _generated_preroll_path(storage, template, theme)
-                        if os.path.exists(video_file):
-                            paths.append(os.path.abspath(video_file))
-                        else:
-                            _scheduler_log(f"FILLER: Generated preroll not found: {video_file}", level="WARNING")
-                    else:
-                        _scheduler_log("FILLER: NeX-Up storage path not configured for generated preroll", level="WARNING")
-
-                elif block_type == "separator":
-                    duration = float(block.get("duration") or 3)
-                    setting_obj = db.query(models.Setting).first()
-                    storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
-                    if storage:
-                        try:
-                            from backend.dynamic_preroll import DynamicPrerollGenerator
-                            output_dir = os.path.join(storage, "dynamic_prerolls")
-                            os.makedirs(output_dir, exist_ok=True)
-                            blank_path = DynamicPrerollGenerator(output_dir).generate_blank_video(duration)
-                            if blank_path:
-                                paths.append(os.path.abspath(blank_path))
-                            else:
-                                _scheduler_log("FILLER: Could not generate blank pause video (FFmpeg missing?)", level="WARNING")
-                        except Exception as e:
-                            _scheduler_log(f"FILLER: Error generating pause block: {e}", level="ERROR")
-                    else:
-                        _scheduler_log("FILLER: NeX-Up storage path not configured for pause block", level="WARNING")
+            paths = resolve_sequence_paths(
+                blocks,
+                db,
+                ("plex", "filler-sequence", sequence_id),
+                context=playback_context(db, media_type="movie"),
+                log_prefix="FILLER",
+            )
 
             if not paths:
                 _scheduler_log(f"Filler sequence '{saved_seq.name}' produced no preroll paths", level="WARNING")

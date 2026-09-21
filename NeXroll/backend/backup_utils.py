@@ -105,6 +105,17 @@ def remap_sequence_blocks(
             continue
         block_type = str(block.get("type", "")).lower()
 
+        # An Advanced-mode alternative is a block in its own right and carries
+        # the same kinds of reference. One that cannot be remapped is dropped,
+        # so an unmet condition skips the slot instead of playing the wrong thing.
+        otherwise = block.get("otherwise")
+        if isinstance(otherwise, dict):
+            kept = remap_sequence_blocks([otherwise], preroll_id_map, category_id_map)
+            if kept:
+                block["otherwise"] = kept[0]
+            else:
+                block.pop("otherwise", None)
+
         if block_type == "fixed":
             if "preroll_ids" in block:
                 block["preroll_ids"] = _remap_id_values(

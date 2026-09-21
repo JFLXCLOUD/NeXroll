@@ -147,11 +147,16 @@ class GenreFeatureRemovalTests(unittest.TestCase):
     def test_genre_playback_monitor_is_gone(self):
         self.assertFalse(hasattr(Scheduler(), "_apply_genre_mapping_from_playback"))
 
-    def test_scheduler_module_has_no_genre_references(self):
+    def test_scheduler_module_has_no_genre_mapping_references(self):
+        # Genre is back, deliberately, as a sequence-block condition answered
+        # by the Jellyfin/Emby plugin (see sequence_conditions / media_genres).
+        # What must stay gone is the old Plex genre-mapping chain.
         import backend.scheduler as scheduler_module
 
         with open(scheduler_module.__file__, encoding="utf-8") as handle:
-            self.assertNotIn("genre", handle.read().lower())
+            source = handle.read().lower()
+        for remnant in ("genremap", "genre_map", "_genre_mapping", "recent_genre"):
+            self.assertNotIn(remnant, source)
 
 
 if __name__ == "__main__":

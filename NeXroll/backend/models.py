@@ -239,6 +239,50 @@ class ComingSoonTVTrailer(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class LibraryTrailer(Base):
+    """NeX-Up Library Trailers: a trailer for a movie already in the library.
+
+    Kept apart from ComingSoonTrailer on purpose. Coming Soon trailers are
+    removed once their movie arrives; these exist *because* it has arrived.
+    source 'local' is a trailer file sitting next to the movie, which NeXroll
+    only ever reads; 'download' is one NeXroll fetched into its own library
+    folder, and the only kind it will ever delete.
+    """
+    __tablename__ = "library_trailers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    radarr_movie_id = Column(Integer, index=True)
+    tmdb_id = Column(Integer, index=True, nullable=True)
+    title = Column(String, index=True)
+    year = Column(Integer, nullable=True)
+    genres = Column(Text, nullable=True)  # JSON list of genre names
+    added_to_library = Column(DateTime, nullable=True)  # when Radarr imported the movie
+    source = Column(String, default='download')  # 'local' | 'download'
+    status = Column(String, default='pending')  # 'available' | 'error'
+    error_message = Column(Text, nullable=True)
+    local_path = Column(String, nullable=True)
+    trailer_url = Column(String, nullable=True)
+    file_size_mb = Column(Float, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    poster_url = Column(String, nullable=True)
+    is_enabled = Column(Boolean, default=True)
+    # False once the movie stops matching the Library Trailers filters. The
+    # trailer is kept (and still plays); it is simply first in line to make
+    # room when the download limits are reached.
+    in_selection = Column(Boolean, default=True)
+    downloaded_at = Column(DateTime, nullable=True)
+    last_attempt_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    def genre_list(self):
+        try:
+            value = json.loads(self.genres) if self.genres else []
+            return [str(g) for g in value] if isinstance(value, list) else []
+        except Exception:
+            return []
+
+
 class Setting(Base):
     __tablename__ = "settings"
 
@@ -394,6 +438,8 @@ class Setting(Base):
     nexup_coming_soon_available_days = Column(Integer, default=1)  # Days to show "Available Now!" after download before auto-removing
     nexup_coming_soon_max_available_now = Column(Integer, default=0)  # Max "Available Now!" items to show (0 = no limit)
     nexup_trailer_retention_days = Column(Integer, default=7)  # Days to retain downloaded trailers before auto-deleting (0 = keep forever)
+    # NeX-Up Library Trailers settings, as one JSON object (see backend/library_trailers.py)
+    library_trailers_config = Column(Text, nullable=True)
     
     # Authentication Settings (Optional - for PWA/remote access)
     auth_enabled = Column(Boolean, default=False)  # Master toggle - auth is OPTIONAL
