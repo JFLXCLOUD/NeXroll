@@ -20162,7 +20162,12 @@ const DashboardTiles = {
       });
       setScheduleBuilderSelectedIndex(toIndex);
     };
-    const blockTitle = block => block?.label || ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'Upcoming trailers', library_trailers: 'Library trailers', dynamic_preroll: 'Generated preroll', separator: 'Pause / separator', coming_soon_list: 'Generated preroll' }[block?.type] || 'Sequence block');
+    // Named by type first, falling back to any stored label. Block labels are
+    // written by the presets and are not user-editable, so a label saved by an
+    // older release is a stale copy of this table rather than anything the user
+    // chose - which is why a sequence built before the block was renamed still
+    // read "Upcoming trailers" while a new one said "NeX-Up trailers".
+    const blockTitle = block => ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'NeX-Up trailers', library_trailers: 'Library trailers', dynamic_preroll: 'Generated preroll', separator: 'Pause / separator', coming_soon_list: 'Generated preroll' }[block?.type] || block?.label || 'Sequence block');
     const blockDescription = block => {
       if (block?.type === 'random' || block?.type === 'sequential') return `${categories.find(category => String(category.id) === String(block.category_id))?.name || 'Choose category'} / ${block.type}`;
       if (block?.type === 'fixed') return `${block.preroll_ids?.length || 0} selected preroll${block.preroll_ids?.length === 1 ? '' : 's'}`;
@@ -38552,6 +38557,12 @@ const DashboardTiles = {
                                onClick={() => handleSelectSimilarMatch(match.id, match.title)}
                                style={{
                                  flex: 1,
+                                 // A flex item defaults to min-width:auto, so the
+                                 // community ID - a long URL-encoded path with no
+                                 // spaces - could not shrink and pushed the row
+                                 // wider than the panel, clipping every title and
+                                 // leaving the list scrolling sideways.
+                                 minWidth: 0,
                                  padding: '0',
                                  backgroundColor: 'transparent',
                                  border: 'none',
@@ -38563,29 +38574,36 @@ const DashboardTiles = {
                                  gap: '0.5rem'
                                }}
                              >
-                               <div style={{ flex: 1 }}>
-                                 <div style={{ 
-                                   fontSize: '0.9rem', 
+                               <div style={{ flex: 1, minWidth: 0 }}>
+                                 <div style={{
+                                   fontSize: '0.9rem',
                                    fontWeight: '500',
                                    color: 'var(--text-color)',
-                                   marginBottom: '0.25rem'
-                                 }}>
+                                   marginBottom: '0.25rem',
+                                   overflow: 'hidden',
+                                   textOverflow: 'ellipsis',
+                                   whiteSpace: 'nowrap'
+                                 }} title={match.title}>
                                    {match.title}
                                  </div>
-                                 <div style={{ 
-                                   fontSize: '0.75rem', 
-                                   color: 'var(--text-secondary)'
-                                 }}>
+                                 <div style={{
+                                   fontSize: '0.75rem',
+                                   color: 'var(--text-secondary)',
+                                   overflow: 'hidden',
+                                   textOverflow: 'ellipsis',
+                                   whiteSpace: 'nowrap'
+                                 }} title={`ID: ${match.id}`}>
                                    Confidence: {match.confidence}% • ID: {match.id}
                                  </div>
                                </div>
                                <div style={{
+                                 flexShrink: 0,
                                  padding: '0.25rem 0.5rem',
-                                 backgroundColor: match.confidence >= 70 ? 'rgba(16, 185, 129, 0.15)' : 
-                                                 match.confidence >= 40 ? 'rgba(251, 191, 36, 0.15)' : 
+                                 backgroundColor: match.confidence >= 70 ? 'rgba(16, 185, 129, 0.15)' :
+                                                 match.confidence >= 40 ? 'rgba(251, 191, 36, 0.15)' :
                                                  'rgba(239, 68, 68, 0.15)',
-                                 color: match.confidence >= 70 ? '#059669' : 
-                                        match.confidence >= 40 ? '#d97706' : 
+                                 color: match.confidence >= 70 ? '#059669' :
+                                        match.confidence >= 40 ? '#d97706' :
                                         '#dc2626',
                                  borderRadius: '3px',
                                  fontSize: '0.75rem',
@@ -38599,6 +38617,7 @@ const DashboardTiles = {
                                  type="button"
                                  onClick={() => setCommunityPreviewingPreroll({ id: match.id, title: match.title, url: match.video_url })}
                                  style={{
+                                   flexShrink: 0,
                                    padding: '0.5rem',
                                    backgroundColor: 'rgba(33, 150, 243, 0.1)',
                                    border: '1px solid rgba(33, 150, 243, 0.3)',

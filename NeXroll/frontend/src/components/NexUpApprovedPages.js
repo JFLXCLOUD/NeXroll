@@ -1031,7 +1031,14 @@ function LibraryTrailersPage({ onNavigate }) {
                     {preview.matching === 0
                       ? <strong>No movies in your library match these filters.</strong>
                       : <><strong>{preview.matching} {preview.matching === 1 ? 'movie matches' : 'movies match'}</strong><span>{preview.with_trailer_link} have a trailer link in Radarr. {config.download && config.max_downloads ? `Up to ${config.max_downloads} will be downloaded, ${priority[1].toLowerCase()} first; trailers next to your movies are always included.` : 'Only trailers next to your movies will be used.'}</span></>}
-                    <span className="nx-lt-keep-note">Changing filters never deletes trailers you already have. Ones that no longer match are kept, still play, and are the first replaced when room is needed.</span>
+                    {/* Replacement only ever affects downloads, and only when a
+                        download limit is full. Saying "first replaced" with no
+                        qualifier read as a contradiction of "never deletes",
+                        and was simply wrong with downloads off, where nothing
+                        is ever swapped out. */}
+                    <span className="nx-lt-keep-note">Changing filters never deletes trailers you already have. Ones that no longer match are kept and still play, marked <strong>Outside filters</strong>.{config.download
+                      ? ' They are the first to give way if a download limit later needs the room; trailers next to your movies are never removed.'
+                      : ' With downloads off, nothing is ever swapped out.'}</span>
                   </div>
                   {preview.examples?.length > 0 && (
                     <div className="nx-lt-strip" aria-label="First movies in the selection">
