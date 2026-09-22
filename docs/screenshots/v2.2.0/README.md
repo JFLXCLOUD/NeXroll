@@ -6,6 +6,8 @@ The browser used example API responses for the library, schedules, connections, 
 
 Included views: dashboard, library gallery, schedules, monthly calendar, Generator Studio, and Community Prerolls. The two `readme-preview-*` images show the local Markdown preview in light and dark mode.
 
+`sequence-flow.png` was added later, for 2.2.0-beta.11, and comes from a different source than the rest: it is a frame of the Flow view demo recording, so it carries that recording's caption and its "product demo, sample library" label rather than being a plain browser capture. The sequence, categories, and trailer titles in it are demonstration data. It was reduced to a 256-colour palette to keep it the same weight as the other captures.
+
 These captures illustrate the interface; they are not evidence of live playback, downloads, or backend health. Refresh them if the interface changes before the stable release.
 
 The approved layout is now used in the repository's root `README.md`, starting with 2.2.0-beta.9. It remains labeled as a beta until the stable 2.2.0 release.

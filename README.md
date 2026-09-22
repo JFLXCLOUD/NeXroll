@@ -16,7 +16,7 @@
   </p>
 </div>
 
-> **2.2.0 beta.** This README describes the upcoming 2.2.0 release. [Try 2.2.0-beta.9](https://github.com/JFLXCLOUD/NeXroll/releases/tag/v2.2.0-beta.9), or use the [latest stable release](https://github.com/JFLXCLOUD/NeXroll/releases/latest).
+> **2.2.0 beta.** This README describes the upcoming 2.2.0 release. [Try 2.2.0-beta.11](https://github.com/JFLXCLOUD/NeXroll/releases/tag/v2.2.0-beta.11), or use the [latest stable release](https://github.com/JFLXCLOUD/NeXroll/releases/latest).
 
 NeXroll manages prerolls for **Plex, Jellyfin, and Emby**. Organize your intro videos, build a sequence for movie night, and schedule something different for a holiday or a season. NeX-Up adds trailers from your Radarr and Sonarr libraries, plus tools for creating your own welcome screens, announcements, and Coming Soon videos.
 
@@ -28,6 +28,10 @@ Run it on Windows, in Docker, or on Unraid. Manage everything from your browser.
 
 ## What's new in 2.2.0
 
+- **A sequence that reacts to what's about to play.** A block can play only when a rule holds, with something else in its place when it doesn't. Match the genre of the film that's starting, the time of night, whether a block is a movie or an episode, or whether there are trailers worth showing at all.
+- **Flow view for the sequence builder.** See the whole preshow as a workflow, with conditional blocks drawn as branches, instead of reading it as a list.
+- **Trailers for the movies you already own.** NeX-Up keeps library trailers from Radarr, using trailer files already sitting beside your movies or downloading the rest, so a sequence can run them the way a cinema does.
+- **Use every media server at once.** Connect Plex, Jellyfin, and Emby together. Whatever you schedule applies to all of them.
 - **A clearer view of your setup.** See what's playing, what comes next, and what needs attention. Library filters, schedule controls, and connection pages follow a consistent layout, with navigation that adapts to smaller screens.
 - **Eight themes across the whole app.** Choose Midnight, Daylight, Cinema, Nocturne, Parchment, Terminal, Neon, or Carbon.
 - **NeX-Up Generator Studio.** Create a preroll with a live preview, then adjust the template, text, typeface, colors, timing, and soundtrack. Add your own logo or video backdrop, write a custom message, or include a QR code.
@@ -68,9 +72,21 @@ Create recurring schedules or use a date range for a one-off event. Choose a cat
 
 Combine fixed videos, random selections from categories, and pauses in a saved sequence. Use the same sequence in more than one schedule. Random selections cycle through eligible videos before repeating.
 
+Switch the builder to **Advanced** and a block can decide when it plays. Give it a rule and an alternative: play it only when the film starting is a horror movie, only between 22:00 and 03:00 at weekends, only before films rather than episodes, or only when there are trailers downloaded to show. When the rule isn't met, the block can be skipped or replaced by prerolls from a category or by trailers. A summary reads the whole condition back in plain English.
+
+Genre and movie-or-episode rules work on **Jellyfin and Emby**, which tell NeXroll what is starting at the moment playback begins. Plex is given its preroll list in advance and never says which film is next, so on Plex those blocks play their alternative instead, and the builder shows you which rules each server you've connected can actually answer. One sequence can serve all of them.
+
+**Flow view** draws the same sequence as a workflow rather than a list, with a conditional block shown as a branch: one path when the rule holds, another to whatever plays in its place. Drag blocks to arrange the canvas, and move a block earlier or later in the running order with the arrows. Layout and running order stay separate, so tidying the picture never changes what your viewers see.
+
+![Flow view showing a sequence that plays NeX-Up trailers when trailers are available and falls back to a category when they are not](docs/screenshots/v2.2.0/sequence-flow.png)
+
+Preview the sequence to see which conditional blocks play, which play their alternative, and which are skipped. For genre rules you can preview as Plex or as any genre the sequence uses, so you can check both cases before scheduling it.
+
 ### Bring upcoming releases into the mix
 
 Connect Radarr and Sonarr to NeX-Up to find and download trailers for upcoming movies and TV releases. Choose how many to include, manage the downloaded files, and set when old trailers should be removed.
+
+**Library Trailers** covers the films already in your library, so a sequence can show trailers for what you own the way a cinema shows them before the feature. NeXroll uses trailer files already stored beside your movies, in the naming Plex, Jellyfin, and Emby all recognize, and only ever reads those. For the rest it can download the trailer Radarr has on record. Pick films by hand from your library, or by filters for genre, age rating, language, release year, review scores, how recently they were added, and Radarr tags. Storage and count limits apply to downloads only. On Jellyfin and Emby a library trailers block can match the genre of the film that's starting, and it never picks the trailer for the film about to play.
 
 Use Generator Studio to create a welcome video, an announcement, a QR code screen, or a Coming Soon list with your own presentation style.
 
@@ -99,6 +115,8 @@ The titles and collection names in this screenshot are demonstration content.
 </details>
 
 ## Choose your media server
+
+Connect as many as you run. Plex in the lounge and Jellyfin for the kids can share one NeXroll, and whatever you schedule applies to every server you've connected. A server that is unreachable no longer stops the others getting their prerolls, and the scheduler log names the server so a partial failure reads as one.
 
 | Server | How NeXroll connects |
 | --- | --- |
