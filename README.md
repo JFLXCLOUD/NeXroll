@@ -16,209 +16,93 @@
   </p>
 </div>
 
-> **2.2.0 beta.** This README describes the upcoming 2.2.0 release. [Try 2.2.0-beta.11](https://github.com/JFLXCLOUD/NeXroll/releases/tag/v2.2.0-beta.11), or use the [latest stable release](https://github.com/JFLXCLOUD/NeXroll/releases/latest).
+**NeXroll brings a cinema-style preshow to Plex, Jellyfin, and Emby.** Mix intro videos, trailers, and custom welcome screens into sequences that play before your movies. Keep movie nights fresh with automatic rotation, seasonal schedules, and prerolls from the community.
 
-NeXroll manages prerolls for **Plex, Jellyfin, and Emby**. Organize your intro videos, build a sequence for movie night, and schedule something different for a holiday or a season. NeX-Up adds trailers from your Radarr and Sonarr libraries, plus tools for creating your own welcome screens, announcements, and Coming Soon videos.
+Self-hosted on **Windows, Docker, or Unraid**, with everything managed from your browser.
 
-Run it on Windows, in Docker, or on Unraid. Manage everything from your browser.
+> **2.2.0 beta preview.** The features and screenshots below include the upcoming 2.2.0 release. [Try the beta](https://github.com/JFLXCLOUD/NeXroll/releases/tag/v2.2.0-beta.11) or [download the latest stable release](https://github.com/JFLXCLOUD/NeXroll/releases/latest).
 
 ![The NeXroll dashboard showing the current selection, upcoming schedules, and library activity](docs/screenshots/v2.2.0/dashboard.png)
 
 *Screenshots show the 2.2.0 beta interface with example data and demonstration artwork.*
 
-## What's new in 2.2.0
+## Features at a glance
 
-- **A sequence that reacts to what's about to play.** A block can play only when a rule holds, with something else in its place when it doesn't. Match the genre of the film that's starting, the time of night, whether a block is a movie or an episode, or whether there are trailers worth showing at all.
-- **Flow view for the sequence builder.** See the whole preshow as a workflow, with conditional blocks drawn as branches, instead of reading it as a list.
-- **Trailers for the movies you already own.** NeX-Up keeps library trailers from Radarr, using trailer files already sitting beside your movies or downloading the rest, so a sequence can run them the way a cinema does.
-- **Use every media server at once.** Connect Plex, Jellyfin, and Emby together. Whatever you schedule applies to all of them.
-- **A clearer view of your setup.** See what's playing, what comes next, and what needs attention. Library filters, schedule controls, and connection pages follow a consistent layout, with navigation that adapts to smaller screens.
-- **Eight themes across the whole app.** Choose Midnight, Daylight, Cinema, Nocturne, Parchment, Terminal, Neon, or Carbon.
-- **NeX-Up Generator Studio.** Create a preroll with a live preview, then adjust the template, text, typeface, colors, timing, and soundtrack. Add your own logo or video backdrop, write a custom message, or include a QR code.
-- **More useful calendar views.** Browse schedules by month, week, or day. See filler coverage, open a day for details, and review overlapping schedules and their priorities.
-- **Community browsing improvements.** Filter by category, creator, or platform, and select several prerolls to download together.
-- **Generator API access.** Start a dynamic preroll or Coming Soon render from another tool and check its progress through the External API.
-- **Jellyfin 12 support.** A separate plugin build supports Jellyfin 12, alongside the existing Jellyfin 10.11 build. The connector also uses the authentication header required by Jellyfin 12.
+- **Visual sequences.** Combine intros, trailers, and pauses in a list or Flow view, with conditional branches and fallback selections.
+- **Automatic scheduling.** Plan everyday rotations, holiday themes, and special events, with filler selections between schedules.
+- **A library of your own.** Import, preview, tag, and organize prerolls. Random selections cycle through eligible videos before repeating.
+- **NeX-Up trailers.** Bring in upcoming movie and TV trailers through Radarr and Sonarr, plus trailers for movies already in your Radarr library.
+- **Generator Studio.** Create welcome videos, announcements, QR code screens, and Coming Soon videos with your own text, logo, backdrop, and soundtrack.
+- **Community Prerolls.** Browse, preview, and download videos by category, creator, or platform.
+- **Multiple media servers.** Connect Plex, Jellyfin, and Emby to the same NeXroll installation and share your schedules across them.
+- **Make it yours.** Eight themes, a responsive interface, backup and restore, and an External API for automation.
 
-See the [changelog](NeXroll/CHANGELOG.md) for the full set of changes and fixes.
+## A look inside
 
-## Build your preshow
+### Sequence builder & Flow view
 
-### Keep your collection organized
+Build your preshow visually, from the first intro to the final trailer. Flow view shows each step and its branches, so you can see what plays when a condition is met and what takes its place otherwise. Arrange the canvas without changing playback order, then preview the sequence before scheduling it.
 
-Upload or import prerolls, preview them, and organize them with categories and tags. A video can belong to more than one category. Filters help you find the videos you want without mixing your permanent collection with automatically managed trailers and generator output.
-
-<details>
-<summary>View the preroll library</summary>
-
-![Preroll library with category filters, thumbnails, and video details](docs/screenshots/v2.2.0/library.png)
-
-</details>
-
-### Set the schedule once
-
-Create recurring schedules or use a date range for a one-off event. Choose a category or a saved sequence, set its priority, and decide how it behaves when schedules overlap. Filler provides a selection for the gaps between schedules.
-
-<details>
-<summary>View schedules and the calendar</summary>
-
-![Schedule management with named schedules, timing, and playback rules](docs/screenshots/v2.2.0/schedules.png)
-
-![Calendar showing seasonal selections, individual events, and filler coverage](docs/screenshots/v2.2.0/calendar.png)
-
-</details>
-
-### Put the sequence together
-
-Combine fixed videos, random selections from categories, and pauses in a saved sequence. Use the same sequence in more than one schedule. Random selections cycle through eligible videos before repeating.
-
-Switch the builder to **Advanced** and a block can decide when it plays. Give it a rule and an alternative: play it only when the film starting is a horror movie, only between 22:00 and 03:00 at weekends, only before films rather than episodes, or only when there are trailers downloaded to show. When the rule isn't met, the block can be skipped or replaced by prerolls from a category or by trailers. A summary reads the whole condition back in plain English.
-
-Genre and movie-or-episode rules work on **Jellyfin and Emby**, which tell NeXroll what is starting at the moment playback begins. Plex is given its preroll list in advance and never says which film is next, so on Plex those blocks play their alternative instead, and the builder shows you which rules each server you've connected can actually answer. One sequence can serve all of them.
-
-**Flow view** draws the same sequence as a workflow rather than a list, with a conditional block shown as a branch: one path when the rule holds, another to whatever plays in its place. Drag blocks to arrange the canvas, and move a block earlier or later in the running order with the arrows. Layout and running order stay separate, so tidying the picture never changes what your viewers see.
+Rules can respond to trailer availability, time of day, genre, or whether a movie or episode is starting. **Genre and movie-or-episode rules require Jellyfin or Emby; Plex uses the fallback you choose for those rules.**
 
 ![Flow view showing a sequence that plays NeX-Up trailers when trailers are available and falls back to a category when they are not](docs/screenshots/v2.2.0/sequence-flow.png)
 
-Preview the sequence to see which conditional blocks play, which play their alternative, and which are skipped. For genre rules you can preview as Plex or as any genre the sequence uses, so you can check both cases before scheduling it.
+### Preroll library
 
-### Bring upcoming releases into the mix
+Your collection in one place, with video previews, categories, tags, and filters for finding the right intro for any occasion.
 
-Connect Radarr and Sonarr to NeX-Up to find and download trailers for upcoming movies and TV releases. Choose how many to include, manage the downloaded files, and set when old trailers should be removed.
+![Preroll library with category filters, thumbnails, and video details](docs/screenshots/v2.2.0/library.png)
 
-**Library Trailers** covers the films already in your library, so a sequence can show trailers for what you own the way a cinema shows them before the feature. NeXroll uses trailer files already stored beside your movies, in the naming Plex, Jellyfin, and Emby all recognize, and only ever reads those. For the rest it can download the trailer Radarr has on record. Pick films by hand from your library, or by filters for genre, age rating, language, release year, review scores, how recently they were added, and Radarr tags. Storage and count limits apply to downloads only. On Jellyfin and Emby a library trailers block can match the genre of the film that's starting, and it never picks the trailer for the film about to play.
+### Schedules & calendar
 
-Use Generator Studio to create a welcome video, an announcement, a QR code screen, or a Coming Soon list with your own presentation style.
+Give movie night a different opening throughout the year. Recurring schedules, event dates, priorities, and filler selections keep the preshow changing automatically.
 
-<details>
-<summary>View Generator Studio</summary>
+![Schedule management with named schedules, timing, and playback rules](docs/screenshots/v2.2.0/schedules.png)
+
+Month, week, and day views show what's planned and where schedules overlap.
+
+![Calendar showing seasonal selections, individual events, and filler coverage](docs/screenshots/v2.2.0/calendar.png)
+
+### NeX-Up & Generator Studio
+
+Show trailers for upcoming releases or rediscover movies you already own with Library Trailers. NeX-Up can use existing trailer files or download available trailers through Radarr and Sonarr integrations.
+
+Add a personal touch with custom welcome screens, announcements, and Coming Soon videos. Generator Studio combines templates and a live preview with control over text, colors, timing, and music.
 
 ![NeX-Up Generator Studio with a live preroll preview and presentation controls](docs/screenshots/v2.2.0/generator.png)
 
-</details>
+### Community Prerolls
 
-YouTube can restrict downloads through rate limits, IP blocks, or authentication checks. NeX-Up includes download diagnostics and PO-token support, but it cannot guarantee access to every trailer or remove a YouTube block.
-
-### Find something from the community
-
-Search and browse Community Prerolls by theme, category, creator, or platform. Preview a selection, choose a category, and add it to your library.
-
-Community Prerolls is powered by [TypicalNerds](https://typicalnerds.uk/). A big thank you to TypicalNerds for making the collection available, and to the creators who contribute their prerolls for everyone to enjoy.
-
-<details>
-<summary>View Community Prerolls</summary>
+Find a new opening for your next movie night. Browse the collection, preview videos, and add your favorites straight to your library.
 
 ![Community browsing with filters and a list of example prerolls](docs/screenshots/v2.2.0/community.png)
 
-The titles and collection names in this screenshot are demonstration content.
+Powered by [TypicalNerds](https://typicalnerds.uk/). Thank you to TypicalNerds and the creators who share their work with the community.
 
-</details>
+## Works with your setup
 
-## Choose your media server
-
-Connect as many as you run. Plex in the lounge and Jellyfin for the kids can share one NeXroll, and whatever you schedule applies to every server you've connected. A server that is unreachable no longer stops the others getting their prerolls, and the scheduler log names the server so a partial failure reads as one.
-
-| Server | How NeXroll connects |
+| Media server | Integration |
 | --- | --- |
-| **Plex** | Updates the server's preroll selection from your active schedule or filler settings. Plex needs access to the video files through paths it can read. |
-| **Jellyfin** | The NeXroll Intros plugin requests the current selection when Jellyfin asks for intros. Install the plugin build that matches your Jellyfin server version. |
-| **Emby** | The NeXroll Intros plugin requests intros from NeXroll. Configure it for the movies or episodes you want to include. |
+| **Plex** | Updates your server's preroll selection from active schedules and filler. [Connection guide](docs/wiki/Connect.md) |
+| **Jellyfin** | Delivers intros through the NeXroll Intros plugin, with builds for Jellyfin 10.11 and 12. [Plugin guide](docs/wiki/Jellyfin.md) · [Jellyfin 12](Plugins/NeXroll.Jellyfin12/README.md) |
+| **Emby** | Delivers movie and episode intros through the NeXroll Intros plugin. [Plugin guide](docs/wiki/Emby.md) |
 
-Plex's preroll setting is shared across the server. Playback-triggered changes are best effort, and a change may wait while a movie is playing. Jellyfin and Emby use their plugin intro flow; playback behavior also depends on the client.
+Plex uses a shared server-wide preroll setting; playback-triggered changes are best effort. Jellyfin and Emby request intros at playback time, with support depending on the client. See [path mapping](docs/wiki/Path-Mappings.md) for media access requirements.
 
-Setup guides: [Plex and connections](docs/wiki/Connect.md), [Jellyfin](docs/wiki/Jellyfin.md), [Jellyfin 12 plugin](Plugins/NeXroll.Jellyfin12/README.md), [Emby](docs/wiki/Emby.md).
+## Get NeXroll
 
-## Install NeXroll
+- **Windows:** [Download the installer](https://github.com/JFLXCLOUD/NeXroll/releases) for Windows 10 or 11 (64-bit).
+- **Docker:** [Docker setup](docs/wiki/Docker.md), with AMD64 and ARM64 images.
+- **Unraid:** Find **NeXroll** in Community Applications.
 
-### Windows
+Open the WebUI on port **9393** and follow the setup wizard. The [getting started guide](docs/wiki/Getting-Started.md) covers your first connection and preroll.
 
-1. Download the Windows installer from [GitHub Releases](https://github.com/JFLXCLOUD/NeXroll/releases).
-2. Run the installer and choose where to keep your prerolls. You can also install the Windows service and tray app.
-3. Open `http://localhost:9393` and follow the setup wizard.
+## Learn more & get involved
 
-Windows 10 or 11, 64-bit, is supported. You do not need to install Python. FFmpeg is used for thumbnails and video generation; see the [installation guide](docs/wiki/Installation.md) for setup options.
+[Documentation](docs/wiki/Home.md) · [What's new](NeXroll/CHANGELOG.md) · [Sequences](docs/wiki/Sequences.md) · [NeX-Up](docs/wiki/NeX-Up.md) · [External API](docs/wiki/API.md) · [Troubleshooting](docs/wiki/Troubleshooting.md)
 
-### Docker
+Questions or ideas? Join [Discord](https://discord.gg/R9eH7TbxEk) or [r/NeXroll](https://www.reddit.com/r/NeXroll/), or report a bug on [GitHub Issues](https://github.com/JFLXCLOUD/NeXroll/issues).
 
-Create a `compose.yaml` file:
+If NeXroll adds something to your movie nights, [support its development on Ko-fi](https://ko-fi.com/j_b__). Thank you to everyone who contributes, shares feedback, or helps other users.
 
-```yaml
-services:
-  nexroll:
-    image: jbrns/nexroll:latest
-    container_name: nexroll
-    ports:
-      - "9393:9393"
-    environment:
-      TZ: America/New_York
-      NEXROLL_DB_DIR: /data
-      NEXROLL_SECRETS_DIR: /data
-      NEXROLL_PREROLL_PATH: /data/prerolls
-    volumes:
-      - ./nexroll-data:/data
-      - /path/to/prerolls:/data/prerolls
-      - /path/to/trailers:/data/nexup_trailers
-    restart: unless-stopped
-```
-
-Replace the host paths and timezone with your own, then run:
-
-```bash
-docker compose up -d
-```
-
-Open `http://YOUR_SERVER:9393`. If you use the separate trailer folder above, set NeX-Up's storage path to `/data/nexup_trailers`.
-
-The Docker image supports AMD64 and ARM64. The `latest` tag follows stable releases; `beta` follows prereleases. See the [Docker guide](docs/wiki/Docker.md) for permissions and additional configuration.
-
-### Unraid
-
-Find **NeXroll** in Community Applications. Set the app-data, preroll, and optional trailer paths, check your timezone, then open the WebUI and complete setup.
-
-### Check your file paths
-
-A successful connection does not mean the media server can read your videos. For Plex, map NeXroll's paths to the paths visible inside Plex's own container or service. For example, `/data/prerolls` in NeXroll might be `/media/prerolls` in Plex.
-
-Jellyfin and Emby plugins can use mapped local paths or download intros through NeXroll's streaming URL. Make sure the plugin can reach NeXroll and has access to its cache location.
-
-Read the [path-mapping guide](docs/wiki/Path-Mappings.md) if the connection works but prerolls do not play.
-
-## Start with one movie night
-
-1. Connect your media server in **Connect**.
-2. Add a few videos to **Library** and put them in a category.
-3. Create a schedule, or use the category as your filler selection.
-4. Start a movie from the beginning on your usual playback client and check the full preroll-to-movie flow.
-5. Add sequences, seasonal schedules, or NeX-Up when you're ready.
-
-## Updating and backups
-
-Create a backup in **Settings > Backup & Restore** before updating.
-
-On Windows, run the newer installer over your existing installation. For Docker:
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-Keep your existing data volumes and media folders. See [backup and restore](docs/wiki/Backup-and-Restore.md) for moving an installation or restoring a backup.
-
-## Help and documentation
-
-- [Getting started](docs/wiki/Getting-Started.md)
-- [Scheduling](docs/wiki/Scheduling.md) and [sequences](docs/wiki/Sequences.md)
-- [NeX-Up](docs/wiki/NeX-Up.md)
-- [External API](docs/wiki/API.md)
-- [Troubleshooting](docs/wiki/Troubleshooting.md)
-- [Building from source](docs/wiki/Building-from-Source.md)
-
-For support, join [Discord](https://discord.gg/R9eH7TbxEk) or [r/NeXroll](https://www.reddit.com/r/NeXroll/). Report reproducible bugs through [GitHub Issues](https://github.com/JFLXCLOUD/NeXroll/issues), with your NeXroll version, installation type, media server and client versions, and relevant logs. Remove tokens and API keys before sharing.
-
-## Support NeXroll
-
-If NeXroll adds something to your movie nights, you can [support its development on Ko-fi](https://ko-fi.com/j_b__). Donations help support continued development and maintenance. Thank you to everyone who contributes, shares feedback, or helps other users get set up.
-
-## License
-
-NeXroll is released under the [MIT License](LICENSE). Third-party components and community media retain their own licenses and usage terms.
+Released under the [MIT License](LICENSE). Third-party components and community media retain their own licenses and usage terms.
