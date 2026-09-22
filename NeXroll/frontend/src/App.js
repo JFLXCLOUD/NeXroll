@@ -245,9 +245,14 @@ const isNexUpTrailerPreroll = (preroll) => {
   // Match on the path as well as the category. A trailer picked up by the
   // folder scanner before NeX-Up categorises it has no category yet, so a
   // category-only test let freshly downloaded trailers through the filter.
-  // Trailers live under the NeX-Up storage folder in movies/ or tv/.
+  // Trailers live under the NeX-Up storage folder in movies/, tv/ or library/.
+  // library/ holds Library Trailers, the ones for films already in the
+  // library. Those have no category of their own at all - nothing creates a
+  // preroll category for them - so the path is the only thing identifying
+  // them, and without it they were the one kind of downloaded trailer that
+  // still showed up in the grid by default.
   const path = String(preroll.path || '').toLowerCase().replace(/\\/g, '/');
-  if (/\/nexup\/(movies|tv)\//.test(path)) return true;
+  if (/\/nexup\/(movies|tv|library)\//.test(path)) return true;
   return prerollCategoryNames(preroll).some(n => NEXUP_TRAILER_CATEGORIES.includes(n));
 };
 
