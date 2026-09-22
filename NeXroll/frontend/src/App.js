@@ -16,7 +16,7 @@ import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import NexUpApprovedPages from './components/NexUpApprovedPages';
 import { captureDynamicPrerollFrame, drawThemeBackdropFrame, fontStackFor, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
-import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
+import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount, sequenceHasUnsavedChanges } from './utils/sequenceValidator';
 import {
   buildBlendBothChanges,
   buildRecurrencePattern,
@@ -8663,6 +8663,14 @@ const DashboardTiles = {
                   setPreviewingSequence({ name: editingSequenceName || 'Sequence preview', blocks: sequenceBlocks });
                   setShowSequencePreviewModal(true);
                 }}><Play size={15} /> Preview</button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={discardSequenceEdits}
+                  title={editingSequenceId === null
+                    ? 'Leave the builder without saving this sequence'
+                    : 'Leave without saving, keeping the version in your library'}
+                ><X size={15} /> Cancel</button>
               </>
             )}
             {activeTab === 'schedules/library' && (
@@ -34735,6 +34743,36 @@ const DashboardTiles = {
     setEditingSequenceName(sequence.name || ''); // Load sequence name
     setEditingSequenceDescription(sequence.description || ''); // Load sequence description
     setActiveTab('schedules/builder');
+  };
+
+  const sequenceBuilderIsDirty = () => {
+    const args = [sequenceBlocks, editingSequenceName, editingSequenceDescription];
+    if (editingSequenceId === null) return sequenceHasUnsavedChanges(...args, null);
+    const saved = savedSequences.find(sequence => String(sequence.id) === String(editingSequenceId));
+    if (!saved) return true; // Deleted underneath us; treat as unsaved work.
+    return sequenceHasUnsavedChanges(...args, saved);
+  };
+
+  // Leave the builder without saving. The editor had no way out other than
+  // saving: walking away through the sidebar left the edited blocks and
+  // editingSequenceId sitting in state, so reopening the builder resumed an
+  // edit that looked abandoned, and the next save wrote it over the original.
+  const discardSequenceEdits = async () => {
+    if (sequenceBuilderIsDirty()) {
+      const confirmed = await showConfirm(
+        editingSequenceId === null
+          ? 'Discard this sequence? It has not been saved to your library.'
+          : `Discard your changes to "${editingSequenceName || 'this sequence'}"? The saved version stays as it is.`,
+        { title: 'Discard changes', type: 'danger', confirmText: 'Discard' }
+      );
+      if (!confirmed) return;
+    }
+    setSequenceBlocks([]);
+    setEditingSequenceId(null);
+    setEditingSequenceName('');
+    setEditingSequenceDescription('');
+    setScheduleBuilderSelectedIndex(0);
+    setActiveTab('schedules/library');
   };
 
   // Clean and validate sequence blocks before using them

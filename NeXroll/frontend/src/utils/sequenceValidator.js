@@ -379,6 +379,37 @@ export const cloneSequenceWithIds = (sequence) => {
   }));
 };
 
+/**
+ * Does the builder hold anything the library doesn't have yet?
+ *
+ * Blocks are compared through stringifySequence, which sanitizes first, so the
+ * client-only ids cloneSequenceWithIds stamps on every block at load time do
+ * not read as an edit. Editor geometry (flow_positions) does survive that
+ * sanitize, so moving a node on the flow canvas counts as a change — it is
+ * saved with the sequence, so leaving without saving would lose it.
+ *
+ * @param {Array} blocks - blocks currently in the builder
+ * @param {string} name - name currently in the builder
+ * @param {string} description - description currently in the builder
+ * @param {Object|null} saved - the saved sequence being edited, or null for a
+ *   sequence that has never been saved
+ * @returns {boolean}
+ */
+export const sequenceHasUnsavedChanges = (blocks, name, description, saved) => {
+  const currentName = (name || '').trim();
+  const currentDescription = (description || '').trim();
+
+  if (!saved) {
+    return (Array.isArray(blocks) && blocks.length > 0)
+      || currentName.length > 0
+      || currentDescription.length > 0;
+  }
+
+  return stringifySequence(blocks) !== stringifySequence(saved.blocks || [])
+    || currentName !== (saved.name || '').trim()
+    || currentDescription !== (saved.description || '').trim();
+};
+
 const sequenceValidatorExports = {
   validateSequence,
   validateBlock,
@@ -389,6 +420,7 @@ const sequenceValidatorExports = {
   getSequenceSummary,
   estimatePrerollCount,
   cloneSequenceWithIds,
+  sequenceHasUnsavedChanges,
 };
 
 export default sequenceValidatorExports;
