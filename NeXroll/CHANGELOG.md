@@ -1,6 +1,15 @@
 ﻿# Changelog
 
-<!-- Stable 2.2.0 release preparation: use the user-approved README-2.2.0-draft.md and refreshed screenshots. Complete docs/RELEASE_PLAN_v2.2.0.md before tagging stable; keep this pending during beta. -->
+<!-- Stable 2.2.0 release preparation: complete docs/RELEASE_PLAN_v2.2.0.md before tagging stable. The README was rewritten directly for 2.2.0, so README-2.2.0-draft.md is no longer the source to use. At tag time the [2.2.0] entry below still needs its release date and a Highlights section promoting beta.1 through beta.11, and those beta entries then move to CHANGELOG-ARCHIVE.md, the way 2.0.0 did. -->
+
+## [2.2.0] - unreleased
+
+> Fixes found after beta.11, folded into the stable release.
+
+### Fixed
+
+- **The sequence editor had no way out except saving it.** Opening a saved sequence from Schedules > Library put you in the builder with Save as the only exit. Leaving through the sidebar looked like it abandoned the edit, but nothing cleared it: the changed blocks stayed in memory, still pointing at the original sequence, so reopening the builder resumed an edit you thought you had dropped and the next save wrote it over the version in your library. Cancel now sits beside Import and Preview, clears the editor and returns you to the library, asking first when there is unsaved work. Moving a block on the Flow canvas counts as unsaved work, because that layout is saved with the sequence.
+- **Downloaded library trailers filled up the preroll library.** The grid already holds back downloaded trailers, but it recognised them by a path under the NeX-Up storage folder in `movies/` or `tv/`, and Library Trailers download to `library/`. Unlike Coming Soon trailers they have no category of their own either, so the path was the only thing identifying them, which left them the one kind of downloaded trailer still listed by default. They now sit behind the same show-hidden control as the rest, and are counted in the library header alongside them.
 
 ## [2.2.0-beta.11] - 09-20-2026 (beta)
 
