@@ -24,6 +24,8 @@ Search and browse are powered by a **local index** of the community library, so 
 
 ## Searching
 
+The **Include AI-generated** option controls whether Community content from `/AI/` appears while browsing. Since 2.2.0, downloaded AI entries also display the **AI-generated** badge in [your Library](Preroll-Library#filtering) and its edit modal, using their saved Community source. Hiding AI in Community browsing does not hide or disable files you already downloaded.
+
 1. Type a term in the **search box** (matches titles and keywords, with synonym expansion — e.g. "halloween" also finds "spooky", "pumpkin").
 2. Optionally pick a **platform** (Plex / Jellyfin / Emby) to narrow results.
 3. Press **Enter** or click **Search**.

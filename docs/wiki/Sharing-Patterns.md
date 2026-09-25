@@ -4,6 +4,12 @@ NeXroll allows you to share your sequences with others through the **Export/Impo
 
 ## Export Modes
 
+### Rating and availability compatibility
+
+Since 2.2.0, exports preserve trailer age-rating restrictions and availability-pool choices, including trailer alternatives under **Otherwise**. Import into 2.2.0 or later; an older release cannot be relied upon to enforce the restrictions.
+
+**This / next trailer block** follows playback order on the receiving install. Each install checks its own enabled trailers, files, and rating metadata, so matching availability can differ. A pattern does not supply missing trailer ratings or guarantee that the recipient has matching trailers. See [NeX-Up upgrade metadata](NeX-Up#rating-metadata-after-upgrading).
+
 When exporting a sequence, choose the export format:
 
 ### Pattern Only (~5KB)

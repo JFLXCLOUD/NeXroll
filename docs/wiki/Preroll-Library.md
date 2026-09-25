@@ -15,6 +15,8 @@ Use the **Preview panel** toggle to open an inspector on the right. It plays the
 
 ### Filtering
 
+Since 2.2.0, prerolls linked to the Community library's `/AI/` directory show the same **AI-generated** badge in Library grid/list views, the preview panel and the edit modal. Existing downloads with their Community link already receive the badge; no new download is needed. Renaming or moving the local file to another category does not remove it. The label comes from the saved Community source, not an analysis of the video or its filename. Unlinking that source removes the label; files without a Community source are not automatically classified.
+
 The command row filters by category, tag, and free text. Two filters are worth knowing:
 
 - **Show/hide NeX-Up trailers** — trailers can outnumber your actual prerolls, so this hides them without deleting anything.

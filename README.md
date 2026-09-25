@@ -20,11 +20,9 @@
 
 Self-hosted on **Windows, Docker, or Unraid**, with everything managed from your browser.
 
-> **2.2.0 beta preview.** The features and screenshots below include the upcoming 2.2.0 release. [Try the beta](https://github.com/JFLXCLOUD/NeXroll/releases/tag/v2.2.0-beta.11) or [download the latest stable release](https://github.com/JFLXCLOUD/NeXroll/releases/latest).
-
 ![The NeXroll dashboard showing the current selection, upcoming schedules, and library activity](docs/screenshots/v2.2.0/dashboard.png)
 
-*Screenshots show the 2.2.0 beta interface with example data and demonstration artwork.*
+*Screenshots show NeXroll 2.2.0 with example data and demonstration artwork.*
 
 ## Features at a glance
 
@@ -43,7 +41,7 @@ Self-hosted on **Windows, Docker, or Unraid**, with everything managed from your
 
 Build your preshow visually, from the first intro to the final trailer. Flow view shows each step and its branches, so you can see what plays when a condition is met and what takes its place otherwise. Arrange the canvas without changing playback order, then preview the sequence before scheduling it.
 
-Rules can respond to trailer availability, time of day, genre, or whether a movie or episode is starting. **Genre and movie-or-episode rules require Jellyfin or Emby; Plex uses the fallback you choose for those rules.**
+Rules can respond to trailer availability, time of day, genre, whether a movie or episode is starting, or the audio format stored in the file. Trailer blocks can be limited to the age ratings you choose. **Genre, movie-or-episode and audio-format rules require Jellyfin or Emby; Plex uses the fallback you choose for those rules.**
 
 ![Flow view showing a sequence that plays NeX-Up trailers when trailers are available and falls back to a category when they are not](docs/screenshots/v2.2.0/sequence-flow.png)
 

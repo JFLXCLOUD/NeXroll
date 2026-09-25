@@ -4,6 +4,32 @@ NeXroll's scheduling system allows you to automatically change which prerolls pl
 
 ## Schedule Types
 
+Choose the recurrence separately from whether a schedule is Exclusive or Blend:
+
+| Type | When it runs |
+|---|---|
+| **Daily** | Each day within its saved first/last dates and optional daily hours |
+| **Weekly** | Selected weekdays within its saved date limits and optional daily hours |
+| **Monthly** | Selected months and days of the month, within saved date limits and optional daily hours |
+| **Yearly** | A recurring month/day window each year, with optional daily hours |
+| **Holiday** | A linked holiday occurrence, or the saved fixed dates of an older unlinked holiday schedule |
+
+> **New in 2.2.0:** Next-run calculation, calendar intervals, and playback now use consistent timing rules. The following upgrade behavior includes these fixes.
+
+### Yearly windows
+
+Choose the first and last **month and day**, such as December 1 through December 25. A window can cross New Year, such as December 20 through January 5. The old stored year used to represent these dates does not expire the schedule. Optional daily hours restrict playback inside the seasonal window.
+
+A February 29-only window runs in leap years. A wider season containing February 29 still runs on its valid dates in other years; the missing day does not disable the whole season. Review the next occurrence and calendar after saving. You do not need to delete and recreate an older Yearly schedule to repair its next-run date.
+
+### Monthly and Holiday timing
+
+Monthly keeps its actual first and last active dates. A day that does not exist in a month is skipped rather than moved to a different day. Older Monthly schedules that omitted month/day filters retain their meaning: an omitted filter means all months or all days, not an automatically selected single date.
+
+Monthly and Holiday expose optional daily start/end hours and retain them through editing. Linked holidays keep their selected future first year as dates refresh; older fixed-date holidays remain editable.
+
+## Exclusive and Blend behavior
+
 ### Exclusive Mode
 When a schedule is **Exclusive**, it takes complete control — only prerolls from that schedule's category will play.
 
@@ -54,7 +80,7 @@ This is great for theater-style experiences (e.g., Coming Soon intro → random 
 - **Start Time**: Hour when schedule activates (24-hour format)
 - **End Time**: Hour when schedule deactivates
 - Supports overnight ranges (e.g., 10pm-3am = 22:00-03:00)
-- **Timezone**: Uses your configured timezone (set in Settings or via `TZ` environment variable)
+- **Timezone**: Uses the timezone saved in NeXroll Settings; check this even when Docker's `TZ` is configured
 
 **Example: Adult Swim Style**
 - Start Time: 22:00 (10pm)
@@ -155,7 +181,7 @@ Don't leave schedules active indefinitely. Set clear end dates, especially for h
 Before a schedule goes live, check the Calendar view to ensure it appears when expected.
 
 ### 4. Configure Timezone
-**Critical for Docker users!** Set the `TZ` environment variable to your local timezone:
+Set the timezone in **NeXroll Settings**. Docker users can also set `TZ` for the container, but it does not replace checking NeXroll's saved timezone:
 ```yaml
 environment:
   - TZ=America/New_York
@@ -174,6 +200,16 @@ The Dashboard shows real-time scheduler status:
 - **Next Change**: When the next schedule change occurs
 - **Currently Showing**: What category is currently applied to Plex/Jellyfin
 
+## Upgrading existing schedules to 2.2.0
+
+Take a [backup](Backup-and-Restore#before-you-upgrade) before upgrading. Startup migration refreshes compatible recurrence representations and next-run metadata while retaining schedule identity, content, priority, enabled state, and history. It does not require recreating schedules. Imported/restored schedules also receive refreshed next-run dates.
+
+First/last date limits and daily hours remain in force. Overnight occurrences belong to the day they start and appear across both calendar days. Next-run metadata is refreshed for paused and lower-priority schedules too; a computed next occurrence does not enable a paused schedule or make it win a conflict.
+
+Malformed saved timing is retained for repair and reported instead of silently becoming an all-day schedule. You can pause it, correct the timing in the editor, then save and re-enable it. Review any repair warning and the calendar after upgrading.
+
+Saved sequences keep their existing behavior unless you add the new [rating restrictions and availability conditions](Advanced-Sequences#trailers-available). When a new restricted sequence has no matches, NeXroll does not substitute unrelated category prerolls; explicitly configured other blocks and blend partners can still play.
+
 ## Troubleshooting
 
 ### Schedule Not Activating
@@ -183,8 +219,8 @@ The Dashboard shows real-time scheduler status:
 4. Verify timezone is set correctly
 
 ### Wrong Time Activation
-- **Docker users**: Set `TZ` environment variable
-- **Windows users**: Check system timezone
+- Check the timezone saved in **NeXroll Settings** on either platform
+- Check Docker `TZ` or the Windows timezone separately if other timestamps also look wrong
 - Check **Settings → Logs** for scheduler activity
 
 ### Overlapping Schedules Conflict

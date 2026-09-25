@@ -15,6 +15,17 @@
 
 ## What's New in v2.2.0
 
+### New in the stable release
+
+- **Dashboard shortcuts and Library Trailers card:** conflict indicators open resolution directly; the new card shows local/downloaded trailer counts and starts Library Trailers sync. See [Dashboard](Dashboard#conflict-shortcuts).
+- **Favorite pages:** use the sidebar star to save shortcuts that follow your signed-in user across devices. See [Favorites](Favorites).
+- **Trailer rating restrictions:** choose allowed ratings per upcoming or library trailer block. Existing sequences keep their behavior; older trailers receive available ratings on their next NeX-Up sync. See [Sequences](Sequences#trailer-blocks-and-age-ratings).
+- **Source-specific availability:** condition a Coming Soon or Now Available intro on Upcoming, Library, or the exact filters of **This / next trailer block**. See [Advanced Sequences](Advanced-Sequences#coming-soon-followed-by-now-available).
+- **Schedule reliability and migration:** corrected Yearly recurrence, consistent Daily/Weekly/Monthly next-run dates, preserved older schedules, and clearer invalid-timing repair. See [Scheduling](Scheduling#upgrading-existing-schedules-to-220).
+- **Live system health:** an unreachable media server shows Unhealthy with a reason, with automatic refresh and recovery. See [Dashboard](Dashboard#media-server-health-in-220).
+- **Minimum Library Trailer targets:** try to keep a mix such as two G/PG and five horror trailers within the existing download limits, with overlap counted once and shortfalls reported. See [NeX-Up](NeX-Up#minimum-trailer-targets).
+- **Stored audio-format conditions:** choose a demo based on the default/only track or any stored track in Jellyfin/Emby. Unknown metadata uses Otherwise. This does not identify the viewer's selected or transcoded audio. See [Advanced Sequences](Advanced-Sequences#stored-audio-format-jellyfin--emby).
+
 ### Scheduling
 
 - **Holiday schedules land on the actual holiday.** Dates are derived from the next upcoming occurrence when you save, and roll into next year once this year's has passed. Country and holiday are now pickers showing what will really resolve, instead of free text matched by exact name.

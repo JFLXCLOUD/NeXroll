@@ -180,9 +180,58 @@ Add a **Library trailers** block in the [Sequence Builder](Sequences). Choose:
 
 - **How many** trailers, **shuffled** or **newest in your library first**
 - **Only these genres** (optional), to limit the block to, for example, horror
+- **Restrict age ratings** (2.2.0 and later), to allow only selected ratings in this block
 - **Same genre as the movie that's starting** (Jellyfin & Emby), to pick trailers that share a genre with the movie about to play. Plex doesn't say which movie is starting, so on Plex trailers come from the whole selection.
 
-The trailer for the movie that's about to play is never picked for it. A Library trailers block can also be a condition's **Otherwise**; see [Advanced Sequences](Advanced-Sequences).
+Jellyfin/Emby can exclude the feature's own trailer when its TMDB identity is available. Plex does not provide the playing movie's identity. Same-genre selection is a preference: when no genre matches, it falls back within the block's other restrictions. A Library trailers block can also be a condition's **Otherwise**; see [Advanced Sequences](Advanced-Sequences).
+
+### Rating metadata after upgrading
+
+> The sequence rating controls and source-specific availability conditions are new in **2.2.0**.
+
+NeX-Up records movie/show certifications supplied by Radarr and Sonarr. Upgrading adds space for this metadata without changing existing sequences or redownloading files. Older trailers initially have no stored rating; their next normal provider-backed NeX-Up sync refreshes available metadata, including retained library trailers when downloads are disabled or the download limit is full.
+
+If a restricted block unexpectedly plays nothing:
+
+1. Sync the relevant upcoming or library trailer pool.
+2. Confirm that its source title has a rating in Radarr/Sonarr.
+3. Check the block's allowed ratings and that matching trailers are enabled, ready, and present on disk.
+
+Missing ratings require explicitly selecting **Unrated**. Manual uploads and titles absent from the provider may remain unrated. Unsupported international certifications remain distinct from Unrated. Selecting no ratings while restriction is enabled intentionally matches nothing.
+
+The certification describes the film or show, not a separately reviewed trailer. See [Sequences](Sequences#trailer-blocks-and-age-ratings) for the complete behavior.
+
+### Download selection versus playback filters
+
+Library Trailers' **Which movies** filters choose which movies enter the pool. A sequence block's rating filter chooses what can play from that pool. Different sequences can therefore use different ratings from the same pool.
+
+Use **Minimum trailer targets** to try to keep that mixture. These targets are available for Library Trailers from 2.2.0; they do not change the Upcoming movie/TV downloader. To condition an intro on Jellyfin/Emby stored audio metadata, see [Stored audio format](Advanced-Sequences#stored-audio-format-jellyfin--emby). These sequence rules are independent of trailer download targets.
+
+### Minimum trailer targets
+
+Below **Which movies**, the full-width **Download limits & targets** section groups **Capacity & rotation** on the left and **Minimum trailer targets** on the right. On narrower screens they stack in that order. The outside-filter cleanup notice sits below both groups.
+
+For example, to keep up to 25 downloaded trailers with at least two G/PG trailers and five horror trailers:
+
+1. Open **NeX-Up > Library Trailers** and choose your movie selection.
+2. Under **Download limits & targets > Capacity & rotation**, set **Maximum downloaded trailers** to **25 trailers** and choose a storage limit.
+3. Click **Add minimum target**. Leave **Age ratings**, select **G** and **PG**, and set **At least** to **2**.
+4. Add another target, choose **Genres**, select **Horror**, and set **At least** to **5**.
+5. Click **Save changes**, then **Sync now**, or let the next automatic NeX-Up refresh apply it.
+
+Each target matches **any** of its selected values. G/PG with minimum two means two combined, not two of each. A PG horror trailer counts toward both targets and is downloaded only once. Enabled, ready local trailers within your movie selection also count toward targets without consuming download slots.
+
+Unmet targets take priority over **Download first**; overlapping and scarcer targets are preferred, and remaining slots use the chosen ordering. Targets never expand your filters or hand-picked selection. Disabled trailers, missing files, and trailers outside the current selection do not satisfy a target. The certification comes from Radarr; unknown international ratings are not treated as Unrated for targets.
+
+**Current pool for these choices** shows available versus requested counts and matching movies before saving. **Targets at last sync** shows the actual result, including shortfalls. Counts refresh after syncs and trailer toggles. A movie matching a target does not guarantee that its trailer can be downloaded.
+
+Targets are best effort. Download/storage limits take precedence; incompatible targets, missing trailers, retry delays, and protected downloads can leave a shortfall. A sync can finish successfully while some targets remain unmet. NeXroll reports that rather than exceeding your configured retained-download limits. Replacements are downloaded before old files are removed, so temporary disk space for the incoming file is still needed.
+
+With targets enabled, NeXroll waits for a usable replacement that fits the limits before removing a working download. Routine weekly rotation preserves target counts already met. Repairing an unmet target may replace a newer download; pinned **Always include** movies remain protected from those replacements. Lowering a hard download/storage limit can still force removals, even if a target becomes unmet. Trailers next to movies are never deleted by quota replacement.
+
+You can save up to 12 targets. With downloads off, targets only report existing availability and no downloads are rotated out. Remove all targets to restore the original rotation behavior. Existing installations start with no targets, and saved targets travel with Library Trailers settings in backups.
+
+Pool targets are not playback restrictions. Use a sequence block's [age-rating filter](Sequences#trailer-blocks-and-age-ratings) when only certain ratings should play; do not rely on pool composition to enforce that selection.
 
 ## YouTube Downloads (Cookie-Free)
 
@@ -407,6 +456,10 @@ For full control, use the Sequence Builder directly:
 
 #### Block Types
 
+For trailers, use **NeX-Up trailers** for upcoming content and **Library trailers** for movies you own. Both support per-block rating restrictions from 2.2.0. Generic category blocks do not apply trailer-rating filters.
+
+To condition a Coming Soon or Now Available intro on the appropriate filtered trailer block, follow the [four-block recipe](Advanced-Sequences#coming-soon-followed-by-now-available).
+
 **Random Block**
 - Pulls random prerolls from a category
 - Perfect for: "Play 2 random movie trailers"
@@ -422,8 +475,8 @@ For full control, use the Sequence Builder directly:
 | Order | Type | Configuration |
 |-------|------|---------------|
 | 1 | Fixed | "Coming Soon to [Server Name]" dynamic intro |
-| 2 | Random | 2 from "Movie Trailers" category |
-| 3 | Random | 1 from "TV Trailers" category |
+| 2 | NeX-Up trailers | Movies only, count 2, optional rating restriction |
+| 3 | NeX-Up trailers | TV only, count 1, optional rating restriction |
 
 **Result**: Your custom intro plays, followed by 2 random movie trailers and 1 TV trailer.
 

@@ -88,6 +88,16 @@ Moving between Windows and Docker works, but paths will differ. The restore keep
 
 Take a Database Backup. It is small, quick, and contains every setting — enough to put a fresh install back the way it was.
 
+### Upgrading to 2.2.0
+
+Existing schedules and saved sequences are migrated in place. Next-run metadata is refreshed while schedule identity, content, priority, enabled state, and history are retained. Review [Scheduling](Scheduling#upgrading-existing-schedules-to-220) for older Monthly/Yearly behavior and timing that needs repair.
+
+Existing trailer blocks remain unrestricted, and existing availability conditions keep checking the upcoming pool. Older trailers receive available rating metadata on the next normal provider-backed NeX-Up sync; they are not redownloaded just to add ratings. See [NeX-Up](NeX-Up#rating-metadata-after-upgrading).
+
+Sequence backups and exports retain new rating restrictions and availability choices. Restore or import them into 2.2.0 or later; earlier versions cannot be relied upon to enforce new restrictions. Keep a pre-upgrade backup if you may need to return to the previous release.
+
+Library Trailer minimum targets are part of its saved settings and therefore travel with database/system configuration backups. They are not included in a sequence pattern: each receiving install chooses its own pool targets and download limits. Older settings without targets keep the original selection and rotation behavior.
+
 ---
 
 ## Troubleshooting
@@ -109,3 +119,7 @@ Expected when moving between machines. It means a folder from the source install
 - [Path Mappings](Path-Mappings)
 - [Docker Setup](Docker)
 - [Troubleshooting](Troubleshooting)
+
+### Stored audio conditions
+
+Audio rules are optional fields in existing sequence block JSON; no audio-specific database migration is required. Saved sequences, schedule sequences, exports and backups retain those fields. Existing schedules/sequences without audio rules keep their behavior. Restore or import audio-conditioned sequences into 2.2.0 or later; older releases cannot evaluate them. See [Stored audio format](Advanced-Sequences#stored-audio-format-jellyfin--emby).

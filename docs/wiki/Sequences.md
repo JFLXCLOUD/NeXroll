@@ -8,6 +8,9 @@ A sequence is a reusable preroll playlist that you build from blocks. Each block
 
 - **Random blocks** — Pick random prerolls from a category
 - **Fixed blocks** — Specific prerolls in a specific order
+- **NeX-Up trailers** — Downloaded upcoming movie or TV trailers
+- **Library trailers** — Trailers for movies you already own
+- **Generated preroll** — A generated intro or Coming Soon list
 
 When a sequence is applied to Plex (or used by a schedule), NeXroll resolves the blocks into actual preroll paths.
 
@@ -47,15 +50,40 @@ The prerolls play in the exact order you add them.
 
 ## Building a Sequence
 
+### Trailer blocks and age ratings
+
+> **New in 2.2.0:** Age-rating restrictions are available in the builder.
+
+Add a **NeX-Up trailers** or **Library trailers** block from the block library. Choose the trailer count and order; NeX-Up also lets you choose movies, TV, or both. Library trailers can filter by genre and prefer the genre of the movie starting on Jellyfin/Emby.
+
+To restrict the block:
+
+1. Enable **Restrict age ratings** under **Age ratings**.
+2. Select every allowed rating, such as **G** and **PG**.
+3. Save the sequence. The choices remain when you reopen it or switch between List and Flow.
+
+The filter applies before trailers are selected. Fewer matching trailers means fewer play; NeXroll does not fill the remainder with disallowed ratings. An enabled restriction with no ratings selected plays no trailers. Turn the restriction off to allow every rating again.
+
+Missing ratings are excluded unless you select **Unrated**. Older trailers receive available ratings from Radarr/Sonarr on their next normal NeX-Up sync. Manual uploads or titles no longer present in their provider may remain unrated. Other international certifications are not relabeled Unrated and will not match the built-in rating choices.
+
+Ratings describe the film or show, not an independent review of the trailer. This setting restricts the trailer pool; it does not automatically match the rating of the feature being played. Plex uses one applied list for all movies.
+
+To show a Coming Soon or Now Available intro only when matching trailers follow, use [source-specific availability conditions](Advanced-Sequences#trailers-available).
+
+Existing sequences remain unrestricted until you add a rating restriction. Export/import retains restrictions, including those on an **Otherwise** trailer block. Import into a version that supports these controls; older releases cannot enforce them.
+
+To keep enough matching trailers in your library pool, configure [minimum trailer targets](NeX-Up#minimum-trailer-targets). Targets guide which trailers NeX-Up downloads; this block's rating restriction still decides which of them may play.
+
 ### Step 1: Add Blocks
 
 1. Click **Add Block** 
-2. Choose the block type (Random or Fixed)
+2. Choose the block type from the block library
 3. Configure the block settings
 
 ### Step 2: Arrange Blocks
 
-- **Drag and drop** blocks to reorder them
+- In List view, **drag and drop** blocks to reorder them
+- In Flow view, dragging changes layout only; use the step arrows to change playback order
 - Use the **up/down arrows** to move blocks
 - Click the **trash icon** to delete a block
 - Click a block to **edit** its settings
@@ -166,11 +194,11 @@ When a sequence is applied:
 4. All resolved preroll paths are combined
 5. The path string is sent to Plex via the API
 
-**Plex receives**: A semicolon-separated list of preroll file paths
+**Plex receives**: A comma-separated list of preroll file paths for sequential playback. Semicolons represent random alternatives in Plex and would not play the full sequence in order.
 
 Example:
 ```
-/prerolls/logo.mp4;/prerolls/christmas/snow.mp4;/prerolls/christmas/tree.mp4
+/prerolls/logo.mp4,/prerolls/christmas/snow.mp4,/prerolls/christmas/tree.mp4
 ```
 
 ## Example Sequences
@@ -190,8 +218,8 @@ Example:
 | Block | Type | Configuration |
 |-------|------|---------------|
 | 1 | Fixed | "Coming Soon" dynamic intro |
-| 2 | Random | 2 from Movie Trailers category |
-| 3 | Random | 1 from TV Trailers category |
+| 2 | NeX-Up trailers | Movies only, count 2, optional rating restriction |
+| 3 | NeX-Up trailers | TV only, count 1, optional rating restriction |
 
 **Result**: Your custom intro, followed by 2 random movie trailers and 1 TV trailer.
 
@@ -238,3 +266,13 @@ Example:
 - Each sequence needs at least one block
 - Random blocks need a valid category selected
 - Fixed blocks need at least one preroll selected
+
+### A restricted trailer block plays nothing
+
+Check that at least one rating is selected, then sync the relevant NeX-Up trailer pool to refresh older metadata. Matching trailers must be enabled, ready, and present on disk. See [NeX-Up](NeX-Up#rating-metadata-after-upgrading).
+
+An intentionally empty restricted sequence clears the old Plex list and does not fall back to the active category on Jellyfin/Emby. Other explicit blocks or blend schedules can still provide content.
+
+## Audio demo conditions
+
+From 2.2.0, switch the builder to Advanced and add **Stored audio format** to a demo block. Jellyfin/Emby can check the default/only stored track or any stored track; Plex and unknown metadata use Otherwise. See [the full workflow and playback limits](Advanced-Sequences#stored-audio-format-jellyfin--emby).

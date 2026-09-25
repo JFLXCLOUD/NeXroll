@@ -228,3 +228,7 @@ If NeXroll's event log says it is returning the full sequence, including trailer
 | Enable for Episodes | `true` | Play intros before TV episodes |
 | Max Intros | `0` | Maximum number of prerolls per playback session (`0` = unlimited — plays the whole active sequence) |
 | Timeout Seconds | `5` | Network timeout when contacting NeXroll server |
+
+## Stored audio-format intros
+
+Since 2.2.0, an Advanced sequence condition can choose a demo using the title's stored default/only audio track or any stored track. The existing NeXroll Intros plugin supplies the item identity; this feature does not require a plugin update. The rule does not know the viewer's selected track or transcoded output. Unknown metadata uses Otherwise. See [the setup recipe and format limits](Advanced-Sequences#stored-audio-format-jellyfin--emby).

@@ -18,6 +18,7 @@
 ### Using NeXroll
 
 * [Dashboard](Dashboard)
+* [Favorites](Favorites)
 * [Preroll Library](Preroll-Library)
 * [Scheduling Guide](Scheduling)
 * [Sequences](Sequences)
