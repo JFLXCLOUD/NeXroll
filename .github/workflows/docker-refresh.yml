@@ -45,7 +45,9 @@ jobs:
             --jq '[.[] | select(.isDraft == false)] | sort_by(.publishedAt) | reverse' > releases.json
 
           STABLE_TAG=$(jq -r '[.[] | select(.isPrerelease == false)][0].tagName // empty' releases.json)
-          BETA_TAG=$(jq -r '[.[] | select(.isPrerelease == true)][0].tagName // empty' releases.json)
+          STABLE_AT=$(jq -r '[.[] | select(.isPrerelease == false)][0].publishedAt // empty' releases.json)
+          PRE_TAG=$(jq -r '[.[] | select(.isPrerelease == true)][0].tagName // empty' releases.json)
+          PRE_AT=$(jq -r '[.[] | select(.isPrerelease == true)][0].publishedAt // empty' releases.json)
 
           if [ -z "$STABLE_TAG" ]; then
             echo "No stable release found; nothing to do for :latest" >&2
@@ -54,17 +56,22 @@ jobs:
           echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
           echo "Latest stable: $STABLE_TAG"
 
-          # :beta always tracks the newest prerelease, independent of whether
-          # a stable release has since shipped — :latest and :beta are two
-          # independently-tracked floating tags.
-          if [ -n "$BETA_TAG" ]; then
-            echo "beta_tag=$BETA_TAG" >> "$GITHUB_OUTPUT"
-            echo "build_beta=true" >> "$GITHUB_OUTPUT"
-            echo "Latest prerelease: $BETA_TAG"
+          # :beta tracks the newest prerelease while one is newer than the
+          # latest stable, and follows the stable release otherwise. Once a
+          # beta cycle ships as stable, its prereleases may be deleted; the
+          # newest remaining prerelease is then from an older cycle, and
+          # rebuilding :beta from it would roll beta users back onto code
+          # older than the database they have already migrated. ISO 8601
+          # timestamps compare correctly as strings.
+          if [ -n "$PRE_TAG" ] && [[ "$PRE_AT" > "$STABLE_AT" ]]; then
+            BETA_TAG="$PRE_TAG"
+            echo "Latest prerelease: $BETA_TAG (newer than $STABLE_TAG)"
           else
-            echo "build_beta=false" >> "$GITHUB_OUTPUT"
-            echo "No prerelease found — skipping :beta refresh"
+            BETA_TAG="$STABLE_TAG"
+            echo "No prerelease newer than $STABLE_TAG; :beta follows stable"
           fi
+          echo "beta_tag=$BETA_TAG" >> "$GITHUB_OUTPUT"
+          echo "build_beta=true" >> "$GITHUB_OUTPUT"
 
   refresh-latest:
     needs: resolve-refs
@@ -109,7 +116,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout latest prerelease
+      - name: Checkout the ref :beta tracks
         uses: actions/checkout@v5
         with:
           ref: ${{ needs.resolve-refs.outputs.beta_tag }}
