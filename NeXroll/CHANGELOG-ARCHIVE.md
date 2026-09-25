@@ -1,8 +1,501 @@
 # Changelog archive
 
-Release notes for NeXroll 2.0.0-beta.15 and earlier. These are kept for
+Release notes for the NeXroll betas that led to 2.2.0 (2.1.0-beta.1 through
+2.2.0-beta.11), and for 2.0.0-beta.15 and earlier. These are kept for
 reference only and are not shipped with the application; the current
 changelog lives in [CHANGELOG.md](CHANGELOG.md).
+
+## [2.2.0-beta.11] - 09-20-2026 (beta)
+
+> A sequence can now decide what to play from what is actually about to happen -
+> the genre of the film starting, the time of night, whether there are trailers
+> worth showing at all - and you can draw it as a workflow instead of a list.
+> NeXroll also keeps trailers for the movies you already own, so a sequence can
+> run them the way a cinema does. Plus the reason a Radarr sync played the same
+> trailer in front of every film.
+
+### Added
+
+- **Conditions on any block, in Advanced mode.** A switch at the top of the Sequence Builder adds a Conditions section to every block: the block plays **when** a rule holds, or **unless** it does, and you choose what plays **otherwise** - skip the block, play from a category, or play NeX-Up trailers. Four rules ship with it. **Trailers available** counts exactly what a trailer block would play, so a Coming Soon slide can drop out of the sequence when there is nothing coming. **Time of day** takes a window and optionally the days it applies to, and handles a window running past midnight the way schedules already do. **Genre** matches what is about to start against genres suggested from your own Jellyfin and Emby libraries. **Movie or episode** separates films from TV. Rules combine with **all** or **any**, and a summary reads the whole thing back in plain English. Conditions apply in the Sequence Builder, in a sequence built inside a schedule, and in filler, and they survive export, backup and restore.
+- **Every rule is honest about the server it runs on.** Jellyfin and Emby ask NeXroll what to play at the moment playback starts, so every rule is checked live against the title that is actually starting. Plex is handed a list in advance and never says which film it is about to play, so genre can't be known there - and rather than guess, NeXroll treats an unanswerable rule as not met and plays the block's Otherwise. Trailer and time rules do work on Plex, re-checked every 10 minutes. Blocks using a rule only Jellyfin and Emby can answer are labelled as such in the list, in block settings and on the canvas, and the builder shows a panel spelling out what each server can check. One sequence therefore serves a household running Plex in the lounge and Jellyfin for the kids without building it twice.
+- **Flow view: the sequence as a workflow.** The second switch draws the same blocks as a node canvas running left to right from playback starting to the film starting. Pan, zoom, a minimap for long sequences, and add a block from the **+** on any connection. Dragging a node moves it on the canvas and nothing else: playback order is changed deliberately, with the earlier and later arrows beside the selected step, so tidying the layout can never quietly reorder what your viewers see. Arrows on the connections show the running order, **Auto arrange** puts everything back, and where you place things is remembered with the sequence, separately for Simple and Advanced. A conditional block becomes an **IF** node with a green *true* branch to the block and a dashed orange *false* branch to its Otherwise, rejoining afterwards. It stays one sequence seen two ways, so you can switch back and forth freely, and both switches are remembered.
+- **Preview shows what each viewer will actually get.** Preview checks conditions as if a film were starting now and lists every conditional block as playing, playing its alternative, or skipped, with the reason. For a sequence using genre rules, **Preview as** switches between Plex, where the genre is unknown, and each genre the sequence uses, so you can check both cases before you schedule it.
+- **Library Trailers: trailers for the movies you already own.** A NeX-Up section of its own, kept deliberately apart from Coming Soon - those trailers exist until a film arrives, these exist because it has. It uses trailer files already sitting beside your movies, in the naming Plex, Jellyfin and Emby all use, and never moves or deletes them; for the rest it can download from the link Radarr holds. Choose films by hand from a poster wall of your library, or by filters that combine genres, age ratings, language, release years, IMDb and Rotten Tomatoes scores, how recently they were added and Radarr tags, with quick presets for family night, horror night, critically acclaimed and classics. Storage and count limits apply only to downloads, and once a limit is reached each sync rotates a few of the oldest out for films that have none yet. Changing your filters never deletes a trailer you already have.
+- **A Library trailers block.** Play a set number, shuffled or newest first, optionally limited to certain genres, and on Jellyfin and Emby matched to **the same genre as the film that's starting** - so a horror film opens with trailers for other horror films you own. The trailer for the film about to play is never picked for it.
+
+### Fixed
+
+- **Trailers downloaded by the NeX-Up automatic sync never played.** The scheduler recorded each download without a status, so the row kept the database default of `pending` while the file itself downloaded perfectly. Every part of NeX-Up that picks a trailer asks for `downloaded` ones, so the scheduler's trailers were passed over: a library synced only on the schedule had a pool of nothing, and one synced by hand once played that single trailer in front of every film while dozens of valid ones sat on disk. The files were real and reachable throughout - the sync also files each one into your preroll library, which is why they looked fine everywhere except the place that chose between them. Both the movie and the TV sync now record the download properly, and NeXroll repairs the existing records on its next start, so the full pool comes back without any manual database work. The log names how many it recovered. This dates back to the release NeX-Up first shipped in, which means every automatically synced trailer since then has been inert on any install older than 2.2.0-beta.1. Thanks to @noahphex for tracking it to the line.
+- **Automatically synced trailers were missing their artwork and details.** The same records were also written without a poster, backdrop, description, IMDB id or release type, all of which the manual and full-sync paths save. The generated Coming Soon list draws the poster, so an automatically synced film appeared there as an empty tile beside the ones added by hand. On the TV side the season number and network were dropped too. They are all kept now.
+- **The repair for stuck trailers could promote a half-finished download.** Since 2.2.0-beta.1 NeXroll has mended these records on startup, but it swept in trailers marked as still downloading and never checked the file was really there - so an interrupted download became a trailer NeXroll considered ready to play, and a part-written file could end up in front of a film. The repair now requires the file to exist on disk and leaves an in-progress download alone.
+- **An automatically synced TV trailer was never cleaned up after the show aired.** The pass that expires trailers for shows that have already premiered only looked at records marked `downloaded`, so the ones left `pending` by the bug above were skipped and accumulated. Fixing the status fixes their expiry with it.
+
+## [2.2.0-beta.10] - 09-16-2026 (beta)
+
+> The dashboard told Jellyfin and Emby users their server was not connected while
+> the Connections page, the Servers tile and the scheduler all agreed it was. Then a
+> week of automated beta testing against Jellyfin 12, Jellyfin 10.11 and Emby found
+> more of the same: a plugin the app needs but never tells you how to install, a
+> sequence quietly playing fewer blocks than it shows, a save that looks like a
+> dropped click, and a library that counts items it then refuses to list.
+
+### Fixed
+
+- **The dashboard reported "No media server is connected" on a perfectly healthy Jellyfin or Emby.** The System health tile decided whether a server was connected by reading the API key column on the settings row, but nothing puts a key there: `/jellyfin/connect` and `/emby/connect` persist only the address and hand the key to the secure store, and `_migrate_legacy_api_keys()` clears the column on every startup for any older install that still had one. The check could therefore never pass. It cost 30 of the 100 health points, so an otherwise flawless install opened on a score of 70, a red banner saying prerolls could not be applied, and a Servers tile beside it naming the server, address and version it was connected to. Plex was affected too wherever the connection was made through `/plex/connect`, which nulls the token column by the same design. Connection state is now resolved from the secure store as well as the database, and a registered plugin counts on its own, so a plugin-only Emby with no stored address reads as connected rather than missing. Nothing was ever actually wrong with the affected servers: the scheduler reads its credentials from elsewhere and had been applying schedules to them throughout.
+- **Links that named a setting dropped you at the top of the Settings page.** "Enable fallback filler" appears on the Schedules banner, the dashboard tile and the schedule draft; three of the four went to Settings and left you to scroll past a 400-entry timezone list to find the control you had just clicked a link for. A scroll-and-highlight helper already existed and one link used it - all four do now.
+- **The schedule wizard accepted a blank start date for three steps, then refused it.** You could leave Timing empty, complete Content and Behavior, and only learn on the final Create click that a date was required - from a small toast that did not point back, on a step whose field carried no required marker. Each step is now checked as you leave it, and the date is marked required where it genuinely is (monthly schedules do not need one).
+- **"Generated videos" in the Preroll Generator did nothing.** It scrolled to the Recent section, which renders nothing when the current tab has no output, so the click silently found no target. It now scrolls when there is something to show and otherwise says whether the videos are on the other tab or nothing has been generated yet.
+- **"Choose storage" looked like a button and was not.** The badge naming the one thing blocking rendering was a plain label, while the control sat on another page with nothing linking to it. It now takes you there.
+- **Forgetting your password could strand you with no visible way back in.** NeXroll has always been able to reset an admin password with no login, from the machine it runs on. But the "Forgot password?" link was only shown when the browser was on that same machine - and almost nobody browses to their own server that way - so a locked-out user saw a sign-in box with no recovery of any kind and reasonably concluded there was none. A beta tester lost a full day to exactly this. The link is now always shown; from another computer it explains that the reset has to run on the server and gives the exact command, including the Docker form. The reset itself stays restricted to the local machine, which is what makes it safe to describe. The wiki's Locked Out section, which previously only suggested using a second admin account, now documents it as well.
+- **The Library advertised more prerolls than it would list.** The header counted every row in the database while the grid hides NeX-Up generator output by default, so a library of six with four generated items read "Total prerolls 6" above a list of two. Testers reported this three sessions running as the "All" filter undercounting. The header now counts what the list will actually show - "2 of 6" - and names the hidden ones on hover. An earlier attempt only handled the case where the list came out completely empty, which is why it survived.
+- **"Last backup" always said "Ready".** Nothing recorded when a backup was taken; the value was a literal string where a date belongs, so it read as a fact and told you nothing. Producing a backup now stamps the time, and the page shows it - or "No backup yet" on an install that has never taken one.
+- **The dashboard kept claiming "Gap filler active" after Fallback Filler was switched off.** The badge read a property of the category, which stays true regardless, rather than the setting that actually controls filler. On a seasonal setup that implied Halloween content could still be served in November.
+- **The Connections page opened on Plex even when you run Jellyfin or Emby, hiding the plugin setup entirely.** The server tab defaulted to Plex and only changed if you clicked a card's name - and a card that is already connected shows a Disconnect button where a disconnected one shows "Setup", so nothing suggested the card was a way in. Everything behind that panel was therefore unreachable for the people who needed it most, including the NeXroll Intros plugin's detect-and-configure step, which is the only way to make prerolls play on Jellyfin or Emby. A beta tester installed the plugin successfully, saw it Active in Jellyfin, and still could not link it across two sessions with the app fully searched and the wiki checked. The page now opens on the server you actually have connected, a connected card offers "Settings & plugin" alongside Disconnect, and picking a tab yourself is never overridden.
+- **Every dashboard tile told assistive technology its contents were disabled.** The tiles are drag-sortable, and dnd-kit marks a sortable `aria-disabled="true"` when sorting is off - which is the normal state, outside Arrange mode. Those attributes were spread onto the tile regardless, so a screen reader announced "Refresh data", "Scan files" and every other control inside a tile as a disabled control, and anything else honouring ARIA refused to operate the dashboard at all. A tile that merely is not draggable right now is not a disabled control, so it no longer claims to be one. Mouse users were unaffected, which is why this survived so long.
+- **Connecting to Emby or Jellyfin accepted any API key at all.** Both checked only that the server answered on its public info endpoint, which needs no credentials, so an invented key returned "Connected successfully" and was saved - and the user found out when nothing ever played. Both now prove the key against an authenticated endpoint and say plainly that the server rejected it, while an unreachable server is still reported as unreachable rather than as a bad key.
+- **"Clear Prerolls When Inactive" named Plex on installs that have never used Plex.** It now names your media server generically, as Coexistence Mode beside it already did.
+- **Time-of-day schedules ran against UTC instead of your own clock.** A "kid-friendly before 8pm" rule stayed active all evening while the rule meant to replace it never started - on a US Eastern install the scheduler was four hours out, and further for anyone else. The cause was two `settings` rows where there should only ever be one: about twenty places create the row with a `if not setting: create` check, and on a fresh database a first page load fires enough endpoints at once that two of them can both find nothing and both insert. Startup wrote the container's `TZ` into one row; the scheduler read the other, which still held the `UTC` column default. Duplicate settings rows are now merged back into one at startup, keeping the most recently written values and recovering anything only the discarded row had, after which the existing TZ detection lands on the single surviving row. Anyone affected is repaired on the next restart, and the timezone is worth checking in Settings afterwards. A latent crash in that same TZ check - `a and not b or c` binding as `(a and not b) or c`, so an install with no settings row at all raised instead of skipping - is fixed too.
+- **Jellyfin's plugin repository URL appeared nowhere in NeXroll.** beta.9 published update catalogs so the Intros plugin could keep itself current, but the URL existed only in the wiki and the repository's own README. A Jellyfin user inside the app was told they needed the plugin, offered a manual ZIP, and never told where the catalog was - so the plugin could not be installed the supported way, and prerolls never played. The Install the Plugin panel now leads with the repository URL and a copy button, picking the Jellyfin 12 or 10.11 catalog to match the server it is actually talking to, with the manual DLL steps kept as a fallback.
+- **Emby said "Direct connection" while nothing could play.** Emby plays prerolls only through the NeXroll Intros plugin, so a connected server with no plugin puts nothing on screen. The Connections page called that state "Direct connection", which reads as success; it now reads "Connected - plugin not detected" and, when no plugin has checked in, explains what to install, where Emby's Cinema Mode settings are, and that "Include trailers from my movies in my library" must be ticked or Emby ignores the intros NeXroll registers.
+- **The What's New dialog printed an internal release-planning note to every user.** The changelog is rendered as markdown by a renderer that does not emit raw HTML, so an HTML comment at the top of the file was displayed as ordinary prose, naming internal working files. HTML comments are now stripped before the changelog is served, which also keeps notes-to-self safe to write in the file.
+- **Two red Plex error banners appeared for people with no Plex server.** `/plex/status` reports `not_configured` for anyone who has never set Plex up, and the Connections page rendered that as an error - so a working Emby connection sat directly above two failures. A never-configured Plex is the normal state on the page whose job is to configure it, and is no longer reported as a problem.
+- **The sequence preview silently dropped any block it could not fill.** A NeX-Up trailers block between two fixed prerolls simply vanished from playback, renumbering the blocks after it, so a three-block sequence played as two with no error, no notice, and the block still sitting in the editor looking configured. The preview now names the blocks it skipped and why.
+- **A NeX-Up trailers block claimed trailers it did not have.** The block summary showed the count it asks for as though it were the count available, so a block read "2 trailers" on an install with none downloaded - and then played as nothing. It now reads "up to 2 trailers".
+- **An empty sequence reported "~1m" and "1 variation".** A floor of one was applied before checking whether there were any blocks at all.
+- **"Create schedule" left you on a blank form.** The schedule was created, but the wizard cleared itself in place, which is indistinguishable from a click that did nothing - and invites a second click and a duplicate schedule. Saving now lands on My Schedules, where the new schedule is.
+- **A library holding only generated prerolls looked empty.** The grid hides NeX-Up output by default while the header counts it, so a library whose only item was a generated Coming Soon list showed "1 preroll" above "No prerolls found". The empty state now says how many generated items are hidden and offers to show them.
+- **"1 item need attention".**
+- **A Plex that was down took Jellyfin and Emby down with it.** NeXroll reaches media servers two opposite ways: Plex is a push, where NeXroll writes paths into Plex's own preroll setting and that call can fail, while Jellyfin and Emby pull, their plugin asking NeXroll what to play at the moment of playback. Both were collapsed into one true/false answer, so an unreachable Plex reported failure and the filler, blend and sequence paths then skipped recording which category was active - the very state the plugin reads. The category marker the plugin uses was worse: it was only ever written on the branch taken when Plex was absent entirely, so a household running Plex alongside Jellyfin got a correct Plex and a Jellyfin stuck on whatever it last heard. Each channel now reports for itself, applying succeeds if any server took it, and clearing reaches both - a cleared Plex used to leave Jellyfin still advertising the old category. The scheduler log now names the server, because "apply failed" says nothing useful once more than one is configured.
+- **The sequence builder invented its own numbers.** Estimated duration was two minutes per block and variations were twelve per block, regardless of what the blocks contained. Two fixed clips totalling 23 seconds were announced as "4m 10s", a single deterministic block claimed twelve variations, and an empty builder said "0 blocks / estimated 1m 0s". Both figures now come from the actual blocks and your library: an estimate resting on content chosen at playback time is marked with a tilde rather than implying a measurement, and a sequence that plays identically every time reports one variation.
+- **A negative trailer count saved without complaint.** The field carried `min="1"`, which a browser treats as advice, so typing -5 stored -5 and the sequence reopened as Ready. It clamps on input now, like the blocks either side of it.
+- **Path Mappings looked mislabelled to anyone not on Plex.** The page is headed "(Plex)" and genuinely is Plex-only - Plex plays prerolls from its own filesystem and needs a path it can resolve, while the plugin streams the file to Jellyfin and Emby and never sees one. Rather than relabel a correct heading, the page now says so when Plex is not connected.
+- **The password reset instructions named the wrong port.** The recovery panel printed `localhost:9393` literally, so anyone whose container maps a different port was handed a command that reaches nothing on their own machine. It takes the port from the address you are already on, and says a `docker exec` needs the container's internal port instead.
+- **A successful trailer download announced itself twice.** The server returns a full sentence and the toast dropped it into the slot meant for the title, producing `Downloaded trailer for "Downloaded trailer for The Love Hypothesis"`.
+- **"1 blocks".**
+- **A generated preroll in a sequence never played on Jellyfin or Emby.** Reported by a user whose three-block sequence - generated preroll, trailer, library preroll - always started at the trailer. The plugin endpoint that Jellyfin and Emby read resolved that block from `template` and `theme`, while the sequence builder records the `filename` of the video you pinned, so the block matched nothing and was dropped without an error; the same sequence played correctly on Plex, which reads the filename. Underneath that, the name it reconstructed was wrong in every version: the generator writes `<template>_preroll.mp4` and never puts the theme in the filename, so the older `<template>_<theme>_preroll.mp4` lookup could not match a real file even when the block did carry both. Sequences built in earlier releases therefore lost their generated block silently. Both paths now look for the filename first and the shape the generator actually produces second, and say in the log what they tried when a generated preroll is missing.
+- **The Library said "2 of 7" and never explained the other five.** Generated prerolls and downloaded trailers are hidden from the list by default, which is reasonable, but the list said nothing about it unless it happened to be completely empty. With the "All" filter selected, a library of seven items showed two rows and a header counting seven - reported four times across three sessions as the All filter undercounting. The list now says "2 prerolls — 5 more hidden", and the count is a button that shows them.
+- **Typing a NeXroll address without the "#" led somewhere strange.** `/dashboard` served a separate hand-written admin page with its own styling and its own path-mapping controls - a stale parallel NeXroll that people reasonably took for the product. Every other page address returned a bare JSON 404, which reads as a broken install rather than a mistyped URL. Both now land in the app.
+- **NeXroll insisted on exactly one media server.** Connecting a second was refused at the button ("Disconnect Jellyfin first"), and any setup that got past that was reported as a *conflict*: the Apply button greyed out, the dashboard tile turned red, and the Connect page told you to disconnect all but one. Nothing in the backend ever required it - the scheduler pushes to Plex and serves Jellyfin and Emby through the plugin independently - so a household with Plex in the lounge and Jellyfin for the kids was being made to choose for no reason. Connect as many as you run: whatever you schedule now applies to all of them, and the pages name the servers instead of calling them a conflict.
+- **Emby users had no in-app way to install the plugin they cannot play prerolls without.** Emby plays prerolls only through the NeXroll Intros plugin, and the panel that explains that linked to GitHub's raw view of the default branch - asking a media server that often has no outbound internet to fetch a DLL that tracks `main` rather than the build it is running beside. Jellyfin has been served its plugin by the running NeXroll since beta.9; Emby now is too, with the panel checking first so it falls back to the GitHub link rather than offering a download that 404s.
+
+## [2.2.0-beta.9] - 09-11-2026 (beta)
+
+### Added
+
+- **A separate Jellyfin 12 plugin build.** NeXroll Intros 1.15.0.0 targets Jellyfin 12 and .NET 10. The existing 1.14.0.0 package remains available for Jellyfin 10.11. The release workflow packages both variants with distinct filenames.
+- **Jellyfin plugin update repositories.** Separate catalogs for Jellyfin 12 and 10.11 support automatic plugin updates. Existing manual installs need the one-time migration described in the plugin repository guide.
+
+### Fixed
+
+- **Valid Jellyfin API keys could be reported as lacking permission on Jellyfin 12.** NeXroll sent the legacy token headers that Jellyfin 12 disables by default. The connector now uses the supported `Authorization` header when connecting, loading saved keys, migrating legacy keys, and saving replacement keys. This fixes connector authentication; Jellyfin 12 also requires the separate compatible plugin build for preroll playback.
+
+### Changed
+
+- **Updated NeXroll branding throughout the interface.** The sidebar, sign-in screen, and first-run setup now use the new icon beside the original wordmark, with matching light and dark theme logos. New asset URLs prevent old cached logos from carrying over after an update, and the fallback browser favicon now matches the app icon.
+- **A refreshed GitHub README.** Updated UI screenshots, setup guidance, TypicalNerds community credit, and Ko-fi support links introduce the upcoming 2.2.0 release.
+
+## [2.2.0-beta.8] - 09-08-2026 (beta)
+
+> Endpoints for the NeX-Up generators, so a dynamic preroll or a Coming Soon list can be
+> rendered without opening the interface. Two External API endpoints that raised 500 on
+> every call are fixed. The Library's quick filters now show what clicking them will
+> actually return, and Community Browse says when its filters are loading or why they
+> cannot load at all. The header no longer breaks apart on a folded phone, and NeXroll
+> now ships a real app icon at every size a launcher, browser tab or home screen asks for.
+
+### Added
+
+- **The NeX-Up generators are reachable from the External API.** `POST /external/nexup/dynamic` and `POST /external/nexup/coming-soon` render server-side through FFmpeg, so they work headless. Rendering a five second preroll takes around two minutes, well past most client and proxy timeouts, so these return `202` with a job id and `GET /external/nexup/jobs/{id}` reports progress. On success the job carries the `preroll_id` of the registered file, ready to pass to `POST /external/schedules`. `GET /external/nexup/capabilities` lists the templates, themes and limits the render endpoints accept, and `GET /external/nexup/generated` lists what has been produced.
+- **One render runs at a time.** The generators write a fixed filename per template and per layout, so concurrent renders would fight over the same output file.
+- **Generating over the API no longer changes the interface's saved generator settings.** The values are restored after the render unless `save_as_default=true` is passed; clicking Generate in the interface still saves them, as before.
+- **A proper app icon set.** The manifest previously advertised the wide NeXroll wordmark as a square marked `any maskable`, so launchers cropped it, and the Apple touch icon tags named sizes the files did not have. The set is now exported from a glyph master: `any` and `maskable` are declared separately, the maskable art stays inside the W3C safe zone, there is a 180px Apple touch icon, and a multi-resolution ICO covers browser tabs and Windows shortcuts. Existing installed shortcuts may need removing and adding again to clear the operating system's icon cache.
+- **`/docs`, `/redoc` and `/openapi.json` group the supported endpoints.** All 284 routes previously sat undifferentiated under a bare title, with the ones meant for integrators buried among the interface's own. The External API and API Keys endpoints are now tagged and described.
+
+### Fixed
+
+- **`GET /external/schedules` returned 500 on every call**, and `GET /external/active-schedules` did the same as soon as any schedule was active. Both read `schedule_type` and `enabled` off the database row, but those are the request-schema names; the columns are `type` and `is_active`.
+- **A dynamic preroll generated through the FFmpeg path was never registered in the library**, so the file existed on disk with no library row and nothing that could schedule it. The Coming Soon generator had always registered its output.
+- **The Library's "Uncategorized" quick filter counted prerolls it then refused to show.** The count came from the raw library while the grid hides NeX-Up generator output and downloaded trailers, and "uncategorized" is not one of those categories, so the exemption never applied — a library whose uncategorized files were all NeX-Up ones showed a count and then an empty grid. Every quick filter now counts through the same visibility rules the grid uses.
+- **A quick filter could offer a category with nothing in it**, landing on an empty grid whatever you did. Empty categories are no longer offered.
+- **"All" did not mean all.** The search box feeds the same filter state the chips do, but All neither cleared it nor accounted for it, so a search with no matches left "All" highlighted over an empty grid with nothing to say why.
+- **Community Browse showed no filters until you interacted with the page.** They were loaded as a side effect of the Fair Use check, which runs at most once per page load and only if that check is still pending when Community is first opened; anything that made it miss left the card absent for the session. They now load whenever the page is open, and the card says whether it is loading, or why it cannot load — a community index past its refresh age cannot be read, which previously removed the card silently.
+- **The Matched quick filter did not reset the others**, so its count described the whole library while the grid showed the intersection. It now behaves like every other chip in the row and carries a count.
+- **The header came apart on a folded phone.** On a cover screen around 320 to 344 pixels wide, the account controls grew taller than the fixed header and the avatar wrapped onto a line below it, overlapping the page. The header now grows to fit on narrow screens, its controls meet the 44 pixel minimum touch target, and below 480 pixels the health badge moves to its own row with its text intact rather than being reduced to a coloured dot. Library and NeX-Up summary tiles drop to two columns on narrow screens instead of forcing the page wider than the screen.
+- **"1 prerolls".**
+
+### Changed
+
+- **The API wiki page documented an authentication header the server does not accept.** `Authorization: Bearer` returns 401; the server reads `X-Api-Key` or an `api_key` query parameter. The Troubleshooting page gave the same wrong header as the fix for a key that will not work. The API page also documented eight endpoints that do not exist, among them `GET /version`, `GET /settings` and `POST /settings/test-plex`; each now points at the route that replaced it.
+
+## [2.2.0-beta.7] - 09-06-2026 (beta)
+
+> Almost every number and date the interface showed about your schedules was
+> arrived at a different way in each place that showed it, and several of them
+> were wrong. Conflicts are counted once, from the list the Conflicts page
+> actually renders. Daily and weekly schedules work out when they next run.
+> The Upcoming tile stops saying everything is playing now. Coexistence Mode
+> says when it has switched filler off instead of leaving it silently
+> outranked, and the faded watermark is visible again. A preroll change held
+> back while Plex is playing now says so, rather than filling the log with
+> warnings about a guard that is working.
+
+### Fixed
+
+- **A preroll change held back during playback was logged as a failure, 246 times in one evening.** Plex resolves the next preroll from its preference as playback advances, so rewriting that preference mid-playback makes it hang; the scheduler deliberately waits for playback to finish. Every apply site reported that wait as "Failed to apply", which made a guard doing exactly its job look like a broken scheduler. A deferral is now reported as a wait, and a genuine failure still reads as one.
+- **Nothing told you a preroll change was queued behind playback.** For most of two hours the dashboard alternated between "Blending" and "Nothing applied" while the truth was neither: the blend indicator is driven by `last_run`, which is only stamped on the ticks where the blend's random pick lands on the schedule already applied. The Current and next schedule tile now says a change is held until playback finishes, and how long it has been waiting.
+- **The dashboard reported conflicts that the Conflicts page had nothing to open.** Four places counted conflicts using two different detectors: one analyses a whole recurrence year and only compares schedules of the same type, the other looks thirty days ahead and pairs every type. The tiles counted overlaps outside the page's window, so clicking through showed "No unresolved conflicts". Every count now comes from one list, and it is exactly what the page lists.
+- **The schedules page header could read "7 schedule conflicts" while the dashboard read one.** Three summary counts included rows the Conflicts page classes as notes rather than conflicts — deterministic outcomes where one schedule always wins — and counted them as things needing attention.
+- **Conflict badges stayed on schedules after the counts said zero.** The per-schedule badges were still asking the year-long detector. Nine call sites that ask about a saved schedule now read the shared list; the two that ask about a schedule being typed into the form still run detection directly, because a draft has no id and is not in the saved list yet.
+- **Ignored conflicts came back on every page load.** The ignore list was only fetched when the Conflicts tab was opened through one of its buttons, so a fresh page started with an empty list, counted every ignored conflict again, and showed nothing under Ignored. It loads at startup now.
+- **The System health tile never consulted the ignore list at all**, and built its pair key by sorting numerically and joining with a colon while the list is stored under the shared helper's string sort joined with a dash — so an ignored pair could not have matched even if it had looked.
+- **Daily and weekly schedules never worked out when they next run.** The calculation only handled monthly, yearly and holiday types; the others fell through and returned nothing, so `next_run` stayed empty and the rows fell back to `start_date` — which on a recurring schedule is just the day it was created. A daily schedule could advertise a next run two days in the past.
+- **A schedule past its end date could still name a date it would never run on.** No branch of the calculation checked `end_date`. All of them do now, and nothing in the past is displayed as a next run regardless.
+- **The Upcoming schedules tile said every schedule was running now.** It decided a schedule was active by asking whether its `start_date` had passed and its `end_date` had not. Monthly, weekly and yearly schedules keep the `2000-01-01` sentinel in `start_date`, so the first half was true for all of them, and with no end date the second half never bit either. It asks the recurrence now, including ranges that run past midnight.
+- **Filler could be fully configured, shown as enabled everywhere, and never play.** Filler runs in the moment no schedule is active, and Coexistence Mode claims that same moment for the other preroll manager, so the scheduler returns early. The calendar stops drawing filler it will not play, My Schedules says filler will not run and why, and the Coexistence setting explains the clash where the choice is made. Clear Prerolls When Inactive has the same relationship and is handled the same way. Filler is deliberately left switched on rather than forced off — it is outranked, not wrong.
+- **The Faded Watermark option looked like it removed the logo.** The mark was overlaid after the text at fifteen percent opacity, so it was invisible while very slightly washing over the words, and choosing it also switched the header from the single-line "COMING SOON TO" back to two lines for no visible reason. The list layout now composites the watermark between the background and the text, which is where the option has always claimed it goes.
+- **QR corner rounding squared itself back off.** The plate was rounded and the square code drawn straight over the top of it. The code is clipped to the plate's shape now, capped short of where a corner arc would start eating the position markers, so the plate can reach a full circle without costing a scan.
+
+### Changed
+
+- **Clicking a day on the calendar opens it.** The month view only responded on the small date number and the week view not at all. The whole month cell opens that day, week day headers are buttons that do the same, and empty space in a week column does too. Schedule chips still open the schedule.
+- **The Upcoming tile shows when a schedule fires, not just which day.** The hour comes from the recurrence rather than from `next_run`, which carries the right date but not necessarily the right time, and each row shows its window so "All day" and "7:30 PM - 11:00 PM" are told apart at a glance.
+- **Recent generated cards show when each file was last written**, relative on the face and exact in the tooltip. A regeneration that came from a sync is marked as automatic — the filesystem cannot tell you that on its own, since the modification time is the same whether a sync wrote the file or someone pressed Generate.
+- **The QR panel carries a live sample of the real code**, large enough for the module style to read. The three styles looked identical because at roughly three screen pixels per module on the stage, a square, a squircle and a circle are the same shape. The sample also draws the code over the plate colour at its opacity and rounding, so it is clear that an opaque code background covers all but a rim of the plate.
+
+## [2.2.0-beta.6] - 09-04-2026 (beta)
+
+> The week and day calendar views never showed a monthly schedule at all, and
+> both calendar views are rebuilt around that fix. Both generators gain a
+> typeface picker with nine fonts that ship with NeXroll, plus custom video
+> backdrops. Three faults in how random sequence blocks picked prerolls are
+> fixed, including one that dropped blocks from a blended playlist entirely.
+> New settings migrate on first start.
+
+### Fixed
+
+- **The week and day calendar views never showed a monthly schedule.** Both read the hour from `start_date`, which monthly schedules deliberately store as the sentinel `2000-01-01`, so every schedule landed at midnight — and the grid began at 08:00 and drew nothing before it, sampling only five hours in between. Both views are rebuilt on a continuous 24-hour axis driven by the recurrence pattern, with overlapping schedules in side-by-side lanes, all-day schedules in their own row, and a current-time line.
+- **A Coming Soon list lost its animated background after a sync.** The moving themed backdrop exists only because the browser records it from the preview canvas and sends it with the render, and that recording was written to a temporary file and deleted. Auto-regeneration has no browser, so it fell back to the still the generator bakes itself. The recording is kept now, keyed by theme, and reused whenever no clip has been uploaded.
+- **"Match length to the soundtrack" would not stay switched on, and the duration reverted with it.** Saving clamped the duration to 30 seconds and a music bed usually runs for minutes, so the value came back changed and the toggle read as off. The dynamic generator had the same fault at 20 seconds. Both now allow a matched length through.
+- **A random sequence block whose count covered the whole category played in the same order every time**, falling through to the sequential path and returning prerolls in database id order.
+- **Blended schedules silently dropped sequential blocks.** Blend used its own resolver that only handled random blocks, so those prerolls never reached Plex, and it had no missing-file filter, so a preroll whose file was gone was still published.
+- **The dashboard preview could list prerolls that never play.** It used a third copy of the block resolver that ignored whether a preroll was enabled, ignored the block's count, and dropped sequential blocks.
+- **Uploaded fonts were missing from system backups**, so a restore left the generators pointing at a typeface that was not there and quietly fell back to the template default.
+- **The month calendar shifted every date by a column** once filler bars were added, because CSS grid positions explicit items before automatic ones and the day cells flowed around them.
+- **The dashboard's week tile started on Sunday while the calendar page started on Monday.** Both use the same helper now, and the same arithmetic for working out what filler covers.
+- **The simple schedule form's Playback selector never worked.** Choosing Sequential wrote a field nothing read and left the real one untouched, so playback stayed on random. A schedule could also be labelled Sequential while actually playing at random.
+- **Jellyfin and Emby ignored a sequence block that inherited its schedule's category**, which the Plex path had always honored.
+- **Jellyfin and Emby were served nothing when filler was a dynamic preroll.** The plugin resolver is a separate path from the one that writes Plex's preroll string and only understood category, sequence and Coming Soon fillers, so the branch fell through and no intro played while Plex played the preroll correctly.
+- **Separator blocks were skipped inside sequences on Jellyfin and Emby.** On Plex a separator becomes a generated black gap of the configured length; through the plugins the sequence played straight through without the pauses its author put in.
+
+### Added
+
+- **Typeface choice for the dynamic and Coming Soon generators.** Nine fonts ship with NeXroll — Bebas Neue, Anton, Archivo Black, Oswald, Roboto Condensed, Cinzel, Playfair Display, Lora and JetBrains Mono — so the same set is available on every install rather than only what the host happens to have; a Docker container otherwise carries two. You can also upload your own TrueType or OpenType file, which works identically in the preview and in the finished video. Only fonts the server can actually render are offered, because Coming Soon lists are rebuilt without a browser.
+- **Custom video backdrops for both generators**, with a dimming control and a live preview, replacing the generated theme background with your own footage.
+- **The QR Code template can be styled.** Choose square, rounded or dotted modules, set the code and background colours, make the background transparent so the theme shows through, overlay your uploaded logo in the middle, and control the plate behind it with a colour, an opacity and corner rounding. The three position squares stay solid and the quiet zone is always kept, so styling on its own cannot stop a scan; a warning appears if the two colours are too close for a scanner to separate.
+- **Match a preroll's length to an uploaded video clip**, alongside the existing soundtrack matching.
+- **Filler is drawn on the calendar** as a continuous band across the hours it covers, a bar spanning consecutive uncovered days in month view, and its own lane on the dashboard tile — so it is clear what plays in the gaps.
+- **A dynamic preroll can be used as the fallback filler**, and My Schedules links to the setting when filler is off.
+- **Seasonal loading-screen quotes** that rotate through the year.
+
+### Changed
+
+- **Genre-based preroll mapping is gone from the documentation**, along with the code behind it. Nothing had called the resolver for some time, and the wiki still described a toggle and settings that were no longer in the app.
+- **A schedule's redundant shuffle flag is removed.** Playback mode has always been decided by the playlist setting, which selects the delimiter Plex uses; the shuffle field was written and returned but read by nothing.
+- **The endpoint that set NEXROLL_INTERCEPT environment variables is removed.** It required administrator rights to write four machine-level variables that nothing reads.
+
+## [2.2.0-beta.5] - 09-01-2026 (beta)
+
+> Backups were missing every setting you had, so restoring one on a new machine
+> came back with nothing connected. The first-run wizard could send you away
+> from itself with no way back. Community Prerolls gains multi-select and bulk
+> download. Docker installs get a Path Mappings step and trailer-storage
+> guidance during setup, and the help button now opens the wiki page for
+> whatever you are looking at. New settings migrate on first start.
+
+### Fixed
+
+- **Database backups contained no settings at all.** Every connection, credential, path mapping, generator default and dashboard preference was absent, so a backup restored on a new machine came back with no media server, no Radarr or Sonarr, and every preference at its default — while the UI card promised it exported "settings". All of it is in the backup now.
+- **Restoring destroyed five settings on every run, including on the same machine.** The restore clears the category and sequence references before deleting those tables and never put them back, silently losing your NeX-Up category, TV category, filler category, filler sequence and active category. They are restored and their ids remapped, so they follow the rows even though the numbers change.
+- **System backups omitted generated prerolls and Coming Soon lists.** NeX-Up storage sits beside the prerolls folder rather than inside it, so the "comprehensive" backup never touched it — yet library entries point straight at those files. Restoring elsewhere produced entries with nothing behind them. Generated output and brand assets are included now; downloaded trailers are deliberately left out because NeX-Up re-fetches them and they are usually most of the folder.
+- **The system ZIP carried a second, reduced copy of the database export** that claimed to be the current format while omitting preroll duration and hashes, category playback mode, schedule priority and blend flags, holiday date ranges, and genre rules entirely.
+- **Signing in with Plex from the setup wizard left the wizard for good.** The button completed onboarding and dropped you on the Connect page, and nothing could bring the wizard back short of a factory reset. Plex sign-in now runs inside the wizard, and Settings, System has a Run Setup Wizard button that reopens it without resetting anything. A factory reset returns you to it reliably too.
+- **Unticking "Require login after setup" did nothing.** Registering the first user enables authentication server-side, and the wizard only ever sent the choice when it was ticked, so login was always required afterwards. The wizard also signs the new admin in, rather than finishing onto a login screen for the password just typed.
+- **Every trailer preview on the Upcoming page played the same clip.** The match compared two fields that are both empty on the Movies tab, which is true for the first row in the list, so that one was always returned. Season number is taken into account for TV as well.
+- **The Show/Hide filter for NeX-Up trailers ignored freshly downloaded ones**, because it matched on category alone and a new trailer has none yet. It matches on path too.
+- **Duration and file size on the community preview panel always read "Unknown".** The index carries neither; both are resolved on demand now.
+- **The Preview button on library thumbnails did nothing** when the preview panel was open — it only moved the panel's focus, which clicking the row already did. It always opens the full player.
+- **The Upcoming schedules tile spilled past its own edge.** A dashboard rule cancelled the list's scrolling while leaving its height capped, so every row past the cap painted outside the card.
+- **Installing the PO-token provider could fail with an npm ENOENT.** A provider left running by an earlier NeXroll held its own folder open, so the cleanup before the copy quietly failed and the new files landed one directory deeper than expected. The installer stops a provider it did not start, refuses to copy onto a folder that survived removal, and repairs the nested layout left by a previous attempt.
+- **The provider dependency offered "Install" when it was already installed**, because the UI checked a field the backend never returned.
+- **The audio "match length to the soundtrack" option never appeared** after uploading a track — the control needs the track's length, which only arrived on a full settings reload.
+- **Settings, System did not match the rest of the app** — nine different text sizes, fifty hardcoded colours that ignored your theme, and inner panels painted the same colour as the card behind them. The Theme tile also named the light or dark base rather than the theme you had chosen, so six of the eight themes displayed identically.
+
+### Added
+
+- **Multi-select and bulk download on Community Prerolls**, with a batch category, live progress, and a five-second gap between downloads. The server-side limiter now waits its turn rather than rejecting, and paces globally rather than per client, so two browsers cannot double the request rate the community server sees.
+- **Poster views for NeX-Up**, on both Upcoming releases and Your Trailers, alongside the existing list and calendar. Missing artwork is backfilled from Radarr and Sonarr.
+- **A Path Mappings step in first-run setup for Docker installs.** It explains why a container needs the translation, offers the container's real mount points as one-click choices, and translates a path so you can see the answer your media server will be given.
+- **Trailer storage in first-run setup**, on Windows and Docker alike, with a check reporting whether your media server will actually be able to open files there.
+- **Autoplay preview in the Preroll Library**, matching the community panel.
+- **The help button opens the page you are on.** Schedules opens the scheduling guide, Connect the connection guide, and sub-pages deep-link to the right section.
+
+### Changed
+
+- Radarr, Sonarr and media-server credentials are masked as they are typed in the setup wizard.
+- Database backups now also carry ignored paths and community templates. User accounts and API keys remain excluded by design.
+- The wiki gains Dashboard, Preroll Library, Connect and Backup and Restore pages, and NeX-Up and Troubleshooting cover the 2.2.0 features.
+
+## [2.2.0-beta.4] - 08-31-2026 (beta)
+
+> Holiday schedules now land on the holiday's real next date instead of whatever
+> was typed, the schedule wizard no longer saves halfway through, and the
+> calendar shows conflicts and overlap behaviour rather than drawing clashing
+> schedules silently. No configuration change; new settings migrate on first
+> start.
+
+### Fixed
+
+- **A holiday schedule never ran on its holiday.** Creating one demanded a start date and kept whatever was entered, because nothing resolved the holiday on save. The daily refresh meant to correct that only ever looked at the current year — so a holiday already past resolved *backwards* to a date behind us, and the schedule neither appeared on the calendar for its next occurrence nor fired. Dates are now derived from the next upcoming occurrence when the schedule is saved, and roll into next year once this year's has gone.
+- **Choosing a holiday was guesswork.** Both fields were free text, matched by exact name against what the holiday calendar publishes for that country, so a name that country does not publish silently never resolved. Easter is not a US public holiday, for instance, so "Easter" plus "US" could never match. Country and holiday are now pickers listing what will actually resolve, showing the date each will run, and a name a country does not publish is refused with an explanation.
+- **The schedule wizard created the schedule when you clicked Continue.** Moving from the content step to behaviour submitted the form: the Continue and Create buttons share one slot, so the button being clicked was turned into a submit button mid-click and the browser submitted as the click finished.
+- **Creating a schedule gave no clear confirmation.** It now names the schedule and confirms the form has been cleared, behind an OK button.
+- **Disabled schedules stayed on the calendar** as though they would still run. Conflict detection already excluded them; the calendar now does too.
+- **The "COMING SOON" heading could not be recoloured** once a theme was selected, because the colour pickers hide in that mode and the heading follows the accent colour. It has its own picker now, alongside titles, dates, and "Available Now!".
+
+### Added
+
+- **Conflicts are visible on the calendar.** A banner counts open conflicts in the next 30 days, names the schedules involved, and links to the Conflicts page. Conflicts you have ignored stay ignored.
+- **Overlap behaviour is visible too** — whether a schedule is Exclusive or Blends, shown on the day and week views and in month cell tooltips. Two schedules on the same day previously gave no hint which would win.
+- **Match a preroll's length to its soundtrack.** Both generators read an uploaded track's real length and offer to set the duration to match, so a track plays in full instead of being cut off.
+
+## [2.2.0-beta.3] - 08-30-2026 (beta)
+
+> Trailer downloads work again on the Windows installer, which was shipping a
+> five-month-old yt-dlp that YouTube had moved past. Coming Soon lists get the
+> animated theme backdrop the preview was already showing, plus text size and
+> per-role colours. Several Sequence Builder features that the scheduler has
+> always supported now have controls. No configuration change; new settings
+> migrate automatically on first start.
+
+### Fixed
+
+- **Trailer downloads failed with a SABR error on the Windows installer, and updating yt-dlp yourself made no difference.** The frozen build bundles its own copy, so a system-wide update never reached it — and the bundled one was 2026.03.17, five months behind YouTube's delivery changes. This build ships 2026.8.19, verified against a trailer that previously failed partway through with a 403. Docker was never affected: it installs a current yt-dlp on every build.
+- **A sequence containing a pause could not be saved.** The validator rejected `separator` as an invalid block type even though the scheduler has always played them, so any sequence with one failed on save.
+- **The Coming Soon backdrop rendered as a still** while the preview animated. The Studio now records the backdrop from the same canvas the preview draws, and the finished video moves the way the preview does. Regenerating after a sync has no browser, so it keeps using a rendered still.
+- **A logo placed "right of heading" overlapped the heading**, and one placed below it landed on the first title in the list layout. Both now have their own space, and the list re-fits its rows around the logo.
+- **Generating both layouts previewed only the grid**, despite producing two videos. Both are previewed now, stacked.
+- The failure message for a blocked download was cut off mid-sentence, losing the one line that said what to do about it.
+
+### Added
+
+- **Text size for Coming Soon lists.** The item font and the row spacing scale together, and the list is capped so a larger size can never overlap the next title or run off the frame. The dynamic templates gain two larger steps.
+- **Colours for titles, dates, and "Available Now!"** — the last of which had no control at all. Each is an override on top of the theme or manual colours, so it works either way, and each swatch shows the colour that will actually render.
+- **Sequence Builder: how many prerolls a category block plays** (1–10). The scheduler always honoured this and the validator always checked it; nothing ever set it.
+- **Sequence Builder: playback order for category blocks and NeX-Up trailers** — shuffled, or in order. Both were fixed to shuffled with no way to change them.
+
+### Changed
+
+- Generated content is one block type in the Sequence Builder rather than two. The item picker covers both: "always the latest" tracks whatever was generated most recently for a layout, while a named file plays that exact video every time.
+- The Generator Studio header drops its blurb, and the Coming Soon preview drops the GRID / LIST badge.
+
+## [2.2.0-beta.2] - 08-30-2026 (beta)
+
+> Fixes two things beta.1 got wrong: the Library filter that was supposed to
+> hide NeX-Up trailers never touched the grid, and the dashboard left a
+> tile-sized hole in the top right on the Operations and Everything presets.
+> Coming Soon lists gain the theme palettes and backdrops the dynamic templates
+> already had, plus an optional QR code. No configuration change; the new
+> settings columns migrate automatically on first start.
+
+### Fixed
+
+- **"Hide NeX-Up trailers" on the Library page did nothing to the grid.** It only controlled a separate read-only panel, which is invisible until NeX-Up registers downloaded trailers as real preroll rows — which it does whenever its storage path sits inside the prerolls folder, the layout NeX-Up Settings has recommended since 2.1.0-beta.3 to avoid the Docker path-mapping failure. Once that happens the trailers sit in the grid like any other preroll, and neither filter reached them: the generated-output filter looks for `dynamic_prerolls`/`coming_soon` paths and the NeX-Up Prerolls / Coming Soon Lists categories, while a downloaded trailer lands under `NeXup/movies` in NeX-Up Movie Trailers. The toggle now filters the grid, and selecting either trailer category still lists its contents.
+- **The dashboard left an empty tile-sized gap in the top right.** Switching preset rebuilt the tile order from the preset's own list, which says which tiles are visible rather than how they sit — it placed two 8-column tiles back to back, and they cannot share a 12-column row, so the first sat alone. Operations and Everything both had further holes lower down. Every preset now fills whole rows: Essential 2, Operations 4, Everything 6, with nothing left over.
+
+### Added
+
+- **Coming Soon lists can use the theme palettes**, the same named themes the dynamic templates offer, instead of only three hand-picked colours. Choosing one hides the manual pickers it overrides.
+- **Themed backdrops behind the posters and list.** Dynamic prerolls got their backdrop free by recording the browser canvas; a Coming Soon list is assembled server-side and also regenerates after a sync, where no browser exists, so the same six effects are now redrawn server-side and composited behind the content. The preview shows the live version of the same effect.
+- **An optional QR code on Coming Soon lists**, rendered bottom-right on a white plate so it stays scannable on every palette — for putting a watch-party invite, a Discord link, or guest Wi-Fi on screen ahead of the feature.
+- **Community preroll previews fall back through this server.** Previews load directly from the community server, so the browser has to reach that host itself — which a working download does not imply, since downloads are fetched server-side. Hotlink rules, an extension, or network filtering could therefore break every preview while downloads kept working. The player now retries once through NeXroll when the direct load fails, so the proxy costs nothing unless it is needed.
+- The community preview pane stays in view while a long result list scrolls, and starts playing when a result is selected rather than waiting for a click.
+- The Docker image is now built and smoke-tested on pull requests that touch how it is built, instead of only when a release is published.
+
+### Changed
+
+- The Coming Soon preview drops the GRID / LIST badge and matches the dynamic preview's frame.
+- NeXroll reports its own version correctly. `backend/version.py` shadowed the root `version.py` on import, so 2.1.0-beta.3 described itself as 2.1.0-beta.2; the backend file now reads the root one, which stays the single source of truth.
+
+## [2.2.0-beta.1] - 08-28-2026 (beta)
+
+> Eight global themes replace the dark/light switch, the NeX-Up Generator Studio
+> arrives with two new preroll templates (your own message, and a scannable QR
+> code NeXroll generates), and a batch of controls that looked functional but
+> were wired to nothing now do what they say. Also fixes a retention bug that
+> quietly stopped NeX-Up from ever deleting a trailer. No configuration change;
+> the new settings columns migrate automatically on first start.
+
+### Added
+
+- **Eight global themes, applied the same way dark and light were.** Midnight, Daylight, Cinema, Nocturne, Parchment, Terminal, Neon, and Carbon. Each declares a light or dark base, so anything that keyed off the old mode keeps working; the theme adds only color on top. Pick one from the swatch grid in Settings > General, or cycle with the topbar button. An existing dark/light preference migrates to Midnight or Daylight on first load, so nothing resets. The five section accents are re-tuned per theme so Library, Schedules, NeX-Up, Connect, and Community stay distinguishable at a glance without fighting the palette.
+- **The NeX-Up Generator Studio**, a single workspace for building animated prerolls: template, timing, typography, colors, logo, soundtrack, and render profile, with a live animated preview that is the exact thing that gets rendered.
+- **A Custom Message template.** Your own headline and an optional supporting line, with no fixed wording and nothing translated — for the intros the other templates cannot express ("Back in 5 minutes", a house rule, an announcement). The layout adapts to one line or two.
+- **A QR Code template.** Enter a link and NeXroll generates the code, drawn on a white plate so it stays scannable on every theme, with an optional caption underneath. Useful for sharing a watch-party invite, a Discord link, or guest Wi-Fi details on screen. The preview shows the real encoded code, so you can test it with your phone before rendering.
+- **A "Show NeX-Up trailers" filter on the Library page**, plus a More filters toggle that hides generator output by default, so the Library keeps showing your permanent collection rather than auto-managed files.
+- **A real Filters panel on Schedules** (playback, behavior, conflicts-only), wired into the result list.
+
+### Changed
+
+- **Every page now shares the approved layout system** — Library, Schedules, NeX-Up, Connect, Community Prerolls, Settings, and their supporting pages — including the search toolbars, the schedule calendar, and the NeX-Up pages.
+- **Light mode is a complete companion theme**, not a partial inversion: sidebar, headers, forms, cards, tables, status surfaces, inspectors, and dialogs all use dedicated light tokens.
+- **The trailer retention setting says what it does.** It was labelled "Deleted trailer history / Keep cleanup records for diagnostics", describing a diagnostics feature that does not exist — so anyone adjusting it was scheduling deletion of their trailers while believing they were changing log retention. It now reads "Delete trailers after", states that it counts from the release date, and calls the 0 option "Never delete". The Your Trailers column reads "Deletes on" rather than "Retention", and an unscheduled trailer says "Not scheduled".
+- **Failed trailer downloads now report the real cause.** The reported error used to be whichever strategy ran last, which is the browser-cookie one — so a trailer blocked for an unrelated reason surfaced "Could not copy Chrome cookie database" and sent people to fix cookies that were never the problem.
+- The changelog shipped inside NeXroll now covers 2.0.0 and later. Earlier entries moved to `CHANGELOG-ARCHIVE.md` in the repo. The served file drops from 224 KB to 31 KB.
+- The Generator's Render confidence panel and its Render button now derive from one list of requirements, so the panel can no longer read all-clear while the button stays disabled.
+
+### Fixed
+
+- **NeX-Up never deleted a trailer, so storage grew without bound.** Retention matched rows on `status == 'downloaded'`, but a completed download can sit at the model default of `pending` — with a real file, a `downloaded_at` and a `local_path`, yet invisible to every query keyed on that status, about a dozen of them. The Your Trailers page showed a removal date that silently passed and nothing happened; observed on a trailer 23 days past its window. Affected rows are repaired once at startup, and retention now keys on the download itself, excluding only in-flight transfers so nothing is deleted mid-write.
+- **Failed downloads left `.part` and fragment files behind forever.** They accumulated in the storage folder, counted toward reported usage, and left yt-dlp trying to resume a partial that would only fail again. They are now cleaned up when a title exhausts every strategy, and existing leftovers are swept at the start of each sync.
+- **NeXroll reported the wrong version number.** `backend/version.py` shadowed the root `version.py` on import, so 2.1.0-beta.3 shipped describing itself as 2.1.0-beta.2. The backend file now reads the root one, which is the single source of truth.
+- **Themes stopped at the edge of the dashboard.** `--raised-bg` was referenced about 60 times and never declared, so every surface asking for it silently fell back to transparent, and the dashboard and sidebar each redeclared the whole palette with hardcoded values.
+- **Connect and Path Mappings reported the server selected for editing rather than the one actually connected.** Path mapping counts also included the form's blank placeholder row, and Schedules counted every enabled schedule instead of the active ones.
+- **Controls that did nothing now work.** Schedules' Compact/Detailed toggled a state no row read, and its Filters button navigated to the Conflicts page. NeX-Up's sync coverage bar was hardcoded to `enabled ? 5 : 2` and measured nothing (removed); the Upcoming week strip was inert divs and now filters by day; enable/disable used a three-dot menu icon instead of a toggle; the "Reconfigure sign-in" wizard existed only inside a dead render function, so the button flipped state with nothing to show; and Automatic trailer downloads always showed an ON badge even when off. On Video scaling, the row Scale button only selected the row instead of scaling it.
+- **The Now Showing preview disagreed with the video it was previewing**, omitting the "on"/"at" connector between the title and the server name that the renderer has always written.
+- Settings and NeX-Up Settings sat in two independent columns, so paired cards never matched height, and the Fallback Filler section used a different type scale from its neighbours.
+- Save and Discard controls are gone from pages that save on change, along with the Connect page's diagnostics button, which did nothing.
+- Opening category selectors for multiple Community Prerolls no longer links their choices together, its preview no longer shows a raw file path as the identifier, and its results-per-page control now refetches.
+- Theme application runs before the browser paints, so the old theme no longer flashes while the app loads.
+
+## [2.1.0-beta.3] - 08-21-2026 (beta)
+
+> A full dashboard UI pass, plus a yt-dlp reliability fix (a startup race that could silently break every
+> trailer download, plus a self-service update path so Docker users aren't
+> stuck waiting on a NeXroll release to get past a YouTube change), a fix for
+> the TMDB API key field, a read-only trailers view on the Library page, and
+> guidance that catches a silent NeX-Up + Docker path-mapping failure before
+> it reaches Plex.
+
+### Changed
+
+- **The approved dashboard design now spans the whole application.** Library, Schedules, NeX-Up, Connect, Community Prerolls, Settings, and their supporting pages share the dashboard's compact content frame, quieter charcoal surfaces, section-aware accents, controls, cards, tables, empty states, and responsive behavior.
+- **Light mode is now a complete companion theme** rather than a partial color inversion. Sidebar navigation, page headers, forms, cards, tables, status surfaces, inspectors, and dialogs all use dedicated light tokens with readable borders and contrast.
+- **Library now uses the approved hybrid layout.** The command-first search/filter/sort surface remains paired with grid and dense list views, list is the default for new browsers, and an optional persistent preview inspector can be enabled on the right without leaving the results. Existing browser view and inspector choices are remembered.
+- **Schedules now use the Command Center direction with navigation kept exclusively in the sidebar.** Schedule pages use the green section identity, denser working surfaces, and page-level actions without restoring a duplicate horizontal navigation bar.
+- **Modals and confirmation dialogs now share one visual system,** including the preroll editor, with consistent headers, spacing, controls, focus treatment, backdrops, responsive sizing, and dark/light presentation.
+- Theme application now runs before the browser paints the app, preventing the old-theme flash while the dashboard loads.
+
+### Fixed
+
+- **Opening category selectors for multiple Community Prerolls no longer links their choices together.** Each result now keeps its own selected destination category, and completing one download clears only that preroll's choice instead of changing or resetting the other open rows.
+
+- **NeX-Up trailer sequences could apply to Plex successfully and then simply not play, with nothing in the logs pointing at why.** This happened whenever the trailer Storage Path lived outside the prerolls folder in a Docker setup without a matching Path Mapping — NeXroll would push a container-only path (e.g. `/data/nexup_trailers/...`) that the media server's container had no volume for, so Plex accepted the setting but couldn't find the file. NeX-Up → Settings now suggests a storage path nested inside your existing prerolls folder (already reachable, no extra mount needed) and shows a dismissible warning with a one-click fix when your configured path is Docker-only and unmapped.
+- **The TMDB API key field could feel impossible to type into.** Every keystroke saved the partial value to the server and then reloaded all NeX-Up settings from the response — with no debounce, a fast typist could fire off several overlapping save+reload round trips, and an earlier keystroke's response landing after a later one would snap the field back to a shorter, stale value mid-edit. Typing is now purely local; the key saves once, when you leave the field.
+- **Clearing the TMDB API key field didn't actually clear it.** The old save call dropped empty values before they ever reached the server, so backing out a key you'd entered silently left the previous one in place. Saving now sends the field's real value, so an empty field is saved as empty.
+- **Trailer downloads (and the Dependencies page) could break entirely after certain restarts**, failing every attempt with `module 'yt_dlp' has no attribute 'utils'` (or `'version'`) until the next restart. This came from a startup race: yt-dlp's first import could be triggered concurrently by the background NeX-Up sync thread and a request handler, and losing that race left the module partially initialized for the rest of the process's life. yt-dlp is now imported once, eagerly, before any background thread that touches it exists.
+
+### Added
+
+- **An "Update yt-dlp" button** on the Dependencies page for source/dev installs, so a stale yt-dlp can be refreshed without waiting for a NeXroll release. Docker and the Windows installer build both bundle yt-dlp with no separate Python environment to upgrade in place, so they keep pointing at "pull the latest image" / "install the latest release" instead.
+- **A "Test Key" button** next to the TMDB API key field that checks the key against TMDB on the spot and reports valid or invalid right there, instead of needing to dig through logs to find out.
+- **A "Show NeX-Up trailers" toggle on the Library page.** NeX-Up trailers are intentionally kept out of the Library — they live in their own auto-managed table with their own retention/cleanup schedule, separate from your permanent preroll collection — but that separation was invisible, so downloaded trailers just looked missing. The toggle lets you glance at them from Library without merging the two systems; managing a trailer (enable, delete, etc.) still happens from the NeX-Up page.
+- Docker images now get their `:latest` and `:beta` tags rebuilt weekly, independent of NeXroll releases, so yt-dlp doesn't sit stale for weeks between releases while YouTube keeps changing underneath it.
+- The Docker build now fails outright if yt-dlp installs in a broken state, instead of shipping it and finding out from a support report.
+
+## [2.1.0-beta.2] - 08-19-2026 (beta)
+
+> A follow-up to beta.1: the account controls are reachable from every page,
+> and the dashboard no longer ships three pairs of tiles that showed the same
+> thing. No database migration, no configuration change.
+
+### Fixed
+
+- **The Log out button was missing from the dashboard.** It was rendered only when the active page was not the dashboard, so the page the app opens on - the one most people sit on - was the one page with no way to sign out. It now appears in the header on every page.
+- **Two user icons appeared in the header on every page except the dashboard.** The initials avatar and a second name chip with its own person icon were drawn side by side. The header now carries one avatar, whose tooltip names the signed-in account, and one Log out button. The Log out button also keeps its label instead of being squeezed into the header's 29px icon-button width; below 640px it collapses to an icon.
+
+### Changed
+
+- **The dashboard had two tiles named "Storage."** They rendered the same storage breakdown in two different styles. The duplicate is gone; one Storage tile remains.
+- **"What's next" and "Upcoming schedules" were the same list twice, and they disagreed.** One dropped any schedule whose time had passed unless it was active at that moment; the other kept ongoing schedules with a past start and no end date. The same queue could therefore read differently depending on which tile you looked at. They are now a single **Upcoming schedules** tile using the more forgiving filter, and the number of rows follows the tile's width and detail level rather than being fixed at four.
+- **"Currently Showing" duplicated the left half of "Current & next schedule."** It has been retired, and the two things it showed that the surviving tile did not - the preview button for what is applied to the server, and the playback mode, blend list, and gap-filler state - have moved into it.
+- The Customize dialog's descriptions for the Scheduler, Schedule counts, and Media servers tiles now say they are detailed views of what System health summarizes, rather than reading as separate features.
+
+Sixteen dashboard tiles become thirteen. Stored layouts that still name a retired
+tile drop it on the next load, in the backend, in the browser's saved copy, and
+at render time; no layout needs to be rebuilt by hand.
+
+## [2.1.0-beta.1] - 08-18-2026 (beta)
+
+> A redesigned dashboard, a data-loss fix in preroll deletion with a recoverable
+> trash, an end to Plex hanging mid-preroll, no-repeat random NeX-Up rotation,
+> and the removal of the dormant genre subsystem. Upgrade-safe: existing dashboard
+> layouts, categories, schedules, and sequences are preserved.
+
+### Fixed
+
+- **A failed Community Prerolls scan could replace the local catalog with an empty index that still appeared current.** Empty scans now leave the previous index intact and report the build failure instead.
+- **Plex could hang partway through your prerolls, failing to load the next trailer or preroll.** Plex does not take a snapshot of the preroll list when playback starts - it re-reads the setting as it advances through the list. NeXroll rewrote that setting on a timer with no idea whether you were mid-playback, so Plex would reach for an entry that no longer existed. This affected four separate paths: the 10-minute random-block rotation, schedule transitions, the 5-minute verification re-apply, and NeX-Up trailer retention deleting a file that was still in the active list. NeXroll now waits for playback to finish before changing prerolls, and never deletes a trailer that is currently in Plex's list. Since prerolls only take effect at the start of the next playback, waiting costs nothing. Set `NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES=1` to restore the old behaviour.
+- **`GET /stats` always returned 404.** It was declared after the frontend catch-all mount, which shadowed it. Moved above the mount.
+- **Deleting a preroll could permanently erase the original video file from your disk, with no warning and no way to get it back.** NeXroll decided whether a file was its own to destroy using the `managed` flag - but the library scanner sets that flag on everything it finds, so a file you copied into a category folder yourself and let NeXroll index was treated exactly like one NeXroll had created. The single-preroll confirmation only asked "Are you sure you want to delete this preroll?" and never mentioned your disk. Removing a preroll now leaves the file alone unless you explicitly ask for it, and files you do ask to delete are recoverable (see Added). `managed` keeps its real job of governing category moves and renames.
+- **Importing the same folder a second time under a different category did nothing.** Files already in the library were skipped outright instead of being tagged with the category being imported.
+- **The logo was missing from the login screen**, because its image assets sat behind the authentication gate that the login page itself has to get past. Static assets, plugin endpoints, and CORS preflight requests are now correctly exempt from the gate.
+- **Files moved into a category folder outside NeXroll stayed uncategorized after a scan.** The scanner now assigns a category from the folder name when a row has none of its own, and never replaces a category you set deliberately.
+- Thumbnails failed to resolve for prerolls whose stored path carried Docker's `prerolls/` prefix.
+- The login and registration forms now say why a submission was rejected (password mismatch, length, character, and connection errors) instead of failing silently, and their fields are properly labelled for screen readers.
+
+### Added
+
+- **A redesigned dashboard.** The page now opens on what is actually happening
+  rather than a wall of counters.
+  - *Now showing* leads with the active schedule, its mode, preroll count, and
+    timezone, plus a progress bar to the next change.
+  - *What's next* lays the coming activations out on a timeline with Active,
+    Next, and Upcoming badges.
+  - *System health* scores the install out of 100 across the scheduler, media
+    server, library, storage, schedule conflicts, and community index age. A
+    check that could not be measured is reported as unknown and costs no points,
+    so a fresh install does not open on an alarming number. Any hard failure
+    holds the overall status at "degraded" rather than letting a pile of healthy
+    checks average it away.
+  - *Storage mix* breaks your disk use down across prerolls, NeX-Up trailers,
+    thumbnails, and the database.
+  - *Quick actions* puts refresh, scan files, NeX-Up sync, and rebuild
+    thumbnails one click from the dashboard.
+  - A new **Customize dashboard** dialog replaces the old inline edit mode. It
+    carries three presets - Essential, Operations, Everything - along with
+    per-tile width and detail level, visibility and reordering, tile density,
+    and toggles for the greeting, the health note, and the date line.
+  - `GET /system/health/summary` backs the health tile. Schedule-conflict counts
+    are passed in by the frontend, which owns conflict detection; omitting them
+    reports that one check as unknown instead of guessing.
+  - **Upgrading keeps your layout.** Stored dashboard layouts are migrated from
+    the old schema in place: your tile order, hidden tiles, per-tile sizes, and
+    lock state all survive, with the new tiles inserted ahead of them. Nothing
+    you previously hid is un-hidden. New installs start on the Essential preset.
+
+- **AI-generated Community Prerolls filter.** Content under the community server's `/AI/` directory is excluded by default and can be included with a clearly labelled toggle. The preference applies consistently to search, browse facets, latest additions, and random selection.
+- **Preroll trash.** When you do ask for a preroll's file to be deleted, it moves into a `.nexroll-trash` folder instead of being erased, and can be restored for 30 days. Set `NEXROLL_TRASH_RETENTION_DAYS` to change that, or `0` to keep trashed files indefinitely. The trash sits inside your preroll library, so trashing is an instant same-volume rename rather than a copy across a network share, and the library scanner never indexes it. Expired entries are cleared during the regular scan.
+  - `GET /prerolls/trash`, `POST /prerolls/trash/{entry_id}/restore`, `DELETE /prerolls/trash/{entry_id}`, `DELETE /prerolls/trash?expired_only=true`
+  - **Library > Trash** lists what is recoverable with each file's original location, when it was deleted, its size, and how many days remain before it is cleared. Restore puts the file back where it came from and re-indexes it; Delete erases one entry for good; Empty Trash and Clear Expired handle the whole folder. Files whose record of origin was lost are still listed, with restore disabled and a note to move them back by hand.
+  - The delete dialog quotes your configured retention window rather than assuming 30 days, and a delete that takes the file now says the file is recoverable from Library > Trash.
+- **Removals stay removed.** A preroll removed from the library while its file stays on disk is added to an ignore list, so the next scan does not re-import it and undo your change. Deliberately re-importing the file clears the entry automatically.
+  - `GET /prerolls/ignored`, `DELETE /prerolls/ignored/{id}`, `DELETE /prerolls/ignored`
+- **Library sorting.** The Library filter bar can now sort by Last added, Name, or Duration, in either direction. The direction control is labelled for the field it applies to - "Newest first", "A to Z", "Longest first" - rather than a bare arrow. Names sort in natural order, so `bumper2` comes before `bumper10` instead of after it. Prerolls whose duration was never probed sort to the bottom rather than appearing to be the shortest videos in the library. Your choice is remembered per browser, alongside the existing grid/list and page-size preferences.
+
+### Removed
+
+- **The genre-based preroll feature is fully gone.** Its settings UI was removed in v1.9.10, but the backend stayed live: a playback monitor ran every 60 seconds, twelve API endpoints remained callable, and the Plex webhook existed only to drive it. It also wrote prerolls at the worst possible moment - the instant a movie started - which is the same hang described above. Now removed: the scheduler's playback monitor, all `/genres/*` and `/settings/genre` endpoints, the `/plex/webhook` and `/webhooks/plex` receivers, the leftover "Recent Genre Prerolls" dashboard tile, and the dead frontend state. The `genre_maps` table and its settings columns are left untouched, so no data disappears and older backups still restore cleanly.
+
+### Changed
+
+- **Random NeX-Up trailer selections now cycle through the eligible pool before repeating.** Independent random draws could repeatedly choose the same one or two trailers even when many were available. Random sequence blocks now use a no-repeat shuffle bag during normal operation; when the pool is exhausted, NeXroll reshuffles it and begins a new pass. Plex continues to refresh its selected set on the safe periodic rotation, while Jellyfin and Emby advance the bag on each intro request. The sequence builder now describes that behavior accurately instead of promising a different trailer on every Plex playback.
+- The dashboard greeting now includes the current NeXroll profile name, with a local desktop-account fallback when authentication is disabled.
+- Fresh installations now start in dark mode. Existing browser theme choices are preserved.
+- `DELETE /prerolls/{id}` no longer removes the file by default. Pass `delete_file=true` to move it to the trash. Externally mapped files are never deleted from disk even then, matching what the import screen has always promised.
+- The delete confirmation now names the preroll and the folder it lives in, and carries an unchecked "Also delete the video file from disk" option. The confirm button only becomes "Remove and Delete File" once that box is ticked. If you have confirmations turned off in Settings, a delete never takes the file - skipping the prompt is not treated as consent to destroy it.
+- Bulk delete uses the same dialog and reports how many files were moved to the trash.
+- The Priority (1-10) note on the schedule form now reads "Higher priority number schedules win when multiple schedules overlap," making it explicit that a larger number is the stronger one. Applied to both the create and edit forms, and to the priority documentation in the wiki.
+- The Library now opens sorted newest-first instead of in the order prerolls happened to be added to the database. Change it with the new sort control; your choice sticks.
 
 ## [2.0.0-beta.15] - 06-29-2026 (beta)
 
