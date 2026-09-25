@@ -1,3 +1,5 @@
+import { TRAILER_RATINGS } from './trailerRatings';
+import { AUDIO_FORMATS } from './audioFormats';
 /**
  * Sequence Validator - Validates sequence JSON structure
  * Ensures sequences are properly formatted for backend execution
@@ -189,6 +191,18 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
     }
   }
 
+  if (['nexup_trailers', 'library_trailers'].includes(blockType) && block.ratings !== undefined) {
+    if (!Array.isArray(block.ratings) || block.ratings.some(r => !TRAILER_RATINGS.includes(r))) errors.push('Trailer age ratings are invalid');
+  }
+  if (block.otherwise && typeof block.otherwise === 'object' && !block.otherwise.otherwise) {
+    errors.push(...validateBlock(block.otherwise, categories, prerolls).map(e => `Alternative: ${e}`));
+  }
+  if (Array.isArray(block.condition?.rules)) {
+    block.condition.rules.filter(rule => rule?.kind === 'audio_format').forEach(rule => {
+      if (!Array.isArray(rule.values) || !rule.values.length || rule.values.some(v => !AUDIO_FORMATS.some(([key]) => key === v))) errors.push('Choose valid audio formats');
+      if (rule.track !== undefined && !['default', 'any'].includes(rule.track)) errors.push('Choose a valid audio track scope');
+    });
+  }
   return errors;
 };
 
@@ -252,6 +266,10 @@ const sanitizeBlockFields = (block) => {
     sanitized.duration = block.duration || 3;
   }
 
+  if (['nexup_trailers', 'library_trailers'].includes(block.type)) {
+    if (block.ratings !== undefined) sanitized.ratings = block.ratings;
+    if (block.restrict_ratings !== undefined) sanitized.restrict_ratings = block.restrict_ratings;
+  }
   return sanitized;
 };
 

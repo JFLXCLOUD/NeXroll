@@ -1,3 +1,5 @@
+import { ratingSummary } from './trailerRatings';
+import { audioLabel } from './audioFormats';
 import { useCallback, useEffect, useState } from 'react';
 
 /**
@@ -13,9 +15,10 @@ import { useCallback, useEffect, useState } from 'react';
 // Emby plugin can tell NeXroll that; Plex applies one preroll list to every
 // movie, so on Plex those rules count as not met and the Otherwise plays.
 export const RULE_KINDS = [
-  { value: 'trailers_available', label: 'NeX-Up trailers are available', short: 'Trailers available', playback: false },
+  { value: 'trailers_available', label: 'Trailers are available', short: 'Trailers available', playback: false },
   { value: 'time_window', label: 'Time of day', short: 'Time of day', playback: false },
   { value: 'genre', label: 'Genre of what is playing (Jellyfin & Emby)', short: 'Genre (Jellyfin & Emby)', playback: true },
+  { value: 'audio_format', label: 'Stored audio format (Jellyfin & Emby)', short: 'Audio format (Jellyfin & Emby)', playback: true },
   { value: 'media_type', label: 'Movie or episode (Jellyfin & Emby)', short: 'Media type (Jellyfin & Emby)', playback: true },
 ];
 
@@ -40,6 +43,7 @@ const SOURCE_WORDS = { both: 'movie or TV', movies: 'movie', tv: 'TV' };
 export const defaultRule = (kind = 'trailers_available') => {
   if (kind === 'media_type') return { kind, value: 'movie' };
   if (kind === 'genre') return { kind, values: [] };
+  if (kind === 'audio_format') return { kind, track: 'default', values: [] };
   if (kind === 'time_window') return { kind, start: '18:00', end: '23:00', days: [] };
   return { kind: 'trailers_available', source: 'both', min: 1 };
 };
@@ -56,8 +60,11 @@ export const describeRule = (rule) => {
   const not = !!rule.negate;
   switch (rule.kind) {
     case 'trailers_available': {
+      if (rule.pool === 'block') return `${not ? 'fewer than' : 'at least'} ${rule.min || 1} trailer(s) can play in this/next trailer block`;
       const min = Math.max(parseInt(rule.min, 10) || 1, 1);
-      const kind = SOURCE_WORDS[rule.source] || SOURCE_WORDS.both;
+      const base = rule.pool === 'library' ? 'library' : (SOURCE_WORDS[rule.source] || SOURCE_WORDS.both);
+      const filters = [ratingSummary(rule), ...(rule.pool === 'library' && rule.genres?.length ? [rule.genres.join(' / ')] : [])].filter(Boolean).join('; ');
+      const kind = filters ? `${base} (${filters})` : base;
       if (not) {
         return min === 1 ? `no ${kind} trailers are available` : `fewer than ${min} ${kind} trailers are available`;
       }
@@ -65,6 +72,11 @@ export const describeRule = (rule) => {
     }
     case 'media_type':
       return `${not ? 'not ' : ''}playing ${rule.value === 'episode' ? 'a TV episode' : 'a movie'}`;
+    case 'audio_format': {
+      const values = Array.isArray(rule.values) ? rule.values : [];
+      const subject = rule.track === 'any' ? 'any stored audio track' : 'the stored default audio track';
+      return `${not ? 'no match for ' : ''}${subject}: ${values.map(audioLabel).join(' or ') || 'choose a format'}`;
+    }
     case 'genre': {
       const values = Array.isArray(rule.values) ? rule.values : [];
       if (!values.length) return 'a genre is chosen';

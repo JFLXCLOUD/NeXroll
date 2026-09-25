@@ -5301,6 +5301,30 @@ body.dark .nx-community select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0
   font-weight: 700;
 }
 body.dark .nx-comm-ai-badge { color: #c084fc; }
+.nx-library-ai-badge { margin-top: 6px; white-space: nowrap; }
+.nx-hybrid-table .nx-library-ai-badge { display: flex; width: max-content; }
+
+/* Dashboard shortcuts are links, including their counts and status labels. */
+.nx-conflict-link { color: inherit; text-decoration: none; cursor: pointer; }
+.nx-conflict-link:hover { text-decoration: underline; }
+.nx-conflict-link:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 3px; border-radius: 4px; }
+.nx-conflict-link.nx-tile-row { width: 100%; }
+.nx-library-trailers-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.nx-library-trailers-tile .nx-tile-head h2 { display: flex; align-items: center; gap: 6px; }
+.nx-library-trailers-tile .nx-focus-sub { overflow-wrap: anywhere; }
+.nx-library-trailers-actions button:disabled { opacity: .55; cursor: not-allowed; }
+
+.nx-sidebar-favorites { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color); }
+.nx-sidebar-favorites-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px; }
+.nx-sidebar-favorites-heading strong { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-secondary); }
+.nx-sidebar-favorite-toggle { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 7px; color: var(--text-secondary); background: transparent; cursor: pointer; }
+.nx-sidebar-favorite-toggle:hover, .nx-sidebar-favorite-toggle.is-active { color: #eab308; background: rgba(234,179,8,.1); }
+.nx-sidebar-favorite-toggle:disabled { opacity: .4; cursor: not-allowed; }
+.nx-sidebar-favorite-toggle:focus-visible { outline: 2px solid var(--accent-color); }
+.nx-sidebar-favorites-hint { margin: 2px 8px 8px; color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+.nx-sidebar-favorites .nx-sidebar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-sidebar-favorites-error { width: 100%; padding: 7px; border: 0; border-radius: 5px; background: var(--raised-bg); color: var(--warning-color, #eab308); font: inherit; font-size: 11px; cursor: pointer; }
+.nx-sidebar.collapsed .nx-sidebar-favorites-heading { justify-content: center; padding: 0; }
 
 /* Index/status meta chips inside the hero */
 .nx-comm-chip {
@@ -8872,6 +8896,19 @@ body.light :is(.nx-nexup-sync-card,.nx-nexup-connection-card,.nx-nexup-upcoming 
 .nx-ap-library-message.live { border-color: rgba(49,196,141,.4); background: rgba(49,196,141,.08); }
 .nx-ap-library-message.warn { border-color: rgba(244,184,63,.45); background: rgba(244,184,63,.08); }
 .nx-ap-library-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.nx-lt-download-settings { grid-column: 1 / -1; }
+.nx-lt-download-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 20px; align-items: start; }
+.nx-lt-capacity { min-width: 0; }
+.nx-lt-section-title { display: block; font-size: 13px; }
+.nx-lt-targets { border-left: 1px solid var(--border-color); padding-left: 20px; }
+.nx-lt-download-grid > .nx-lt-outside-row { grid-column: 1 / -1; margin-top: 0; }
+@media (max-width: 980px) {
+  .nx-lt-download-grid { grid-template-columns: minmax(0,1fr); gap: 16px; }
+  .nx-lt-targets { border-left: 0; padding-left: 0; border-top: 1px solid var(--border-color); padding-top: 16px; }
+}
+@media (max-width: 520px) {
+  .nx-lt-capacity .nx-ap-control-row { grid-template-columns: minmax(0,1fr); gap: 8px; padding: 12px 0; }
+}
 .nx-ap-library-progress { margin: 10px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
 .nx-ap-library-progress.warn { color: #f4b83f; }
 .nx-ap-library-muted { display: block; margin: 8px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
@@ -10650,6 +10687,21 @@ p.nx-draft-field-hint { margin: 10px 0; color: var(--text-secondary); font-size:
 @media (max-width: 700px) { .nx-flow .nx-flow-minimap { display: none; } }
 .nx-draft-builder.flow { grid-template-columns: minmax(0,1fr) 275px; }
 .nx-draft-builder.flow > .nx-draft-palette { display: none; }
+/* Follow the inspector only while the canvas and settings share a row.
+   Long lists / expanded help stay reachable inside the viewport-sized panel. */
+@media (min-width: 1181px) {
+  .nx-draft-builder > .nx-draft-sequence-canvas {
+    position: sticky;
+    top: 76px;
+    min-height: min(500px, calc(100dvh - 92px));
+    max-height: calc(100dvh - 92px);
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+  .nx-draft-builder.flow .nx-flow {
+    height: clamp(260px, calc(100dvh - 280px), 640px);
+  }
+}
 @media (max-width: 1180px) {
   .nx-draft-builder.flow { grid-template-columns: minmax(0,1fr); }
   .nx-draft-builder.flow > .nx-draft-inspector { grid-column: 1; }
@@ -11197,6 +11249,9 @@ body.light .nx-draft-cal-event { color: #157a55; }
   .nx-content .nx-page-header-title { overflow-wrap: anywhere; }
 }
 @media (max-width: 760px) {
+  .nx-ap-library .nx-ap-stats.five {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
   .nx-content-library .nx-route-summary,
   .nx-content-nexup .nx-route-summary,
   .nx-content-nexup.nx-content-nexup-trailers .nx-route-summary,

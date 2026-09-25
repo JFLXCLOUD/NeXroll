@@ -12,6 +12,8 @@ import {
   withRules,
 } from '../utils/sequenceConditions';
 import GenrePicker from './GenrePicker';
+import TrailerRatingFilter from './TrailerRatingFilter';
+import AudioFormatRule from './AudioFormatRule';
 
 /**
  * SequenceConditionPanel - IF/THEN settings in the Sequence Builder's
@@ -63,21 +65,39 @@ const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [
               </label>
             </div>
 
-            {rule.kind === 'trailers_available' && (
+            {rule.kind === 'trailers_available' && <>
+              <label className="nx-draft-field"><span>Trailer pool</span>
+                <select value={rule.pool || 'upcoming'} onChange={event => updateRule(i, { pool: event.target.value })}>
+                  <option value="upcoming">Upcoming trailers</option>
+                  <option value="library">Library trailers</option>
+                  <option value="block">This / next trailer block</option>
+                </select>
+              </label>
               <div className="nx-draft-condition-pair">
                 <label className="nx-draft-field"><span>At least</span>
                   <input type="number" min="1" max="50" value={rule.min ?? 1} onChange={event => updateRule(i, { min: Math.max(1, Number(event.target.value) || 1) })} />
                 </label>
-                <label className="nx-draft-field"><span>Trailers from</span>
+                {!['library', 'block'].includes(rule.pool) && <label className="nx-draft-field"><span>Trailers from</span>
                   <select value={rule.source || 'both'} onChange={event => updateRule(i, { source: event.target.value })}>
                     <option value="both">Movies &amp; TV</option>
                     <option value="movies">Movies only</option>
                     <option value="tv">TV only</option>
                   </select>
-                </label>
+                </label>}
               </div>
-            )}
+              {rule.pool === 'block' ? <p className="nx-draft-field-hint">Uses this trailer block, or the next trailer block after this one, with its source, ratings, genres, count, and conditions. No matching block means no trailers.</p> : <>
+                <TrailerRatingFilter value={rule} includeTV={rule.pool !== 'library' && rule.source !== 'movies'} onChange={patch => updateRule(i, patch)} />
+                {rule.pool === 'library' && <>
+                  <div className="nx-draft-field"><span>Only these genres (optional)</span>
+                    <GenrePicker values={rule.genres || []} onChange={genres => updateRule(i, { genres })} />
+                  </div>
+                  <label className="nx-draft-check"><input type="checkbox" checked={Boolean(rule.match_playing)} onChange={event => updateRule(i, { match_playing: event.target.checked })} /><span>Same genre as the movie that's starting</span></label>
+                  <p className="nx-draft-field-hint">Jellyfin &amp; Emby provide the movie's genres. Plex checks the whole filtered selection.</p>
+                </>}
+              </>}
+            </>}
 
+            {rule.kind === 'audio_format' && <AudioFormatRule rule={rule} onChange={patch => updateRule(i, patch)} />}
             {rule.kind === 'genre' && <>
               <div className="nx-draft-field"><span>{rule.negate ? 'Not any of these genres' : 'Any of these genres'}</span>
                 <GenrePicker values={rule.values || []} onChange={values => updateRule(i, { values })} />
@@ -164,6 +184,8 @@ const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [
             </label>
           </div>
         )}
+
+        {['nexup_trailers', 'library_trailers'].includes(otherwise?.type) && <TrailerRatingFilter value={otherwise} includeTV={otherwise.type === 'nexup_trailers' && otherwise.source !== 'movies'} onChange={patch => setOtherwise({ ...otherwise, ...patch })} />}
 
         <p className="nx-draft-condition-summary">{describeBlockCondition(condition, otherwise, getCategoryName)}</p>
         <button type="button" className="nx-draft-btn small ghost" onClick={() => onChange({ condition: null, otherwise: null })}>

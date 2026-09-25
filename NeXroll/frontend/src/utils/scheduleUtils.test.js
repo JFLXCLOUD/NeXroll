@@ -1,6 +1,11 @@
 import {
   buildBlendBothChanges,
   buildRecurrencePattern,
+  getScheduleEditorRecurrence,
+  getScheduleStorageDates,
+  getScheduleTimingProblem,
+  mergeScheduleRecurrence,
+  scheduleIntervalsOnDay,
   evaluateScheduleTimeSegments,
   getAnchoredTimeRangeOverlap,
   hasSamePriorityTimeOverlap,
@@ -11,6 +16,62 @@ import {
   timeRangesOverlap,
   yearlyOrHolidayDateRangesOverlap
 } from './scheduleUtils';
+
+describe('schedule upgrade and editor compatibility', () => {
+  test('timing step rejects incomplete choices before advancing', () => {
+    expect(getScheduleTimingProblem({ type: 'monthly' })).toMatch(/month/);
+    expect(getScheduleTimingProblem({ type: 'monthly' }, { selectedMonths: [10] })).toMatch(/day/);
+    expect(getScheduleTimingProblem({ type: 'daily', start_date: '2026-10-01' })).toBeNull();
+    expect(getScheduleTimingProblem({ type: 'holiday', start_date: '2026-12-25', holiday_country: 'US' })).toMatch(/both/);
+    expect(getScheduleTimingProblem({ type: 'monthly', start_date: '2026-12-01', end_date: '2026-10-01' })).toMatch(/after/);
+  });
+  test('legacy monthly keeps actual date bounds and fills omitted month filters', () => {
+    const legacy = { type: 'monthly', start_date: '2024-06-10T18:00', end_date: '2028-10-20T22:00', recurrence_pattern: '{"monthDays":["15"]}' };
+    expect(getScheduleStorageDates(legacy)).toEqual({ start_date: legacy.start_date, end_date: legacy.end_date });
+    expect(getScheduleEditorRecurrence(legacy).selectedMonths).toHaveLength(12);
+    expect(getScheduleEditorRecurrence(legacy).monthDays).toEqual([15]);
+  });
+  test('missing weekly and monthly filters preserve all-days semantics', () => {
+    expect(getScheduleEditorRecurrence({ type: 'weekly' }).weekDays).toHaveLength(7);
+    expect(getScheduleEditorRecurrence({ type: 'monthly' }).monthDays).toHaveLength(31);
+  });
+  test('holiday daily hours survive save and unexposed restrictions survive edits', () => {
+    const pattern = buildRecurrencePattern({ type: 'holiday', timeRange: { start: '22:00', end: '03:00' } });
+    expect(pattern.timeRange.end).toBe('03:00');
+    expect(mergeScheduleRecurrence('weekly', { weekDays: ['friday'] }, { type: 'weekly', recurrence_pattern: '{"months":[10],"weekDays":["monday"],"timeRange":{"start":"18:00"}}' }))
+      .toEqual({ months: [10], weekDays: ['friday'] });
+  });
+});
+
+describe('calendar matches playback windows', () => {
+  const weekly = { type: 'weekly', start_date: '2026-01-01T00:00', recurrence_pattern: '{"weekDays":["friday"],"timeRange":{"start":"22:00","end":"03:00"}}' };
+  test('Friday night appears on Saturday morning, never Friday morning', () => {
+    expect(scheduleIntervalsOnDay(weekly, new Date(2026, 8, 25))).toEqual([[1320, 1440]]);
+    expect(scheduleIntervalsOnDay(weekly, new Date(2026, 8, 26))).toEqual([[0, 181]]);
+    expect(scheduleIntervalsOnDay(weekly, new Date(2026, 8, 27))).toEqual([]);
+  });
+  test('calendar respects finite first and last day times', () => {
+    const daily = { type: 'daily', start_date: '2026-09-24T18:00', end_date: '2026-09-25T03:00' };
+    expect(scheduleIntervalsOnDay(daily, new Date(2026, 8, 24))).toEqual([[1080, 1440]]);
+    expect(scheduleIntervalsOnDay(daily, new Date(2026, 8, 25))).toEqual([[0, 181]]);
+    expect(scheduleIntervalsOnDay(daily, new Date(2026, 8, 26))).toEqual([]);
+  });
+  test('month-end overnight follows its starting month and day', () => {
+    const monthly = { ...weekly, type: 'monthly', recurrence_pattern: '{"months":[1],"monthDays":[31],"timeRange":{"start":"22:00","end":"03:00"}}' };
+    expect(scheduleIntervalsOnDay(monthly, new Date(2027, 1, 1))).toEqual([[0, 181]]);
+    expect(scheduleIntervalsOnDay(monthly, new Date(2027, 0, 31))).toEqual([[1320, 1440]]);
+  });
+  test('moving holidays use server-resolved next date and preserve first year', () => {
+    const holiday = { type: 'holiday', start_date: '2026-11-26T00:00', end_date: '2026-11-26T23:59', holiday_name: 'Thanksgiving', holiday_country: 'US', next_run: '2027-11-25T00:00' };
+    expect(scheduleIntervalsOnDay(holiday, new Date(2027, 10, 25))).toEqual([[0, 1440]]);
+    expect(scheduleIntervalsOnDay(holiday, new Date(2027, 10, 26))).toEqual([]);
+    expect(scheduleIntervalsOnDay(holiday, new Date(2025, 10, 26))).toEqual([]);
+  });
+  test('paused or malformed schedules occupy no calendar or filler time', () => {
+    expect(scheduleIntervalsOnDay({ ...weekly, is_active: false }, new Date(2026, 8, 25))).toEqual([]);
+    expect(scheduleIntervalsOnDay({ ...weekly, recurrence_error: 'Invalid time' }, new Date(2026, 8, 25))).toEqual([]);
+  });
+});
 
 describe('evaluateScheduleTimeSegments', () => {
   const schedule = (

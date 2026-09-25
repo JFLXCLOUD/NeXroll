@@ -1,3 +1,4 @@
+import TrailerRatingFilter from './TrailerRatingFilter';
 import React, { useState, useEffect, useRef } from 'react';
 import { Shuffle, Pin, X, ChevronUp, ChevronDown, Search, Tag, Check, Film, LayoutGrid, Sparkles } from 'lucide-react';
 import { lockBodyScroll } from '../utils/modalBehavior';
@@ -11,6 +12,7 @@ import GenrePicker from './GenrePicker';
  */
 const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, advanced = false }) => {
   const overlayRef = useRef(null);
+  const [ratingFilter, setRatingFilter] = useState({ ratings: block.ratings || [], restrict_ratings: Boolean(block.restrict_ratings) });
   const [blockType, setBlockType] = useState(block.type || 'random');
   const [categoryId, setCategoryId] = useState(block.category_id || (categories[0]?.id || null));
   const [count, setCount] = useState(block.count || 1);
@@ -55,6 +57,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
       setDpTheme(block.theme || '');
       setConditionState({ condition: block.condition || null, otherwise: block.otherwise || null });
       setLibGenres(block.genres || []);
+      setRatingFilter({ ratings: block.ratings || [], restrict_ratings: Boolean(block.restrict_ratings) });
       setLibMatchPlaying(Boolean(block.match_playing));
     }
   }, [block.id, block, categories, initialBlockId]);
@@ -177,6 +180,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
       }
     }
 
+    if (['nexup_trailers', 'library_trailers'].includes(blockType)) Object.assign(newBlock, ratingFilter);
     onSave(newBlock);
   };
 
@@ -991,6 +995,10 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
             </div>
           )}
 
+          {['nexup_trailers', 'library_trailers'].includes(blockType) && <TrailerRatingFilter
+            value={ratingFilter} onChange={patch => setRatingFilter(current => ({ ...current, ...patch }))}
+            includeTV={blockType === 'nexup_trailers' && nexupSource !== 'movies'}
+          />}
           {advanced && (
             <BlockConditionEditor
               condition={conditionState.condition}

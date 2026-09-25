@@ -388,6 +388,7 @@ class RadarrConnector:
                     'imdb_id': movie.get('imdbId'),
                     'title': movie.get('title', 'Unknown'),
                     'year': movie.get('year'),
+                    'certification': movie.get('certification'),
                     'overview': movie.get('overview', ''),
                     'status': status,
                     'release_date': release_date.isoformat() if release_date else None,
@@ -496,6 +497,7 @@ class RadarrConnector:
                 'imdb_id': movie.get('imdbId'),
                 'title': movie.get('title', 'Unknown'),
                 'year': movie.get('year'),
+                'certification': movie.get('certification'),
                 'overview': movie.get('overview', ''),
                 'status': status,
                 'release_date': release_date.isoformat() if release_date else None,
@@ -1515,6 +1517,9 @@ class NexUpManager:
         try:
             # Fetch upcoming movies from Radarr
             upcoming = await self.radarr.get_upcoming_movies(self.days_ahead)
+            from backend.trailer_filters import refresh_trailer_ratings
+            refresh_trailer_ratings(db_session, models.ComingSoonTrailer, upcoming, "radarr_movie_id", "radarr_id")
+            db_session.commit()
             results['fetched'] = len(upcoming)
             
             # Get existing trailers from database
@@ -1567,6 +1572,7 @@ class NexUpManager:
                         imdb_id=movie.get('imdb_id'),
                         title=movie['title'],
                         year=movie.get('year'),
+                        certification=movie.get('certification'),
                         overview=movie.get('overview', ''),
                         release_date=datetime.fromisoformat(movie['release_date']).date() if movie['release_date'] else None,
                         release_type=movie.get('release_type'),

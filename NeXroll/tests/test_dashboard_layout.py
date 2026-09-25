@@ -44,13 +44,13 @@ class DefaultLayoutTests(unittest.TestCase):
 
         self.assertEqual(set(visible), set(preset_tiles("essential")))
 
-    def test_essential_matches_the_five_focus_panels_in_display_order(self):
+    def test_essential_includes_library_trailers_in_display_order(self):
         layout = default_layout("essential")
         visible = [key for key in layout["order"] if key not in layout["hidden"]]
 
         self.assertEqual(visible, [
             "now_showing", "system_health", "prerolls",
-            "quick_actions", "storage_mix",
+            "quick_actions", "storage_mix", "library_trailers",
         ])
         self.assertEqual(layout["tiles"]["now_showing"]["size"], "md")
         for key in visible[1:]:

@@ -1,3 +1,4 @@
+import TrailerRatingFilter from './TrailerRatingFilter';
 import React from 'react';
 import { GitBranch, Plus, Trash2 } from 'lucide-react';
 import {
@@ -12,6 +13,7 @@ import {
   withRules,
 } from '../utils/sequenceConditions';
 import GenrePicker from './GenrePicker';
+import AudioFormatRule from './AudioFormatRule';
 
 /**
  * BlockConditionEditor - the IF/THEN section of the block editor.
@@ -97,6 +99,11 @@ const RuleRow = ({ rule, index, onChange, onRemove, canRemove }) => {
 
         {rule.kind === 'trailers_available' && (
           <>
+            <select aria-label="Trailer pool" value={rule.pool || 'upcoming'} onChange={e => set({ pool: e.target.value })} style={inputStyle}>
+              <option value="upcoming">Upcoming trailers</option>
+              <option value="library">Library trailers</option>
+              <option value="block">This / next trailer block</option>
+            </select>
             <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>at least</span>
             <input
               type="number"
@@ -107,7 +114,7 @@ const RuleRow = ({ rule, index, onChange, onRemove, canRemove }) => {
               onChange={(e) => set({ min: Math.max(parseInt(e.target.value, 10) || 1, 1) })}
               style={{ ...inputStyle, width: '70px' }}
             />
-            <select
+            {!['library', 'block'].includes(rule.pool) && <select
               aria-label="Trailer source"
               value={rule.source || 'both'}
               onChange={(e) => set({ source: e.target.value })}
@@ -116,7 +123,7 @@ const RuleRow = ({ rule, index, onChange, onRemove, canRemove }) => {
               <option value="both">movie or TV</option>
               <option value="movies">movie</option>
               <option value="tv">TV</option>
-            </select>
+            </select>}
           </>
         )}
 
@@ -197,6 +204,16 @@ const RuleRow = ({ rule, index, onChange, onRemove, canRemove }) => {
         </div>
       )}
 
+      {rule.kind === 'trailers_available' && <>
+        {rule.pool !== 'block' && <TrailerRatingFilter value={rule} onChange={set} includeTV={rule.pool !== 'library' && rule.source !== 'movies'} />}
+        {rule.pool === 'library' && <>
+          <label style={labelStyle}>Only these genres (optional)</label>
+          <GenrePicker values={rule.genres || []} onChange={genres => set({ genres })} />
+          <label style={hintStyle}><input type="checkbox" checked={Boolean(rule.match_playing)} onChange={e => set({ match_playing: e.target.checked })} /> Prefer the playing movie's genre (Jellyfin &amp; Emby)</label>
+        </>}
+        <small style={hintStyle}>{rule.pool === 'block' ? 'Uses this trailer block, or the next trailer block in the sequence: its source, ratings, genres, count and conditions. Skips when it has nothing to play.' : 'Counts available files after these filters. Choose This / next trailer block to follow its filters automatically.'}</small>
+      </>}
+
       {rule.kind === 'genre' && (
         <div style={{ marginTop: '8px' }}>
           <GenrePicker values={rule.values || []} onChange={values => set({ values })} />
@@ -207,6 +224,7 @@ const RuleRow = ({ rule, index, onChange, onRemove, canRemove }) => {
         </div>
       )}
 
+      {rule.kind === 'audio_format' && <AudioFormatRule rule={rule} onChange={set} />}
       {rule.kind === 'media_type' && (
         <small style={hintStyle}>
           Jellyfin and Emby tell NeXroll what is about to play. Plex only runs prerolls before movies,
@@ -320,6 +338,10 @@ const BlockConditionEditor = ({ condition, otherwise, onChange, categories = [] 
                   />
                 </>
               )}
+
+              {['nexup_trailers', 'library_trailers'].includes(otherwiseChoice) && <TrailerRatingFilter
+                value={otherwise} onChange={patchOtherwise} includeTV={otherwiseChoice === 'nexup_trailers' && otherwise.source !== 'movies'}
+              />}
 
               {otherwiseChoice === 'library_trailers' && (
                 <input

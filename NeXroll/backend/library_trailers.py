@@ -35,6 +35,7 @@ import sys
 from typing import Optional
 
 import backend.models as models
+from backend import trailer_quotas as quotas
 
 VIDEO_EXTS = (".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm")
 ROTATE_PER_SYNC = 3          # downloads swapped per sync once full
@@ -71,6 +72,7 @@ DEFAULT_CONFIG = {
     "download": True,        # download the rest from YouTube via Radarr
     "max_downloads": 25,
     "max_gb": 5.0,
+    "quotas": [],            # optional minimum targets; empty preserves legacy rotation
     "path_mappings": [],     # [{"radarr": "/movies", "local": "D:\\Movies"}]
 }
 
@@ -140,6 +142,7 @@ def normalize_config(config: dict) -> dict:
         out["priority"] = "newest"
     out["use_local"] = bool(out["use_local"])
     out["download"] = bool(out["download"])
+    out["quotas"] = quotas.normalize_quotas(out["quotas"])
     maps = []
     for m in out["path_mappings"] if isinstance(out["path_mappings"], list) else []:
         if isinstance(m, dict) and str(m.get("radarr", "")).strip() and str(m.get("local", "")).strip():
@@ -149,6 +152,8 @@ def normalize_config(config: dict) -> dict:
 
 
 def save_config(setting, updates: dict) -> dict:
+    if 'quotas' in (updates or {}):
+        quotas.normalize_quotas(updates['quotas'], strict=True)
     config = load_config(setting)
     config.update({k: v for k, v in (updates or {}).items() if k in DEFAULT_CONFIG})
     config = normalize_config(config)
@@ -415,6 +420,7 @@ def _upsert(db, rows_by_movie, movie, **fields):
     row.title = movie.get("title")
     row.year = movie.get("year")
     row.genres = json.dumps(movie.get("genres") or [])
+    row.certification = movie.get("certification") or None
     row.added_to_library = movie_added(movie)
     row.poster_url = movie_poster(movie)
     for key, value in fields.items():
@@ -442,6 +448,9 @@ async def sync_library_trailers(db, movies: list, storage: str, config: dict, do
     result["candidates"] = len(candidates)
     rows = db.query(models.LibraryTrailer).all()
     rows_by_movie = {r.radarr_movie_id: r for r in rows}
+
+    from backend.trailer_filters import refresh_trailer_ratings
+    refresh_trailer_ratings(db, models.LibraryTrailer, movies, "radarr_movie_id", "id")
 
     # 1. Trailers already next to the movies.
     _stage(progress, "local", "Looking for trailers next to your movies...")
@@ -488,6 +497,9 @@ async def sync_library_trailers(db, movies: list, storage: str, config: dict, do
             _upsert(db, rows_by_movie, wanted[movie_id])
     db.commit()
 
+    if config.get('quotas'):
+        return await _sync_quota_downloads(db, candidates, rows_by_movie, storage, config,
+                                           downloader, progress, result, now, download_delay)
     if not config["download"]:
         _stage(progress, "done", "Done")
         return result
@@ -576,6 +588,180 @@ async def sync_library_trailers(db, movies: list, storage: str, config: dict, do
 
     progress["current"] = None
     _stage(progress, "done", "Done")
+    return result
+
+
+async def _sync_quota_downloads(db, candidates, rows_by_movie, storage, config,
+                                downloader, progress, result, now, download_delay):
+    """Best-effort targets. Download successfully before replacing working files.
+
+    Only this opt-in path changes rotation. Local files count toward targets
+    but never consume download capacity or become eviction candidates.
+    """
+    import math
+    rules = config['quotas']
+    wanted = {m['id']: m for m in candidates}
+    notes = []
+    size_cache = {}
+    # Keep retained-row metadata aligned with the pool targets and playback,
+    # including titles already at capacity that need no new download.
+    for mid in list(rows_by_movie):
+        if mid in wanted:
+            _upsert(db, rows_by_movie, wanted[mid])
+    db.commit()
+
+    def downloads():
+        return sorted((r for r in rows_by_movie.values() if r.source == 'download' and r.status == 'available'),
+                      key=lambda r: (r.in_selection is not False, r.is_enabled is not False,
+                                     r.downloaded_at or datetime.datetime.min))
+
+    def size(row):
+        key = (row.local_path, row.file_size_mb)
+        if key in size_cache:
+            return size_cache[key]
+        recorded = row.file_size_mb or 0
+        actual = os.path.getsize(row.local_path) / (1024 * 1024) if row.local_path and os.path.isfile(row.local_path) else 0
+        size_cache[key] = max(recorded if math.isfinite(recorded) else 0, actual)
+        return size_cache[key]
+
+    def have():
+        return quotas.counts(quotas.playable_movies(candidates, rows_by_movie.values()), rules)
+
+    def evict(row, kind):
+        _event(progress, kind, row.title, poster=row.poster_url)
+        remove_row(db, row, storage)
+        rows_by_movie.pop(row.radarr_movie_id, None)
+        result['removed' if kind == 'removed' else 'rotated'] += 1
+
+    if config['download']:
+        # A lowered hard limit takes precedence over soft minimum targets.
+        while downloads() and (len(downloads()) > config['max_downloads']
+                               or sum(size(r) for r in downloads()) > config['max_gb'] * 1024):
+            current = have()
+            def loss(row):
+                m = wanted.get(row.radarr_movie_id)
+                return sum(quotas.matches(m, q) and n <= q['min'] for q, n in zip(rules, current)) if m and row.is_enabled is not False else 0
+            evict(min(downloads(), key=loss), 'removed')
+            notes.append('The configured download or storage limit required removing trailers')
+        db.commit()
+
+    retry_before = now - datetime.timedelta(days=RETRY_ERROR_DAYS)
+    pool = [m for m in candidates if m['id'] not in rows_by_movie or
+            (rows_by_movie[m['id']].status == 'error' and rows_by_movie[m['id']].is_enabled is not False
+             and (rows_by_movie[m['id']].last_attempt_at or datetime.datetime.min) < retry_before)]
+    if any(r.status == 'error' and r.radarr_movie_id in wanted for r in rows_by_movie.values()):
+        notes.append('Some failed trailers are waiting for the normal retry interval')
+    rotation_left = ROTATE_PER_SYNC
+    rotate_before = now - datetime.timedelta(days=ROTATE_MIN_AGE_DAYS)
+    progress['to_download'] = len(pool) if config['download'] and downloader else 0
+    progress['download_done'] = 0
+    _stage(progress, 'download', 'Filling trailer targets...')
+
+    def victims(movie, incoming_size, repair):
+        existing = downloads()
+        floors = [min(n, q['min']) for n, q in zip(current, rules)]
+        after = [n + int(quotas.matches(movie, q)) for n, q in zip(current, rules)]
+        chosen = []
+        used = sum(size(r) for r in existing) + incoming_size
+        routine = 0
+        for row in existing:
+            if len(existing) + 1 - len(chosen) <= config['max_downloads'] and used <= config['max_gb'] * 1024:
+                break
+            if row.radarr_movie_id in config['always_include']:
+                continue
+            if not repair and row.in_selection is not False:
+                if config['mode'] == 'picked' or (row.downloaded_at or now) >= rotate_before or routine >= rotation_left:
+                    continue
+            m = wanted.get(row.radarr_movie_id)
+            loss = [int(bool(m and row.is_enabled is not False and quotas.matches(m, q))) for q in rules]
+            if any(n - lost < floor for n, lost, floor in zip(after, loss, floors)):
+                continue
+            chosen.append(row)
+            used -= size(row)
+            after = [n - lost for n, lost in zip(after, loss)]
+            if row.in_selection is not False and not repair:
+                routine += 1
+        if len(existing) + 1 - len(chosen) > config['max_downloads'] or used > config['max_gb'] * 1024:
+            return None
+        return chosen
+
+    possible = quotas.counts(pool, rules)
+    priority_index = {m['id']: i for i, m in enumerate(pool)}
+    previous_counts = None
+    visited = 0
+    current = have()
+    while pool and config['download'] and downloader is not None:
+        if config['max_downloads'] <= 0 or config['max_gb'] <= 0:
+            notes.append('Download count or storage limit is zero')
+            break
+        # Overlapping targets share one trailer. Scarce targets break ties,
+        # followed by the existing Download first ordering.
+        if current != previous_counts:
+            pool.sort(key=lambda m: (quotas.gain(m, rules, current),
+                    sum(1 / max(total, 1) for q, n, total in zip(rules, current, possible)
+                        if n < q['min'] and quotas.matches(m, q)), -priority_index[m['id']]), reverse=True)
+            previous_counts = current
+        movie = pool.pop(0)
+        visited += 1
+        if visited % 50 == 0:
+            await asyncio.sleep(0)
+        repair = quotas.gain(movie, rules, current) > 0
+        if victims(movie, 0, repair) is None:
+            notes.append('Capacity is full: other targets, pinned movies, or rotation protection prevent replacement')
+            continue
+        title = movie.get('title') or 'Unknown'
+        progress['status'] = f'Downloading trailer for {title}...'
+        progress['current'] = {'title': title, 'year': movie.get('year'), 'poster_url': movie_poster(movie)}
+        url = f"https://www.youtube.com/watch?v={movie['youTubeTrailerId']}" if movie.get('youTubeTrailerId') else None
+        error = None
+        try:
+            got = await downloader.download_trailer(url, title, tmdb_id=movie.get('tmdbId'), year=movie.get('year'))
+        except Exception as exc:
+            got, error = None, str(exc)[:500]
+        path = got.get('path') if got else None
+        valid = bool(path and os.path.isfile(path) and _inside(os.path.realpath(path), os.path.realpath(library_dir(storage))))
+        if valid:
+            try:
+                reported_size = float(got.get('size_mb') or 0)
+            except (ValueError, TypeError):
+                reported_size = 0
+            incoming_size = max(os.path.getsize(path) / (1024 * 1024), reported_size)
+            chosen = victims(movie, incoming_size, repair) if math.isfinite(incoming_size) else None
+            if chosen is None:
+                # This new file has no database owner yet. Keep working files.
+                if not any(r.local_path == path for r in rows_by_movie.values()):
+                    os.remove(path)
+                valid = False
+                error = 'Matching trailer could not fit the storage limit without reducing another target.'
+                notes.append(error)
+        if valid:
+            for row in chosen:
+                if not repair and row.in_selection is not False:
+                    rotation_left -= 1
+                evict(row, 'replaced' if repair else 'rotated')
+            _upsert(db, rows_by_movie, movie, source='download', status='available', local_path=path,
+                    trailer_url=url, file_size_mb=incoming_size, duration_seconds=got.get('duration'),
+                    downloaded_at=now, last_attempt_at=now, error_message=None, in_selection=True)
+            result['downloaded'] += 1
+            _event(progress, 'downloaded', title, poster=movie_poster(movie))
+        else:
+            _upsert(db, rows_by_movie, movie, source='download', status='error', trailer_url=url,
+                    last_attempt_at=now, error_message=error or 'No usable trailer could be downloaded.', in_selection=True)
+            result['failed'] += 1
+            _event(progress, 'failed', title, poster=movie_poster(movie))
+            notes.append('Some matching trailers could not be downloaded')
+        db.commit()
+        if valid:
+            current = have()
+        progress['download_done'] += 1
+        if download_delay:
+            await asyncio.sleep(download_delay)
+
+    if config['download'] and downloader is None:
+        notes.append('The downloader is unavailable')
+    result['quotas'] = quotas.report(candidates, rows_by_movie.values(), config, notes)
+    progress['current'] = None
+    _stage(progress, 'done', 'Done: some trailer targets remain unmet' if any(q['shortfall'] for q in result['quotas']) else 'Done')
     return result
 
 

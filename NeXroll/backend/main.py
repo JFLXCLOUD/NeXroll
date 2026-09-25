@@ -1,3 +1,5 @@
+from backend.trailer_filters import has_trailer_policy
+from backend.sequence_conditions import sequence_block_to_play
 from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form, Request, Query, Body, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -259,6 +261,10 @@ def ensure_schema() -> None:
             if not _sqlite_has_column("settings", "clear_when_inactive"):
                 _sqlite_add_column("settings", "clear_when_inactive BOOLEAN DEFAULT 0")
             
+            from backend.trailer_filters import migrate_trailer_ratings
+            with engine.begin() as rating_conn:
+                migrate_trailer_ratings(rating_conn)
+
             # NeX-Up Library Trailers settings (one JSON object)
             if not _sqlite_has_column("settings", "library_trailers_config"):
                 _sqlite_add_column("settings", "library_trailers_config TEXT")
@@ -2943,6 +2949,15 @@ def startup_event():
         except Exception:
             pass
 
+    # Upgrade saved schedules before the scheduler can read them. One transaction
+    # preserves all schedules if normalization or metadata calculation fails.
+    from backend.schedule_recurrence import migrate_schedules
+    with SessionLocal() as migration_db:
+        repaired = migrate_schedules(migration_db, scheduler._calculate_next_run)
+        migration_db.commit()
+        if repaired:
+            _file_log(f"Schedule migration: repaired {repaired} schedule(s)")
+
     scheduler.start()
 
 @app.on_event("startup")
@@ -3015,71 +3030,8 @@ def _refresh_holiday_linked_schedules(db: Session) -> dict:
     next year's holiday date ahead of time doesn't get clobbered back to the
     current year.
     """
-    from datetime import datetime
-    from backend.holiday_api import HolidayAPI
-
-    # Holiday schedule dates belong to the app's configured timezone, not the
-    # host/container timezone (which can be on a different year around midnight
-    # on New Year's Eve).
-    current_year = _localized_now(db).year
-    updated_count = 0
-    errors = []
-    updated_schedules = []
-
-    holiday_schedules = db.query(models.Schedule).filter(
-        models.Schedule.holiday_name.isnot(None),
-        models.Schedule.holiday_country.isnot(None)
-    ).all()
-
-    for schedule in holiday_schedules:
-        try:
-            # Skip if schedule is for future year already
-            if schedule.start_date and schedule.start_date.year > current_year:
-                continue
-
-            holiday = HolidayAPI.search_holiday_by_name(
-                schedule.holiday_name, (schedule.holiday_country or "").upper(), current_year
-            )
-
-            if holiday and holiday.get("date"):
-                new_date = datetime.strptime(holiday["date"], "%Y-%m-%d")
-                old_date = schedule.start_date
-
-                if not old_date or old_date.year != current_year or old_date.month != new_date.month or old_date.day != new_date.day:
-                    schedule.start_date = new_date
-                    schedule.end_date = new_date.replace(hour=23, minute=59, second=59)
-                    updated_count += 1
-                    updated_schedules.append({
-                        "id": schedule.id,
-                        "name": schedule.name,
-                        "holiday": schedule.holiday_name,
-                        "old_date": old_date.strftime("%Y-%m-%d") if old_date else None,
-                        "new_date": new_date.strftime("%Y-%m-%d")
-                    })
-            else:
-                errors.append({
-                    "schedule_id": schedule.id,
-                    "holiday": schedule.holiday_name,
-                    "error": f"Holiday not found for {schedule.holiday_country} in {current_year}"
-                })
-
-        except Exception as e:
-            errors.append({
-                "schedule_id": schedule.id,
-                "holiday": getattr(schedule, "holiday_name", None),
-                "error": str(e)
-            })
-
-    if updated_count > 0:
-        db.commit()
-
-    return {
-        "total_holiday_schedules": len(holiday_schedules),
-        "updated_count": updated_count,
-        "updated_schedules": updated_schedules,
-        "errors": errors,
-        "year": current_year
-    }
+    from backend.schedule_recurrence import refresh_linked_holidays
+    return refresh_linked_holidays(db, _localized_now(db), scheduler)
 
 
 def _auto_refresh_holiday_dates():
@@ -4523,6 +4475,26 @@ def dashboard():
     """
     return RedirectResponse(url="/#/dashboard", status_code=307)
 
+
+class NavigationFavoriteUpdate(BaseModel):
+    favorite: bool
+
+
+@app.get('/navigation/favorites')
+def get_navigation_favorites(db: Session = Depends(get_db), user=Depends(require_auth)):
+    from backend.navigation_favorites import list_pages
+    return {'pages': list_pages(db, user)}
+
+
+@app.put('/navigation/favorites/{page:path}')
+def update_navigation_favorite(page: str, payload: NavigationFavoriteUpdate,
+                               db: Session = Depends(get_db), user=Depends(require_auth)):
+    from backend.navigation_favorites import set_page
+    try:
+        return {'pages': set_page(db, user, page, payload.favorite)}
+    except ValueError:
+        raise HTTPException(status_code=422, detail='Unknown page')
+
 # ============================================================================
 # API Keys Management - External API Authentication
 # ============================================================================
@@ -5434,6 +5406,8 @@ async def external_create_schedule(
         source_sequence_id=schedule.sequence_id,
     )
     
+    _refresh_schedule_next_run(db_schedule)
+
     try:
         db.add(db_schedule)
         db.commit()
@@ -11152,8 +11126,16 @@ def get_default_category(db: Session = Depends(get_db)):
     return default_category
 
 # Schedule endpoints
-def _validate_schedule_references(schedule: ScheduleCreate, db: Session):
-    """Validate the category/sequence references shared by create and update."""
+def _validate_schedule_references(schedule: ScheduleCreate, db: Session, allow_invalid_recurrence=False):
+    """Validate references and recurrence shared by create and update."""
+    from backend.schedule_recurrence import parse_recurrence, recurrence_error
+    error = recurrence_error(schedule)
+    if error and not allow_invalid_recurrence:
+        raise HTTPException(status_code=422, detail=error)
+    if bool(schedule.holiday_name) != bool(schedule.holiday_country):
+        raise HTTPException(status_code=422, detail="Select both holiday name and country, or clear both for a fixed-date holiday.")
+    if schedule.recurrence_pattern and not error:
+        schedule.recurrence_pattern = json.dumps(parse_recurrence(schedule.recurrence_pattern))
     if not schedule.category_id and not _has_valid_sequence(schedule):
         raise HTTPException(status_code=400, detail="Schedule must have either a category or a non-empty sequence")
 
@@ -11180,30 +11162,16 @@ def _validate_schedule_references(schedule: ScheduleCreate, db: Session):
     return category
 
 
-def _resolve_holiday_window(holiday_name, country_code):
-    """Next upcoming occurrence of a holiday as (start, end) datetimes.
-
-    Holiday schedules carry a name and a country; the date is derived, not
-    typed. Creating one used to keep whatever start date the form demanded, and
-    the scheduler's daily refresh only ever resolved the *current* year - so a
-    holiday already past resolved backwards into the past and the schedule
-    neither showed on the calendar for its next occurrence nor fired. Resolving
-    to the next occurrence fixes both.
-    """
-    if not holiday_name or not country_code:
-        return None
-    try:
-        from backend.holiday_api import HolidayAPI
-        found = HolidayAPI.get_next_occurrence(str(holiday_name), str(country_code).upper())
-    except Exception:
-        return None
-    if not found:
-        return None
-    holiday_date = found[0]
-    return (
-        datetime.datetime.combine(holiday_date, datetime.time.min),
-        datetime.datetime.combine(holiday_date, datetime.time(23, 59, 59)),
-    )
+def _resolve_holiday_window(holiday_name, country_code, start_date=None):
+    """Resolve using configured local time while respecting a first-year pin."""
+    now = _localized_now()
+    first_year = max(now.year, start_date.year) if start_date else now.year
+    for year in range(first_year, first_year + 2):
+        date = scheduler._get_holiday_date(holiday_name, country_code, year)
+        if date and date >= now.date():
+            return (datetime.datetime.combine(date, datetime.time.min),
+                    datetime.datetime.combine(date, datetime.time(23, 59, 59)))
+    return None
 
 
 def _refresh_schedule_next_run(schedule) -> None:
@@ -11218,6 +11186,8 @@ def _refresh_schedule_next_run(schedule) -> None:
     The scheduler could already work the date out; nothing ever asked it at
     creation time.
     """
+    from backend.yearly_schedules import normalize_yearly_schedule
+    normalize_yearly_schedule(schedule)
     try:
         schedule.next_run = scheduler._calculate_next_run(schedule)
     except Exception as e:
@@ -11268,7 +11238,7 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     # the holiday's real occurrence. Resolve it here so the schedule lands on
     # the right day immediately rather than waiting for the daily refresh.
     if schedule.type == "holiday" and schedule.holiday_name and schedule.holiday_country:
-        window = _resolve_holiday_window(schedule.holiday_name, schedule.holiday_country)
+        window = _resolve_holiday_window(schedule.holiday_name, schedule.holiday_country, start_date)
         if window:
             start_date, end_date = window
         else:
@@ -11355,6 +11325,7 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
 
 @app.get("/schedules")
 def get_schedules(db: Session = Depends(get_db)):
+    from backend.schedule_recurrence import recurrence_error
     schedules = db.query(models.Schedule).options(joinedload(models.Schedule.category)).all()
     result = []
     for s in schedules:
@@ -11363,6 +11334,9 @@ def get_schedules(db: Session = Depends(get_db)):
         start_iso = s.start_date.isoformat() if s.start_date else None
         end_iso = s.end_date.isoformat() if s.end_date else None
         
+        # Availability can change while a schedule is paused or loses
+        # priority. Do not depend on it having been selected by the scheduler.
+        next_run = scheduler._calculate_next_run(s)
         result.append({
             "id": s.id,
             "name": s.name,
@@ -11374,7 +11348,8 @@ def get_schedules(db: Session = Depends(get_db)):
             "playlist": s.playlist,
             "is_active": s.is_active,
             "last_run": s.last_run.isoformat() if s.last_run else None,
-            "next_run": s.next_run.isoformat() if s.next_run else None,
+            "next_run": next_run.isoformat() if next_run else None,
+            "recurrence_error": recurrence_error(s),
             "recurrence_pattern": s.recurrence_pattern,
             "preroll_ids": s.preroll_ids,
             "fallback_category_id": getattr(s, "fallback_category_id", None),
@@ -11402,7 +11377,9 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     if not db_schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
 
-    _validate_schedule_references(schedule, db)
+    _validate_schedule_references(schedule, db, allow_invalid_recurrence=(
+        not schedule.is_active and schedule.type == db_schedule.type
+        and schedule.recurrence_pattern == db_schedule.recurrence_pattern))
 
     # Parse dates from strings - store as naive local datetime (no timezone conversion)
     # The user enters their local time, we store it as-is, and the scheduler compares against local time
@@ -11442,8 +11419,14 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     if start_date is None:
         raise HTTPException(status_code=400, detail="Schedule start_date is required")
     # Same as creation: a holiday schedule's dates come from the calendar.
-    if schedule.type == "holiday" and schedule.holiday_name and schedule.holiday_country:
-        window = _resolve_holiday_window(schedule.holiday_name, schedule.holiday_country)
+    if (schedule.type == "holiday" and schedule.holiday_name and schedule.holiday_country
+        and not (db_schedule.holiday_name == schedule.holiday_name
+                 and db_schedule.holiday_country == schedule.holiday_country
+                 and db_schedule.start_date and start_date
+                 and db_schedule.start_date.replace(second=0, microsecond=0) == start_date.replace(second=0, microsecond=0)
+                 and (db_schedule.end_date.replace(second=0, microsecond=0) if db_schedule.end_date else None)
+                     == (end_date.replace(second=0, microsecond=0) if end_date else None))):
+        window = _resolve_holiday_window(schedule.holiday_name, schedule.holiday_country, start_date)
         if window:
             start_date, end_date = window
         else:
@@ -11825,7 +11808,7 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         log_prefix="Apply",
     )
 
-    if not paths:
+    if not paths and not has_trailer_policy(blocks):
         raise HTTPException(status_code=400, detail="Sequence produced no valid preroll paths")
 
     # Apply path mappings
@@ -13355,8 +13338,8 @@ _PORTABLE_OTHERWISE_TYPES = ("nexup_trailers", "library_trailers", "coming_soon_
 # Blocks whose settings mean the same thing on any install, and the fields
 # that carry them through a .nexseq export and back.
 _PORTABLE_BLOCK_FIELDS = {
-    "nexup_trailers": ("source", "count", "mode"),
-    "library_trailers": ("count", "mode", "genres", "match_playing"),
+    "nexup_trailers": ("source", "count", "mode", "ratings", "restrict_ratings"),
+    "library_trailers": ("count", "mode", "genres", "match_playing", "ratings", "restrict_ratings"),
     "coming_soon_list": ("layout",),
     "dynamic_preroll": ("template", "theme", "filename"),
     "separator": ("duration",),
@@ -13565,6 +13548,9 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
                 pattern_block['source'] = block.get('source', 'both')
                 pattern_block['count'] = block.get('count', 2)
                 pattern_block['mode'] = block.get('mode', 'random')
+                for field in ('ratings', 'restrict_ratings'):
+                    if field in block:
+                        pattern_block[field] = block[field]
             
             elif block_type == 'coming_soon_list':
                 pattern_block['layout'] = block.get('layout', 'grid')
@@ -14179,6 +14165,7 @@ def import_community_template(template_id: int, db: Session = Depends(get_db)):
                 preroll_ids=schedule_data.get("preroll_ids")
             )
 
+            _refresh_schedule_next_run(new_schedule)
             db.add(new_schedule)
             imported_schedules.append(new_schedule)
 
@@ -14340,97 +14327,13 @@ def scheduler_debug(db: Session = Depends(get_db)):
             "priority": getattr(s, "priority", 5),
             "exclusive": getattr(s, "exclusive", False),
         }
-        # Evaluate date window
-        if not s.start_date:
-            eval_info["is_active"] = False
-            eval_info["reason"] = "no start_date"
-        else:
-            date_active = False
-            if s.end_date:
-                date_active = s.start_date <= now <= s.end_date
-            else:
-                date_active = now >= s.start_date
-            eval_info["date_active"] = date_active
-            if not date_active:
-                eval_info["is_active"] = False
-                eval_info["reason"] = f"outside date window (start={s.start_date.isoformat()}, end={s.end_date.isoformat() if s.end_date else 'indefinite'}, now={now.isoformat()})"
-            else:
-                # Check recurrence pattern
-                if s.recurrence_pattern:
-                    try:
-                        pattern = json.loads(s.recurrence_pattern)
-                        eval_info["parsed_pattern"] = pattern
-                        # weekDays check
-                        week_days = pattern.get("weekDays")
-                        if week_days and isinstance(week_days, list) and len(week_days) > 0:
-                            day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
-                            current_day_name = day_map.get(now.weekday())
-                            eval_info["current_weekday"] = current_day_name
-                            if current_day_name not in week_days:
-                                eval_info["is_active"] = False
-                                eval_info["reason"] = f"weekday {current_day_name} not in {week_days}"
-                                schedule_evals.append(eval_info)
-                                continue
-                        # monthDays check
-                        month_days = pattern.get("monthDays")
-                        if month_days and isinstance(month_days, list) and len(month_days) > 0:
-                            if now.day not in month_days:
-                                eval_info["is_active"] = False
-                                eval_info["reason"] = f"day {now.day} not in monthDays {month_days}"
-                                schedule_evals.append(eval_info)
-                                continue
-                        # timeRange check
-                        time_range = pattern.get("timeRange")
-                        if time_range and time_range.get("start"):
-                            start_str = time_range.get("start", "")
-                            end_str = time_range.get("end", "")
-                            try:
-                                sp = start_str.split(":")
-                                start_val = int(sp[0]) * 60 + (int(sp[1]) if len(sp) > 1 else 0)
-                                ep = end_str.split(":") if end_str else ["23", "59"]
-                                end_val = int(ep[0]) * 60 + (int(ep[1]) if len(ep) > 1 else 59)
-                                current_val = now.hour * 60 + now.minute
-                                if start_val <= end_val:
-                                    time_active = start_val <= current_val <= end_val
-                                else:
-                                    time_active = current_val >= start_val or current_val <= end_val
-                                eval_info["time_check"] = {
-                                    "start": start_str, "end": end_str,
-                                    "start_minutes": start_val, "end_minutes": end_val,
-                                    "current_minutes": current_val, "current_time": f"{now.hour:02d}:{now.minute:02d}",
-                                    "is_overnight": start_val > end_val,
-                                    "time_active": time_active
-                                }
-                                eval_info["is_active"] = time_active
-                                if not time_active:
-                                    eval_info["reason"] = f"outside time range {start_str}-{end_str} (now={now.hour:02d}:{now.minute:02d})"
-                            except Exception as te:
-                                eval_info["time_parse_error"] = str(te)
-                                eval_info["is_active"] = True
-                        else:
-                            eval_info["is_active"] = True
-                            eval_info["reason"] = "no timeRange constraint"
-                    except json.JSONDecodeError as je:
-                        eval_info["json_error"] = str(je)
-                        eval_info["is_active"] = True
-                else:
-                    eval_info["is_active"] = True
-                    eval_info["reason"] = "no recurrence_pattern (date-only)"
+        from backend.schedule_recurrence import parse_recurrence, recurrence_error
+        error = recurrence_error(s)
+        eval_info["recurrence_error"] = error
+        eval_info["parsed_pattern"] = None if error else parse_recurrence(s.recurrence_pattern)
+        eval_info["is_active"] = scheduler._is_schedule_active(s, now)
+        eval_info["reason"] = error or ("Inside configured window" if eval_info["is_active"] else "Outside configured date/day/time window")
         schedule_evals.append(eval_info)
-
-    # Keep the diagnostic endpoint's final verdict identical to the scheduler.
-    # The detailed legacy trace above is useful context, but it does not model
-    # yearly/holiday recurrence or overnight day anchoring completely.
-    schedules_by_id = {s.id: s for s in schedules}
-    for eval_info in schedule_evals:
-        schedule_obj = schedules_by_id.get(eval_info.get("id"))
-        if not schedule_obj:
-            continue
-        canonical_active = scheduler._is_schedule_active(schedule_obj, now)
-        if eval_info.get("is_active") != canonical_active:
-            eval_info["legacy_trace_reason"] = eval_info.get("reason")
-            eval_info["reason"] = "canonical scheduler active-window evaluation"
-        eval_info["is_active"] = canonical_active
 
     override_info = None
     if setting:
@@ -14702,13 +14605,13 @@ def _preview_payload_from_intent(setting, db) -> Optional[dict]:
             seq = []
         rows = []
         preview_ctx = None
-        for block in seq:
+        for block_index, block in enumerate(seq):
             # Show what would actually play: a conditional block that does not
             # hold is replaced by its alternative, or left out.
             if isinstance(block, dict) and isinstance(block.get("condition"), dict):
                 if preview_ctx is None:
                     preview_ctx = playback_context(db, media_type="movie")
-                block = block_to_play(block, preview_ctx)
+                block = sequence_block_to_play(seq, block_index, preview_ctx)
                 if block is None:
                     continue
             try:
@@ -16077,49 +15980,18 @@ def system_health_summary(conflicts: Optional[int] = None, db: Session = Depends
     except Exception:
         checks.append(health_summary.make_check("scheduler", "Scheduler", health_summary.UNKNOWN))
 
-    # Media server. Based on stored credentials, not a live probe: this endpoint
-    # runs on every dashboard load and must not fire network calls at a server
-    # that may be asleep or behind a slow link.
-    #
-    # Credentials are looked for in the secure store as well as the database,
-    # because the database column alone is not a signal. /plex/connect and
-    # /jellyfin/connect deliberately persist no plaintext key, and
-    # _migrate_legacy_api_keys() clears any an older version left behind - so a
-    # perfectly healthy Jellyfin or Emby always has an empty column, and the
-    # tile used to contradict the Connections page by reporting it disconnected.
+    # Saved settings establish intent; only a live authenticated probe proves
+    # connectivity. Resolve credentials from both legacy DB and secure storage.
     try:
+        from backend.media_server_health import check_media_servers
         setting = db.query(models.Setting).first()
-
-        def _has_credential(attr, secure_has) -> bool:
-            if getattr(setting, attr, None):
-                return True
-            try:
-                return bool(secure_has())
-            except Exception:
-                return False
-
-        def _plugin_registered(server_type) -> bool:
-            return any(
-                c.get("server_type", "").lower() == server_type
-                for c in PLUGIN_CLIENTS.values()
-            )
-
-        checks.append(health_summary.media_server_check([
-            ("Plex",
-             getattr(setting, "plex_url", None),
-             _has_credential("plex_token", secure_store.has_plex_token),
-             False),  # Plex is driven directly; it has no NeXroll plugin.
-            ("Jellyfin",
-             getattr(setting, "jellyfin_url", None),
-             _has_credential("jellyfin_api_key", secure_store.has_jellyfin_api_key),
-             _plugin_registered("jellyfin")),
-            ("Emby",
-             getattr(setting, "emby_url", None),
-             _has_credential("emby_api_key", secure_store.has_emby_api_key),
-             _plugin_registered("emby")),
-        ]))
+        checks.append(health_summary.media_server_check(
+            check_media_servers(setting, list(PLUGIN_CLIENTS.values()))))
     except Exception:
-        checks.append(health_summary.make_check("media_server", "Media server", health_summary.UNKNOWN))
+        checks.append(health_summary.make_check(
+            "media_server", "Media server", health_summary.WARN,
+            "Unable to check the media server connection; retry or review Connections",
+            "Check unavailable"))
 
     # Library contents
     try:
@@ -17082,6 +16954,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                         holiday_country=schedule_data.get("holiday_country"),
                         source_sequence_id=None,
                     )
+                    _refresh_schedule_next_run(schedule)
                     db.add(schedule)
                     db.flush()
                     old_source_sequence_id = schedule_data.get("source_sequence_id")
@@ -19997,6 +19870,9 @@ async def download_tv_trailer(
     # Get show info from Sonarr
     connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
     all_series = await connector.get_all_series()
+    from backend.trailer_filters import refresh_trailer_ratings
+    refresh_trailer_ratings(db, models.ComingSoonTVTrailer, all_series, "sonarr_series_id", "id")
+    db.commit()
     
     show_info = None
     for series in all_series:
@@ -20071,6 +19947,7 @@ async def download_tv_trailer(
         title=show_info.get('title', 'Unknown'),
         year=show_info.get('year'),
         season_number=season_number,
+        certification=show_info.get('certification'),
         overview=show_info.get('overview'),
         network=show_info.get('network'),
         release_type='new_show' if season_number == 1 else 'new_season',
@@ -20607,6 +20484,9 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     
     # Get all series from Sonarr to check download status
     all_series = await connector.get_all_series()
+    from backend.trailer_filters import refresh_trailer_ratings
+    refresh_trailer_ratings(db, models.ComingSoonTVTrailer, all_series, "sonarr_series_id", "id")
+    db.commit()
     
     # Build a map of series_id -> {season_number: episodeFileCount}
     series_download_status = {}
@@ -20770,6 +20650,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                 title=show['title'],
                 year=show.get('year'),
                 season_number=show['season_number'],
+                certification=show.get('certification'),
                 overview=show.get('overview'),
                 network=show.get('network'),
                 release_date=datetime.datetime.fromisoformat(show['release_date']) if show.get('release_date') else None,
@@ -21942,6 +21823,7 @@ def _library_trailer_row(row) -> dict:
         "title": row.title,
         "year": row.year,
         "genres": row.genre_list(),
+        "certification": row.certification,
         "added_to_library": row.added_to_library.isoformat() if row.added_to_library else None,
         "source": row.source,
         "status": row.status,
@@ -21976,7 +21858,10 @@ def update_library_trailer_settings(updates: dict = Body(...), db: Session = Dep
     setting = db.query(models.Setting).first()
     if not setting:
         raise HTTPException(status_code=400, detail="Settings not initialised")
-    config = library_trailers.save_config(setting, updates)
+    try:
+        config = library_trailers.save_config(setting, updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     db.commit()
     return {"config": config}
 
@@ -22010,6 +21895,7 @@ async def preview_library_trailer_selection(config: dict = Body(default={}), db:
         "in_library": sum(1 for m in movies if m.get("hasFile")),
         "matching": len(matching),
         "with_trailer_link": sum(1 for m in matching if m.get("youTubeTrailerId")),
+        "quotas": library_trailers.quotas.report(matching, db.query(models.LibraryTrailer).all(), merged),
         "facets": facets,
         "examples": [library_trailers.movie_summary(m) for m in matching[:12]],
         "pinned": {
@@ -22381,6 +22267,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
         imdb_id=movie.get('imdbId'),
         title=movie.get('title', 'Unknown'),
         year=movie.get('year'),
+        certification=movie.get('certification'),
         overview=movie.get('overview', ''),
         release_date=release_date,
         release_type=release_type,
@@ -22786,6 +22673,9 @@ async def sync_nexup(db: Session = Depends(get_db)):
         
         # This single call gets all movie info including hasFile status
         all_radarr_movies = await connector.get_all_movies_raw()
+        from backend.trailer_filters import refresh_trailer_ratings
+        refresh_trailer_ratings(db, models.ComingSoonTrailer, all_radarr_movies, "radarr_movie_id", "id")
+        db.commit()
         _file_log(f"NeX-Up sync: Got {len(all_radarr_movies)} total movies from Radarr")
         
         # Build a map of radarr_id -> hasFile for quick lookups
@@ -22952,6 +22842,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
                         imdb_id=movie.get('imdb_id'),
                         title=movie['title'],
                         year=movie.get('year'),
+                        certification=movie.get('certification'),
                         overview=movie.get('overview', ''),
                         release_date=datetime.datetime.fromisoformat(movie['release_date']).date() if movie.get('release_date') else None,
                         release_type=movie.get('release_type'),
@@ -25150,6 +25041,7 @@ def evaluate_sequence_conditions(
     media_type: Optional[str] = Query("movie", description="Evaluate as if this is about to play (movie, episode)"),
     genres: Optional[str] = Query(None, description="Comma-separated genres to evaluate as; omit for unknown, as on Plex"),
     db: Session = Depends(get_db),
+    audio_format: Optional[str] = Query(None, description="Simulated stored audio codec for preview only"),
 ):
     """Say, for each block, what would play in its slot right now.
 
@@ -25158,17 +25050,21 @@ def evaluate_sequence_conditions(
     or null>, "reason": <condition summary or null>}. Blocks without a
     condition always come back as "plays", unchanged.
     """
+    from backend.media_audio import FORMATS
+    if audio_format is not None and audio_format not in FORMATS:
+        raise HTTPException(status_code=422, detail="Unknown preview audio format")
     ctx = playback_context(
         db,
         media_type=media_type,
         genres=[g.strip() for g in genres.split(",") if g.strip()] if genres else None,
+        audio_format=audio_format,
     )
     results = []
-    for block in blocks:
+    for block_index, block in enumerate(blocks):
         if not isinstance(block, dict) or not isinstance(block.get("condition"), dict):
             results.append({"outcome": "plays", "block": block, "reason": None})
             continue
-        chosen = block_to_play(block, ctx)
+        chosen = sequence_block_to_play(blocks, block_index, ctx)
         summary = describe_condition(block.get("condition"))
         if chosen is block:
             results.append({"outcome": "plays", "block": block, "reason": summary})
@@ -30447,6 +30343,10 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
             ("plugin", rotation_use, sequence_id),
         ) if blocks else []
 
+    def _saved_sequence_has_policy(sequence_id):
+        seq = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+        return bool(seq and has_trailer_policy(seq.get_blocks()))
+
     # --- 0. Manually-applied sequence (Apply button) while its override window holds ---
     # Plex gets the sequence written directly into its preroll string at apply time,
     # but Jellyfin/Emby resolve through this function on every playback — so the
@@ -30461,7 +30361,7 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
         if override_exp and override_exp > _localized_now(db):
             try:
                 seq_paths = _resolve_sequence(int(applied_seq_id), "manual-sequence")
-                if seq_paths:
+                if seq_paths or _saved_sequence_has_policy(int(applied_seq_id)):
                     return {"paths": seq_paths, "mode": "sequential"}
             except (ValueError, TypeError):
                 pass
@@ -30495,7 +30395,7 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
                 try:
                     seq_id = int(filler_value)
                     paths = _resolve_sequence(seq_id, "filler-sequence")
-                    if paths:
+                    if paths or _saved_sequence_has_policy(seq_id):
                         return {"paths": paths, "mode": "sequential"}
                 except (ValueError, TypeError):
                     pass
@@ -30536,7 +30436,7 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
                             ("plugin", "schedule", sched.id),
                             fallback_category_id=sched.category_id,
                         )
-                        if seq_paths:
+                        if seq_paths or has_trailer_policy(raw_seq):
                             return {"paths": seq_paths, "mode": "sequential"}
         except Exception:
             pass

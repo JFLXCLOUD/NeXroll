@@ -1,0 +1,26 @@
+.nx-yearly-fields {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+.nx-yearly-fields > label {
+  display: grid;
+  gap: 6px;
+}
+.nx-yearly-fields legend {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.nx-yearly-fields p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.nx-yearly-fields details {
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+}
+.nx-yearly-fields summary { cursor: pointer; }
+.nx-yearly-fields details p { margin: 10px 0; }

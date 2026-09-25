@@ -1,3 +1,10 @@
+import TrailerRatingFilter from './components/TrailerRatingFilter';
+import CommunityAIBadge from './components/CommunityAIBadge';
+import ConflictLink from './components/ConflictLink';
+import LibraryTrailersTile from './components/LibraryTrailersTile';
+import { isAICommunitySource } from './utils/communityAI';
+import { ratingSummary } from './utils/trailerRatings';
+import useHealthSummary from './hooks/useHealthSummary';
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
@@ -12,6 +19,7 @@ import SequenceConditionPanel from './components/SequenceConditionPanel';
 import GenrePicker from './components/GenrePicker';
 import { blocksHaveConditions, hasCondition, needsPlaybackInfo, useBuilderMode, useBuilderView } from './utils/sequenceConditions';
 import Sidebar from './components/Sidebar';
+import YearlyScheduleFields from './components/YearlyScheduleFields';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import NexUpApprovedPages from './components/NexUpApprovedPages';
@@ -20,6 +28,10 @@ import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, c
 import {
   buildBlendBothChanges,
   buildRecurrencePattern,
+  getScheduleEditorRecurrence,
+  mergeScheduleRecurrence,
+  getScheduleStorageDates,
+  getScheduleTimingProblem,
   getScheduleTimeRange,
   buildScheduleTimeOccurrence,
   evaluateScheduleOccurrenceSegments,
@@ -28,7 +40,7 @@ import {
   getSchedulePairKey,
   isEffectiveBlendPair,
   isYearlyOrHolidayScheduleActiveOnDay,
-  normalizeScheduleDateForStorage,
+  scheduleIntervalsOnDay,
   priorityToBeatExclusive,
   timeRangesOverlap,
   yearlyOrHolidayDateRangesOverlap
@@ -72,21 +84,70 @@ const SIZE_SPAN = { sm: 4, md: 8, lg: 12 };
 const SIZE_LABEL = { sm: 'Third', md: 'Two thirds', lg: 'Full' };
 const ALL_SIZE_OPTIONS = ['sm', 'md', 'lg'];
 
-// The Focused Enhanced default is intentionally five panels. Existing tile IDs
+// Keep the wrapper identity stable: App updates must not remount stateful tiles.
+const SortableTile = ({ id, disabled, size = 'sm', detail = 'detailed', onCycleSize, children }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  const style = {
+    transform: transform ? `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0)` : undefined,
+    transition,
+    cursor: disabled ? 'default' : 'grab',
+    zIndex: isDragging ? 5 : 1,
+    '--nx-tile-span': SIZE_SPAN[size] || SIZE_SPAN.sm,
+    position: 'relative'
+  };
+  // Only wear the sortable ARIA while the tile can actually be sorted. dnd-kit
+  // puts aria-disabled="true" on a disabled sortable, and outside Arrange mode
+  // every tile is disabled - so the dashboard was telling assistive technology
+  // that every control inside every tile, "Refresh data" and "Scan files"
+  // included, was a disabled control, and any tool honouring ARIA refused to
+  // operate the dashboard at all. A tile that merely is not draggable right now
+  // is not a disabled control, and has no sortable role to describe.
+  const sortableProps = disabled ? {} : attributes;
+  const sortableListeners = disabled ? {} : listeners;
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      data-size={size}
+      data-detail={detail}
+      className={`nx-tile ${id === 'weekly_calendar' ? 'nx-tile-cal' : ''} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
+      {...sortableProps}
+      {...sortableListeners}
+    >
+      {!disabled && (
+        <span className="nx-tile-drag-handle" aria-hidden="true"><GripVertical size={14} /></span>
+      )}
+      {!disabled && onCycleSize && (
+        <button
+          type="button"
+          className="nx-tile-size-cycle nx-no-drag"
+          title={`Change width from ${SIZE_LABEL[size] || SIZE_LABEL.sm}`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onCycleSize(id, size); }}
+        >
+          {SIZE_LABEL[size] || SIZE_LABEL.sm}
+        </button>
+      )}
+      {children}
+    </div>
+  );
+};
+
+// The Focus Enhanced default includes the Library Trailers overview. Existing tile IDs
 // stay stable so 2.0.x layouts can still be upgraded without losing choices.
 const DEFAULT_SIZES = {
   servers: 'sm', prerolls: 'sm', schedules: 'sm', scheduler: 'sm',
-  community: 'sm', nexup: 'sm', resolution_chart: 'md',
+  community: 'sm', nexup: 'sm', library_trailers: 'sm', resolution_chart: 'md',
   now_showing: 'md', whats_next: 'md', system_health: 'sm', storage_mix: 'sm', quick_actions: 'sm',
   weekly_calendar: 'lg',
 };
-const FOCUS_ESSENTIAL_KEYS = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix'];
+const FOCUS_ESSENTIAL_KEYS = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix', 'library_trailers'];
 const FOCUS_OPTIONAL_KEYS = ['servers', 'resolution_chart', 'community'];
 // Retired in 2.1: `storage` (duplicated `storage_mix`), `current_category`
 // (the left half of `now_showing`), and `upcoming` (a second, subtly different
 // copy of `whats_next`). Stored layouts that still name them drop the keys on
 // load, both here and in backend/dashboard_layout.py.
-const DEFAULT_ORDER = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix', 'whats_next', 'servers', 'schedules', 'scheduler', 'community', 'nexup', 'resolution_chart', 'weekly_calendar'];
+const DEFAULT_ORDER = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix', 'library_trailers', 'whats_next', 'servers', 'schedules', 'scheduler', 'community', 'nexup', 'resolution_chart', 'weekly_calendar'];
 const DEFAULT_HIDDEN = DEFAULT_ORDER.filter(key => !FOCUS_ESSENTIAL_KEYS.includes(key));
 const DASH_KEYS = DEFAULT_ORDER.slice();
 const NEXROLL_WIKI_URL = 'https://github.com/JFLXCLOUD/NeXroll/wiki';
@@ -1266,7 +1327,6 @@ function App() {
   const [updateSettings, setUpdateSettings] = useState({ check_interval: 'daily', include_prerelease: false, last_check: null, dismissed_version: null });
   // Focus dashboard data. Health is a composite score from the backend; the
   // conflict count is folded in from the frontend, which owns that detection.
-  const [healthSummary, setHealthSummary] = useState(null);
   const [showCustomizeDashboard, setShowCustomizeDashboard] = useState(false);
   const [storageHealth, setStorageHealth] = useState(null);
   const [storageHealthDismissed, setStorageHealthDismissed] = useState(() => {
@@ -2059,45 +2119,30 @@ const parseNaiveDatetime = (isoOrNaive) => {
 
 // Helper function to check if a schedule is active on a specific day
 const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
-  if (!schedule.start_date) return false;
+  if (!schedule.start_date || schedule.recurrence_error) return false;
   const dayDate = new Date(dayTime);
   
   // For yearly/holiday schedules, skip the year-based date range check
   // These schedules repeat every year based on month/day only
   if (schedule.type === 'yearly' || schedule.type === 'holiday') {
-    return isYearlyOrHolidayScheduleActiveOnDay(schedule, dayDate);
+    if (!isYearlyOrHolidayScheduleActiveOnDay(schedule, dayDate)) return false;
   }
   
   // For non-yearly schedules, check if the day is within the schedule's overall date range
   const sDay = normalizeDay(schedule.start_date);
   const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : Infinity;
-  if (dayTime < sDay || dayTime > eDay) return false;
+  if (!['yearly', 'holiday'].includes(schedule.type) && (dayTime < sDay || dayTime > eDay)) return false;
   
   // Check recurrence pattern for monthly, weekly, daily schedules
   if (schedule.recurrence_pattern) {
     try {
       const pattern = JSON.parse(schedule.recurrence_pattern);
       
-      // Monthly: Check month of year, then day of month
-      if (schedule.type === 'monthly') {
-        if (pattern.months && pattern.months.length > 0) {
-          if (!pattern.months.includes(dayDate.getMonth() + 1)) return false;
-        }
-        if (pattern.monthDays && pattern.monthDays.length > 0) {
-          if (!pattern.monthDays.includes(dayDate.getDate())) return false;
-        }
-        return true;
-      }
-      
-      // Weekly: Check if day of week matches
-      if (schedule.type === 'weekly' && pattern.weekDays && pattern.weekDays.length > 0) {
-        const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][dayDate.getDay()];
-        return pattern.weekDays.includes(dayOfWeek);
-      }
-      
-      // Daily: Always true if within date range (time-of-day check would be backend's job)
-      if (schedule.type === 'daily') {
-        return true;
+      if (pattern.months?.length && !pattern.months.map(Number).includes(dayDate.getMonth() + 1)) return false;
+      if (pattern.monthDays?.length && !pattern.monthDays.map(Number).includes(dayDate.getDate())) return false;
+      if (pattern.weekDays?.length) {
+        const day = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][dayDate.getDay()];
+        if (!pattern.weekDays.map(value => String(value).toLowerCase()).includes(day)) return false;
       }
     } catch (e) {
       console.error('Failed to parse recurrence pattern:', e);
@@ -3117,97 +3162,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
       // Helper: compute the next future activation time for a schedule
       const getNextActivation = (s) => {
-        if (!s.start_date) return null;
-        const startDate = new Date(s.start_date);
-        const endDate = s.end_date ? new Date(s.end_date) : null;
-
-        // If the schedule hasn't started yet, its start is the next activation
-        // (but only if it would be active on that start date/time)
-        if (startDate > now) {
-          return startDate;
-        }
-
-        // If the schedule has ended, skip it
-        if (endDate && endDate <= now) return null;
-
-        // Schedule date range encompasses now — check recurrence for next occurrence
-        let pattern = null;
-        if (s.recurrence_pattern) {
-          try { pattern = JSON.parse(s.recurrence_pattern); } catch { /* ignore */ }
-        }
-
-        const timeRange = pattern?.timeRange;
-        const weekDays = pattern?.weekDays;
-        const months = pattern?.months;
-        const patternMonthDays = pattern?.monthDays;
-        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-
-        // Parse time range
-        let startHour = 0, startMinute = 0, hasTimeRange = false;
-        if (timeRange?.start) {
-          hasTimeRange = true;
-          const sp = timeRange.start.split(':');
-          startHour = parseInt(sp[0], 10);
-          startMinute = sp.length > 1 ? parseInt(sp[1], 10) : 0;
-        }
-
-        // Check if schedule is currently active right now (already showing)
-        const isActiveNow = (() => {
-          // Check weekDay constraint
-          if (weekDays?.length > 0 && !weekDays.includes(dayNames[now.getDay()])) return false;
-          // Check month-of-year constraint
-          if (months?.length > 0 && !months.includes(now.getMonth() + 1)) return false;
-          // Check day-of-month constraint
-          if (patternMonthDays?.length > 0 && !patternMonthDays.includes(now.getDate())) return false;
-          // Check time range
-          if (hasTimeRange) {
-            const endTimeStr = timeRange.end || '23:59';
-            const ep = endTimeStr.split(':');
-            const endHour = parseInt(ep[0], 10);
-            const endMinute = ep.length > 1 ? parseInt(ep[1], 10) : 59;
-            const curr = now.getHours() * 60 + now.getMinutes();
-            const startVal = startHour * 60 + startMinute;
-            const endVal = endHour * 60 + endMinute;
-            if (startVal <= endVal) {
-              if (curr < startVal || curr > endVal) return false;
-            } else {
-              // Overnight
-              if (curr < startVal && curr > endVal) return false;
-            }
-          }
-          return true;
-        })();
-
-        // If currently active, we want the NEXT change (not this one)
-        // So we need to find when this schedule ends AND when the next different schedule starts
-        // Skip currently active schedules — we want what's NEXT to be applied
-        if (isActiveNow) return null;
-
-        // Not currently active but within date range — find next occurrence
-        // Scan forward up to 60 days to find the next matching day+time
-        for (let dayOffset = 0; dayOffset <= 60; dayOffset++) {
-          const candidate = new Date(now);
-          candidate.setDate(candidate.getDate() + dayOffset);
-          candidate.setHours(startHour, startMinute, 0, 0);
-
-          // If same day, candidate must be in the future
-          if (candidate <= now) continue;
-
-          // Check end_date
-          if (endDate && candidate > endDate) break;
-
-          // Check weekDay constraint
-          if (weekDays?.length > 0 && !weekDays.includes(dayNames[candidate.getDay()])) continue;
-
-          // Check month-of-year constraint
-          if (months?.length > 0 && !months.includes(candidate.getMonth() + 1)) continue;
-          // Check day-of-month constraint
-          if (patternMonthDays?.length > 0 && !patternMonthDays.includes(candidate.getDate())) continue;
-
-          return candidate;
-        }
-
-        return null;
+        const next = usableScheduleDate(s.next_run);
+        return next && next > now ? next : null;
       };
 
       for (const s of schedules) {
@@ -3801,71 +3757,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   // Shared validation for schedule recurrence patterns (used by both create and update)
   const validateScheduleRecurrence = () => {
-    if ((scheduleForm.type === 'daily' || scheduleForm.type === 'weekly') && scheduleForm.start_date && scheduleForm.end_date) {
-      const start = parseNaiveDatetime(scheduleForm.start_date);
-      const end = parseNaiveDatetime(scheduleForm.end_date);
-      if (start && end && end < start) {
-        alert('End date must be after the start date');
-        return false;
-      }
-    }
-    if (scheduleForm.type === 'daily' && !timeRange.start) {
-      alert('Please select at least a start time for daily schedules');
-      return false;
-    }
-    if (scheduleForm.type === 'weekly' && weekDays.length === 0) {
-      alert('Please select at least one day of the week for weekly schedules');
-      return false;
-    }
-    if (scheduleForm.type === 'monthly' && selectedMonths.length === 0) {
-      alert('Please select at least one month for monthly schedules');
-      return false;
-    }
-    if (scheduleForm.type === 'monthly' && monthDays.length === 0) {
-      alert('Please select at least one day of the month for monthly schedules');
-      return false;
-    }
-    // Yearly schedules use start_date/end_date only — no extra recurrence needed
-    if (scheduleForm.type === 'yearly') return true;
-    if (scheduleForm.type === 'holiday' && !scheduleForm.holiday_name?.trim()) {
-      alert('Please enter a holiday name (e.g., Thanksgiving, Christmas, Easter)');
-      return false;
-    }
-    if (scheduleForm.type === 'holiday' && !scheduleForm.holiday_country?.trim()) {
-      alert('Please enter a country code (e.g., US, CA, GB)');
-      return false;
-    }
-    if (scheduleForm.type === 'holiday' && scheduleForm.start_date && scheduleForm.end_date) {
-      const start = parseNaiveDatetime(scheduleForm.start_date);
-      const end = parseNaiveDatetime(scheduleForm.end_date);
-      if (start && end) {
-        const sameDay = start.getMonth() === end.getMonth() && start.getDate() === end.getDate();
-        if (!sameDay) {
-          alert('Holiday schedules are single-day dynamic events. Use Yearly schedule type for recurring date ranges (e.g., 12/1 to 12/26).');
-          return false;
-        }
-      }
-    }
+    const problem = getScheduleTimingProblem(scheduleForm, { timeRange, weekDays, selectedMonths, monthDays });
+    if (problem) { alert(problem); return false; }
     return true;
   };
 
   // Build the common schedule data object + recurrence pattern (used by both create and update)
   const buildScheduleData = () => {
-    const normalizeRecurringDate = (value) => (
-      normalizeScheduleDateForStorage(scheduleForm.type, value)
-    );
-
-    const normalizedStartDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
-      ? normalizeRecurringDate(scheduleForm.start_date)
-      : scheduleForm.type === 'monthly'
-        ? '2000-01-01T00:00' // monthly schedules are controlled by months/monthDays recurrence, not date range
-        : scheduleForm.start_date;
-
-    const normalizedEndDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
-      ? normalizeRecurringDate(scheduleForm.end_date)
-      : scheduleForm.type === 'monthly'
-        ? '' // no end date — runs indefinitely, recurrence pattern controls active months
-        : scheduleForm.end_date;
+    const { start_date: normalizedStartDate, end_date: normalizedEndDate } = getScheduleStorageDates(scheduleForm);
 
     const data = {
       name: scheduleForm.name.trim(),
@@ -3886,7 +3785,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
 
     // Holiday fields for dynamic date lookup (holiday type only)
-    if (scheduleForm.type === 'holiday' && scheduleForm.holiday_name) {
+    if (['holiday', 'yearly'].includes(scheduleForm.type) && scheduleForm.holiday_name) {
       data.holiday_name = scheduleForm.holiday_name.trim();
       data.holiday_country = (scheduleForm.holiday_country || 'US').trim();
     } else {
@@ -3895,13 +3794,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
 
     // Build recurrence pattern based on schedule type
-    const recurrencePattern = buildRecurrencePattern({
+    let recurrencePattern = buildRecurrencePattern({
       type: scheduleForm.type,
       timeRange,
       weekDays,
       selectedMonths,
       monthDays
     });
+    recurrencePattern = mergeScheduleRecurrence(scheduleForm.type, recurrencePattern, editingSchedule);
     if (Object.keys(recurrencePattern).length > 0) {
       data.recurrence_pattern = JSON.stringify(recurrencePattern);
     } else {
@@ -3921,17 +3821,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // the Timing step marking the field required in the first place.
   const scheduleStepProblem = (step) => {
     if (step === 1 && !scheduleForm.name.trim()) return 'Give the schedule a name before continuing.';
-    if (step === 2) {
-      if (!scheduleForm.start_date && scheduleForm.type !== 'monthly') {
-        return 'Set a first active date before continuing - it is what tells the schedule when to begin.';
-      }
-      if (scheduleForm.type === 'daily' && !timeRange.start) {
-        return 'Set at least a start time for a daily schedule.';
-      }
-      if (scheduleForm.type === 'weekly' && weekDays.length === 0) {
-        return 'Pick at least one day of the week.';
-      }
-    }
+    if (step === 2) return getScheduleTimingProblem(scheduleForm, { timeRange, weekDays, selectedMonths, monthDays });
     return null;
   };
 
@@ -3946,7 +3836,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       alert('Schedule name is required');
       return;
     }
-    if (!scheduleForm.start_date && scheduleForm.type !== 'monthly') {
+    if (!scheduleForm.start_date && !['monthly', 'yearly'].includes(scheduleForm.type)) {
       alert('Start date is required');
       return;
     }
@@ -5116,17 +5006,11 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // Pairs, for the health tile.
   const dashboardConflictCount = actionableConflicts ? actionableConflicts.length : null;
 
-  // The individual schedules caught up in those pairs, for the Schedules tile.
-  // Refresh the health summary whenever the inputs it scores actually change.
-  React.useEffect(() => {
-    let cancelled = false;
-    const query = dashboardConflictCount == null ? '' : `?conflicts=${dashboardConflictCount}`;
-    fetch(apiUrl(`system/health/summary${query}`))
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => { if (!cancelled && data) setHealthSummary(data); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [dashboardConflictCount, schedulerStatus.running, prerolls.length, activeCategory]);
+  // Keep live connection health current even when schedule/library inputs stay unchanged.
+  const healthSummary = useHealthSummary(
+    apiUrl(`system/health/summary${dashboardConflictCount == null ? '' : `?conflicts=${dashboardConflictCount}`}`),
+    schedulerStatus.running, prerolls.length, activeCategory
+  );
 
   // The conflicts one saved schedule is caught in, taken from the same list the
   // Conflicts page renders. getScheduleConflicts stays for drafts: a schedule
@@ -5856,25 +5740,11 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       holiday_country: schedule.holiday_country || ''
     });
 
-    // Parse recurrence pattern
-    if (schedule.recurrence_pattern && typeof schedule.recurrence_pattern === 'string') {
-      try {
-        const pattern = JSON.parse(schedule.recurrence_pattern);
-        if (pattern.timeRange) setTimeRange(pattern.timeRange);
-        if (pattern.weekDays) setWeekDays(pattern.weekDays);
-        if (pattern.months) setSelectedMonths(pattern.months);
-        if (pattern.monthDays) setMonthDays(pattern.monthDays);
-      } catch (error) {
-        console.error('Failed to parse recurrence pattern:', error);
-        setTimeRange({ start: '', end: '' });
-        setWeekDays([]);
-        setSelectedMonths([]); setMonthDays([]);
-      }
-    } else {
-      setTimeRange({ start: '', end: '' });
-      setWeekDays([]);
-      setSelectedMonths([]); setMonthDays([]);
-    }
+    const editorRecurrence = getScheduleEditorRecurrence(schedule);
+    setTimeRange(editorRecurrence.timeRange);
+    setWeekDays(editorRecurrence.weekDays);
+    setSelectedMonths(editorRecurrence.selectedMonths);
+    setMonthDays(editorRecurrence.monthDays);
 
     // Check if schedule has a sequence
     console.log('Editing schedule:', schedule);
@@ -7214,56 +7084,18 @@ const toggleDashLock = () => {
   setDashLayout(next);
 };
 
-const SortableTile = ({ id, disabled, size = 'sm', detail = 'detailed', onCycleSize, children }) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
-  const style = {
-    transform: transform ? `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0)` : undefined,
-    transition,
-    cursor: disabled ? 'default' : 'grab',
-    zIndex: isDragging ? 5 : 1,
-    '--nx-tile-span': SIZE_SPAN[size] || SIZE_SPAN.sm,
-    position: 'relative'
-  };
-  // Only wear the sortable ARIA while the tile can actually be sorted. dnd-kit
-  // puts aria-disabled="true" on a disabled sortable, and outside Arrange mode
-  // every tile is disabled - so the dashboard was telling assistive technology
-  // that every control inside every tile, "Refresh data" and "Scan files"
-  // included, was a disabled control, and any tool honouring ARIA refused to
-  // operate the dashboard at all. A tile that merely is not draggable right now
-  // is not a disabled control, and has no sortable role to describe.
-  const sortableProps = disabled ? {} : attributes;
-  const sortableListeners = disabled ? {} : listeners;
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      data-size={size}
-      data-detail={detail}
-      className={`nx-tile ${id === 'weekly_calendar' ? 'nx-tile-cal' : ''} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
-      {...sortableProps}
-      {...sortableListeners}
-    >
-      {!disabled && (
-        <span className="nx-tile-drag-handle" aria-hidden="true"><GripVertical size={14} /></span>
-      )}
-      {!disabled && onCycleSize && (
-        <button
-          type="button"
-          className="nx-tile-size-cycle nx-no-drag"
-          title={`Change width from ${SIZE_LABEL[size] || SIZE_LABEL.sm}`}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onCycleSize(id, size); }}
-        >
-          {SIZE_LABEL[size] || SIZE_LABEL.sm}
-        </button>
-      )}
-      {children}
-    </div>
-  );
-};
-
 // Tile renderers: content mirrors the original dashboard cards
+const openScheduleConflicts = () => {
+  setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false);
+  setSelectedScheduleConflictId(null); setConflictPageTimeframe('monthly');
+  loadIgnoredConflicts(); setActiveTab('schedules/conflicts');
+};
+const conflictAwareText = text => /conflict/i.test(text || '')
+  ? <ConflictLink onOpen={openScheduleConflicts}>{text}</ConflictLink> : text;
+
 const DashboardTiles = {
+  library_trailers: () => <LibraryTrailersTile apiUrl={apiUrl} onOpen={() => setActiveTab('nexup/library')}
+    detail={dashLayout?.tiles?.library_trailers?.detail || 'detailed'} />,
   // --- Focus dashboard tiles -------------------------------------------------
   // These reuse the same .card / .nx-tile-* classes and CSS variables as every
   // other tile, so they follow the app's light and dark themes rather than
@@ -7568,29 +7400,26 @@ const DashboardTiles = {
                 className={`nx-health-ring is-${tone}`}
                 style={{ '--nx-health-progress': `${Math.max(0, Math.min(100, score || 0)) * 3.6}deg` }}
               >
-                <span>{score}</span>
+                <span>{score ?? '\u2014'}</span>
               </span>
               <span className="nx-health-copy">
-                <strong>{h.status === 'healthy' ? 'Healthy overall' : h.status === 'attention' ? 'Needs attention' : 'Action needed'}</strong>
+                <strong>{h.status === 'healthy' ? 'Healthy overall' : h.status === 'attention' ? 'Needs attention' : 'Unhealthy'}</strong>
                 <small>
-                  {h.attention_count === 0
-                    ? 'No problems found'
-                    : h.attention_count === 1
-                      ? '1 item needs attention'
-                      : `${h.attention_count} items need attention`}
+                  {h.attention_count === 0 ? 'No problems found' : conflictAwareText(h.note)}
                 </small>
               </span>
             </div>
             {detail === 'detailed' && <div className="nx-health-checks">
-              {visibleChecks.map(c => (
-                <div className="nx-health-check" key={c.key}>
+              {visibleChecks.map(c => {
+                const Row = c.key === 'conflicts' ? ConflictLink : 'div';
+                return <Row className="nx-health-check" key={c.key} {...(c.key === 'conflicts' ? { onOpen: openScheduleConflicts } : {})}>
                   <span className="nx-health-check-name">
                     <span className={`nx-health-dot is-${c.status === 'error' ? 'error' : c.status === 'warn' ? 'warn' : 'ok'}`} />
                     {c.label}
                   </span>
                   <span className={`nx-health-check-value is-${c.status}`}>{c.value ?? ''}</span>
-                </div>
-              ))}
+                </Row>;
+              })}
             </div>}
           </>
         )}
@@ -7847,12 +7676,12 @@ const DashboardTiles = {
             <span className="nx-tile-row-k"><Ban size={14} /> Disabled</span>
             <span className="nx-tile-row-v">{disabled.length}</span>
           </div>
-          <div className="nx-tile-row">
+          <ConflictLink className="nx-tile-row" onOpen={openScheduleConflicts}>
             <span className="nx-tile-row-k" style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined}>
               <AlertTriangle size={14} style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined} /> Conflicting
             </span>
             <span className="nx-tile-row-v" style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined}>{withConflicts.length}</span>
-          </div>
+          </ConflictLink>
           {withConflicts.length > 0 && (
             <button
               type="button"
@@ -9654,12 +9483,13 @@ const DashboardTiles = {
     scheduler: { label: 'Scheduler', desc: 'Run state, timezone, and last activation in detail' },
     resolution_chart: { label: 'Video quality', desc: 'Resolution and codec analysis' },
     nexup: { label: 'NeX-Up', desc: 'Trailer sync status' },
+    library_trailers: { label: 'Library Trailers', desc: 'Local trailers, downloads, storage and library sync' },
     community: { label: 'Community prerolls', desc: 'Matched and downloaded prerolls' },
     weekly_calendar: { label: 'Weekly calendar', desc: 'This week at a glance' },
   };
 
   const DASH_PRESETS = [
-    { value: 'essential', label: 'Essential', desc: 'Schedule, health, library, actions, storage' },
+    { value: 'essential', label: 'Essential', desc: 'Schedule, health, library, actions, storage and Library Trailers' },
     { value: 'operations', label: 'Operations', desc: 'Adds detailed multi-server information' },
     { value: 'everything', label: 'Everything', desc: 'Show all available dashboard tiles' },
   ];
@@ -9903,7 +9733,7 @@ const DashboardTiles = {
             {showNote && healthSummary?.note && (
               <p className={`nx-dash-note is-${healthSummary.status || 'healthy'}`}>
                 <span className="nx-dash-note-dot" />
-                <span>{healthSummary.note}</span>
+                <span>{conflictAwareText(healthSummary.note)}</span>
               </p>
             )}
           </div>
@@ -9939,7 +9769,7 @@ const DashboardTiles = {
           <span className={`nx-glance-chip ${schedulerStatus?.running ? 'good' : 'warn'}`}><i /> <strong>Scheduler</strong> {schedulerStatus?.running ? 'running' : 'stopped'}</span>
           <span className="nx-glance-chip"><i /> <strong>{prerolls.length}</strong> prerolls</span>
           <span className="nx-glance-chip"><i /> <strong>{schedules.length}</strong> schedules</span>
-          <span className={`nx-glance-chip ${dashboardConflictCount > 0 ? 'warn' : 'good'}`}><i /> <strong>{dashboardConflictCount ?? '—'}</strong> conflicts</span>
+          <ConflictLink onOpen={openScheduleConflicts} className={`nx-glance-chip ${dashboardConflictCount > 0 ? 'warn' : 'good'}`}><i /> <strong>{dashboardConflictCount ?? '—'}</strong> conflicts</ConflictLink>
           <span className="nx-glance-spacer" />
           {hiddenCount > 0 && <button className="nx-optional-count" onClick={() => setShowCustomizeDashboard(true)}>
             + {hiddenCount} optional tile{hiddenCount === 1 ? '' : 's'}
@@ -10252,14 +10082,14 @@ const DashboardTiles = {
                     </div>
                   )}
                   {hasAnyConflicts && (
-                    <div style={{
+                    <ConflictLink onOpen={openScheduleConflicts} style={{
                       display: 'flex', alignItems: 'center', gap: '5px',
                       padding: '4px 10px', borderRadius: '20px',
                       backgroundColor: 'rgba(255,152,0,0.1)', color: '#ff9800',
                       fontSize: '0.75rem', fontWeight: 600
                     }}>
                       <AlertTriangle size={12} /> {conflictDayCount} conflict{conflictDayCount !== 1 ? 's' : ''}
-                    </div>
+                    </ConflictLink>
                   )}
                   {hasAnyConflicts && (
                     <button
@@ -10342,7 +10172,7 @@ const DashboardTiles = {
                       {day.toLocaleDateString(undefined, { weekday: 'short' })}
                       {isFullDayExclusive && <Lock size={9} />}
                       {dHasBlend && !dHasExclusive && <Shuffle size={9} />}
-                      {dHasConflict && !dHasBlend && !dHasExclusive && <AlertTriangle size={9} />}
+                      {dHasConflict && !dHasBlend && !dHasExclusive && <ConflictLink onOpen={openScheduleConflicts} aria-label="Resolve conflicts on this day"><AlertTriangle size={12} /></ConflictLink>}
                     </div>
                     <div style={{
                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -10495,7 +10325,7 @@ const DashboardTiles = {
                           {schedTimeRange && (
                             <span style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>{schedTimeRange}</span>
                           )}
-                          {statusIcon && <span style={{ display: 'inline-flex' }}>{statusIcon}</span>}
+                          {statusIcon && (hasAnyConflictsForSched ? <ConflictLink onOpen={openScheduleConflicts} aria-label={`Resolve conflicts for ${sched.name}`}>{statusIcon}</ConflictLink> : <span style={{ display: 'inline-flex' }}>{statusIcon}</span>)}
                         </div>
                       </div>
                     </div>
@@ -11749,6 +11579,7 @@ const DashboardTiles = {
                           <div className="nx-hybrid-card-body">
                             <div className="nx-hybrid-card-title" title={preroll.display_name || preroll.filename}>{preroll.display_name || preroll.filename}</div>
                             <div className="nx-hybrid-card-meta"><span className="nx-hybrid-badge">{primaryCategoryFor(preroll)}</span><span className={`nx-hybrid-badge is-${status.toLowerCase()}`}>{status}</span></div>
+                            <CommunityAIBadge isAI={isAICommunitySource(preroll.community_preroll_id)} className="nx-library-ai-badge" />
                             {tagsFor(preroll).length > 0 && <div className="nx-hybrid-card-tags">{tagsFor(preroll).slice(0, 3).map(tag => <span key={tag}>{tag}</span>)}</div>}
                           </div>
                         </article>
@@ -11769,7 +11600,7 @@ const DashboardTiles = {
                             <td><div className="nx-hybrid-row-name"><div className="nx-hybrid-row-thumb">{artwork(preroll, true)}</div><div><strong title={preroll.display_name || preroll.filename}>{preroll.display_name || preroll.filename}</strong><span title={preroll.filename}>{preroll.filename}</span></div></div></td>
                             <td>{primaryCategoryFor(preroll)}</td>
                             <td>{preroll.duration ? `${Math.round(preroll.duration)}s` : '—'}</td>
-                            <td><span className={`nx-hybrid-badge is-${status.toLowerCase()}`}>{status}</span></td>
+                            <td><span className={`nx-hybrid-badge is-${status.toLowerCase()}`}>{status}</span><CommunityAIBadge isAI={isAICommunitySource(preroll.community_preroll_id)} className="nx-library-ai-badge" /></td>
                             <td>{dateFor(preroll)}</td>
                             <td><div className="nx-hybrid-row-actions"><button type="button" onClick={(event) => { event.stopPropagation(); handleLibraryPreview(preroll); }} title="Preview"><Play size={13} /></button><button type="button" onClick={(event) => { event.stopPropagation(); handleEditPreroll(preroll); }} title="Edit"><Edit size={13} /></button><button type="button" className="is-danger" onClick={(event) => { event.stopPropagation(); handleDeletePreroll(preroll.id); }} title="Move to trash"><Trash size={13} /></button></div></td>
                           </tr>
@@ -11812,6 +11643,7 @@ const DashboardTiles = {
                   )}
                 </div>
                 <div className="nx-hybrid-inspector-body">
+                  <CommunityAIBadge isAI={isAICommunitySource(libraryInspectorPreroll.community_preroll_id)} />
                   <div className="nx-hybrid-inspector-heading"><div><h2>{libraryInspectorPreroll.display_name || libraryInspectorPreroll.filename}</h2><p>{libraryInspectorPreroll.filename}</p></div><button type="button" onClick={() => setLibraryInspectorOpen(false)} aria-label="Close preview panel"><X size={14} /></button></div>
                   <div className="nx-hybrid-inspector-actions"><button type="button" className="nx-hybrid-btn is-primary" onClick={() => setPreviewingPreroll(libraryInspectorPreroll)}><Play size={13} /> Preview</button><button type="button" className="nx-hybrid-btn" onClick={() => handleEditPreroll(libraryInspectorPreroll)}><Edit size={13} /> Edit details</button></div>
                   <div className="nx-hybrid-info-list">
@@ -17268,7 +17100,7 @@ const DashboardTiles = {
                 </select>
               </div>
               
-              {scheduleForm.type !== 'monthly' && (
+              {scheduleForm.type !== 'monthly' && scheduleForm.type !== 'yearly' && (
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
                     Start Date & Time <span style={{ color: '#dc3545' }}>*</span>
@@ -17284,7 +17116,7 @@ const DashboardTiles = {
                 </div>
               )}
 
-              {scheduleForm.type !== 'monthly' && (
+              {scheduleForm.type !== 'monthly' && scheduleForm.type !== 'yearly' && (
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
                     End Date & Time <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
@@ -17301,6 +17133,8 @@ const DashboardTiles = {
                   </p>
                 </div>
               )}
+
+              {scheduleForm.type === 'yearly' && <YearlyScheduleFields value={scheduleForm} onChange={setScheduleForm} timeRange={timeRange} onTimeChange={setTimeRange} />}
 
               {scheduleForm.type === 'monthly' && (
                 <div style={{ gridColumn: '1 / -1' }}>
@@ -19202,7 +19036,8 @@ const DashboardTiles = {
 
     const nextDate = schedule => {
       const date = upcomingScheduleDate(schedule);
-      if (!date) return 'Not scheduled';
+      if (schedule.recurrence_error) return 'Needs repair';
+      if (!date) return 'No upcoming window';
       const today = new Date();
       const sameDay = date.toDateString() === today.toDateString();
       return sameDay
@@ -19220,6 +19055,11 @@ const DashboardTiles = {
     const scheduleRecurrence = schedule => {
       const type = String(schedule.type || 'schedule');
       let detail = '';
+      if (type === 'yearly') {
+        if (schedule.holiday_name && schedule.holiday_country) return `Yearly / ${schedule.holiday_name}`;
+        const format = value => new Date(value).toLocaleDateString([], { month: 'short', day: 'numeric' });
+        return schedule.end_date ? `Yearly / ${format(schedule.start_date)} - ${format(schedule.end_date)}` : 'Yearly / All year';
+      }
       try {
         const pattern = JSON.parse(schedule.recurrence_pattern || '{}');
         if (pattern.timeRange?.start) {
@@ -19243,7 +19083,7 @@ const DashboardTiles = {
           <span className="nx-command-row-accent" style={{ background: accent }} />
           <div className="nx-command-row-name">
             <strong>{schedule.name}</strong>
-            <span>{scheduleRecurrence(schedule)}</span>
+            <span>{scheduleRecurrence(schedule)}</span>{schedule.recurrence_error && <span role="alert">{schedule.recurrence_error}</span>}
           </div>
           <div className="nx-command-row-fact is-playback"><span>Playback</span><strong>{schedulePlayback(schedule)}</strong></div>
           <div className="nx-command-row-fact is-rule"><span>Rule</span><strong>{scheduleRule(schedule)}</strong></div>
@@ -19444,7 +19284,9 @@ const DashboardTiles = {
     const selectedSequence = savedSequences.find(sequence => sequence.id === loadedSavedSequenceId);
     const recurrenceLabel = scheduleForm.type === 'weekly'
       ? `${weekDays.length ? weekDays.map(day => day.slice(0, 3)).join(', ') : 'No days selected'}${timeRange.start ? ` / ${timeRange.start}${timeRange.end ? ` - ${timeRange.end}` : ''}` : ''}`
-      : `${scheduleForm.type.charAt(0).toUpperCase()}${scheduleForm.type.slice(1)}`;
+      : scheduleForm.type === 'yearly'
+        ? (scheduleForm.holiday_name || (scheduleForm.end_date ? `Every year: ${new Date(scheduleForm.start_date).toLocaleDateString([], { month: 'short', day: 'numeric' })} to ${new Date(scheduleForm.end_date).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : 'Every year: All year'))
+        : `${scheduleForm.type.charAt(0).toUpperCase()}${scheduleForm.type.slice(1)}`;
     const behaviorLabel = scheduleForm.exclusive ? 'Exclusive' : scheduleForm.blend_enabled ? 'Blend' : 'Standard';
 
     const toggleDay = day => setWeekDays(days => days.includes(day) ? days.filter(value => value !== day) : [...days, day]);
@@ -19504,7 +19346,7 @@ const DashboardTiles = {
                   <div className="nx-draft-fields">
                     <label><span>Schedule name</span><input value={scheduleForm.name} onChange={event => setScheduleForm({ ...scheduleForm, name: event.target.value })} placeholder="Friday Night Movies" required /></label>
                     <label><span>Schedule type</span><select value={scheduleForm.type} onChange={event => setScheduleForm({ ...scheduleForm, type: event.target.value })}>
-                      <option value="weekly">Weekly</option><option value="daily">Daily</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option><option value="holiday">Holiday</option>
+                      <option value="weekly">Weekly</option><option value="daily">Daily</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option><option value="holiday">Holiday</option>{editingSchedule?.type === 'custom' && <option value="custom">Custom (legacy date window)</option>}
                     </select></label>
                   </div>
                 </div>
@@ -19514,14 +19356,26 @@ const DashboardTiles = {
             {scheduleCreateStep === 2 && (
               <div className="nx-draft-form-section">
                 <h2>{scheduleForm.type === 'weekly' ? 'Weekly recurrence' : `${scheduleForm.type.charAt(0).toUpperCase()}${scheduleForm.type.slice(1)} recurrence`}</h2>
-                <p>Select the active days, date range, and time window.</p>
+                <p>Times use {currentTimezone}. Blank daily times mean all day. An earlier daily end time continues into the following day.</p>
+                {editingSchedule?.recurrence_error && <div role="alert">
+                  <p>Saved timing needs repair: {editingSchedule.recurrence_error}.</p>
+                  <button type="button" className="nx-draft-btn" onClick={() => {
+                    const repaired = { ...editingSchedule, recurrence_pattern: null, recurrence_error: null };
+                    const defaults = getScheduleEditorRecurrence(repaired);
+                    setEditingSchedule(repaired);
+                    setTimeRange(defaults.timeRange); setWeekDays(defaults.weekDays);
+                    setSelectedMonths(defaults.selectedMonths); setMonthDays(defaults.monthDays);
+                  }}>Reset invalid timing</button>
+                  <p>Reset clears invalid timing rules. Review the dates and hours before saving.</p>
+                </div>}
+
                 {scheduleForm.type === 'weekly' && (
                   <div className="nx-draft-weekday">{dayOptions.map(([value, label]) => <button type="button" key={value} className={weekDays.includes(value) ? 'on' : ''} onClick={() => toggleDay(value)}>{label}</button>)}</div>
                 )}
-                {(scheduleForm.type === 'daily' || scheduleForm.type === 'weekly') && (
+                {scheduleForm.type !== 'yearly' && (
                   <div className="nx-draft-fields nx-draft-time-fields">
-                    <label><span>Starts</span><input type="time" value={timeRange.start} onChange={event => setTimeRange({ ...timeRange, start: event.target.value })} /></label>
-                    <label><span>Ends</span><input type="time" value={timeRange.end} onChange={event => setTimeRange({ ...timeRange, end: event.target.value })} /></label>
+                    <label><span>Daily start time (optional)</span><input type="time" value={timeRange.start} onChange={event => setTimeRange({ ...timeRange, start: event.target.value })} /></label>
+                    <label><span>Daily end time (optional)</span><input type="time" value={timeRange.end} onChange={event => setTimeRange({ ...timeRange, end: event.target.value })} /></label>
                   </div>
                 )}
                 {scheduleForm.type === 'monthly' && (
@@ -19552,18 +19406,20 @@ const DashboardTiles = {
                     </div>
                   </>
                 )}
-                {scheduleForm.type !== 'monthly' && (
+                {scheduleForm.type !== 'yearly' && (
                   <div className="nx-draft-fields nx-draft-date-fields">
                     {/* Marked required, because it is. Nothing here said so,
                         and the only thing that ever mentioned it was a toast
                         three steps later. Monthly schedules genuinely do not
                         need one, so the marker follows the type. */}
-                    <label><span>First active date{scheduleForm.type !== 'monthly' ? ' *' : ''}</span><input type="datetime-local" required={scheduleForm.type !== 'monthly'} value={scheduleForm.start_date} onChange={event => setScheduleForm({ ...scheduleForm, start_date: event.target.value })} /></label>
+                    <label><span>First active date{scheduleForm.type !== 'monthly' ? ' *' : ''}</span><input type="datetime-local" required={scheduleForm.type !== 'monthly'} value={scheduleForm.type === 'monthly' && scheduleForm.start_date?.startsWith('2000-01-01') ? '' : scheduleForm.start_date} onChange={event => setScheduleForm({ ...scheduleForm, start_date: event.target.value })} /></label>
                     <label><span>Last active date</span><input type="datetime-local" value={scheduleForm.end_date} onChange={event => setScheduleForm({ ...scheduleForm, end_date: event.target.value })} /></label>
                   </div>
                 )}
+                {scheduleForm.type === 'yearly' && <YearlyScheduleFields value={scheduleForm} onChange={setScheduleForm} timeRange={timeRange} onTimeChange={setTimeRange} />}
                 {scheduleForm.type === 'holiday' && (
                   <div className="nx-draft-fields nx-draft-date-fields">
+                    <p style={{ gridColumn: '1 / -1' }}>Choose a holiday to follow its calendar date. Leave both fields blank for a fixed date that repeats annually. The first active year is preserved.</p>
                     <label><span>Country</span><select value={scheduleForm.holiday_country || ''} onChange={event => { const cc = event.target.value; setScheduleForm({ ...scheduleForm, holiday_country: cc, holiday_name: '' }); if (cc) loadHolidays(cc, new Date().getFullYear()); }}>
                       <option value="">Choose a country</option>
                       {holidayCountries.map(country => <option key={country.countryCode || country} value={country.countryCode || country}>{country.name || country}</option>)}
@@ -19582,6 +19438,7 @@ const DashboardTiles = {
                       }));
                     }} disabled={!scheduleForm.holiday_country || formHolidaysLoading}>
                       <option value="">{!scheduleForm.holiday_country ? 'Choose a country first' : formHolidaysLoading ? 'Loading…' : 'Choose a holiday'}</option>
+                      {scheduleForm.holiday_name && !formHolidays.some(h => h.name === scheduleForm.holiday_name) && <option value={scheduleForm.holiday_name}>{scheduleForm.holiday_name} (saved)</option>}
                       {formHolidays.map(holiday => <option key={`${holiday.date}-${holiday.name}`} value={holiday.name}>{holiday.name} — {holiday.date}</option>)}
                     </select>
                     <small>{scheduleForm.holiday_name
@@ -20174,10 +20031,10 @@ const DashboardTiles = {
       // "up to", because this is how many trailers the block asks for, not how
       // many exist. Reading as inventory, it claimed "2 trailers" on an install
       // with none downloaded, which then played as an empty block.
-      if (block?.type === 'nexup_trailers') return `up to ${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}`;
+      if (block?.type === 'nexup_trailers') return `up to ${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}${ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}`;
       if (block?.type === 'library_trailers') {
         const genres = (block.genres || []).join(', ') || 'any genre';
-        return `up to ${block.count || 2} from your library / ${genres}${block.match_playing ? ' / same genre as the movie' : ''}`;
+        return `up to ${block.count || 2} from your library / ${genres}${block.match_playing ? ' / same genre as the movie' : ''}${ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}`;
       }
       if (block?.type === 'dynamic_preroll') return generatedItems.find(item => item.filename === block.filename)?.name || 'Choose a generated item';
       if (block?.type === 'coming_soon_list') return block.layout === 'list' ? 'Latest Coming Soon list' : 'Latest Coming Soon grid';
@@ -20248,10 +20105,10 @@ const DashboardTiles = {
                 <summary>What each server can check{hasPlex ? ', including Plex' : ''}</summary>
                 <ul>
                   <li><strong>Every server</strong><span>Trailers available, and Time of day. Jellyfin and Emby check them the moment playback starts; Plex re-checks every 10 minutes.</span></li>
-                  <li><strong>Jellyfin &amp; Emby</strong><span>Genre, and movie or episode. Their plugin tells NeXroll which title is about to play, so a Horror movie can open with your Halloween prerolls.</span></li>
-                  <li><strong>Plex</strong><span>Plex plays one preroll list, set in advance, before every movie, so it never tells NeXroll which movie is starting. A genre rule is never met on Plex: that block plays its Otherwise instead, so give it one your Plex viewers will enjoy.{hasPlex ? ' To theme Plex by occasion, schedule a category: a Halloween category through October works on every server.' : ''}</span></li>
+                  <li><strong>Jellyfin &amp; Emby</strong><span>Genre, movie or episode, and stored audio format. Their plugin identifies the title; audio rules check file metadata, not the viewer's selected track or transcoded output.</span></li>
+                  <li><strong>Plex</strong><span>Plex plays one preroll list, set in advance, before every movie, so it never tells NeXroll which movie is starting. Genre and audio rules use Otherwise on Plex, even when negated.{hasPlex ? ' To theme Plex by occasion, schedule a category: a Halloween category through October works on every server.' : ''}</span></li>
                 </ul>
-                {hasPlex && pluginServers.length === 0 && <p className="nx-server-card-you">You are connected to Plex only, so genre rules will always take their Otherwise here.</p>}
+                {hasPlex && pluginServers.length === 0 && <p className="nx-server-card-you">You are connected to Plex only, so genre and audio rules will always take their Otherwise here.</p>}
                 {hasPlex && pluginServers.length > 0 && <p className="nx-server-card-you">You run Plex alongside {describeServers(pluginServers)}: the same sequence plays genre-matched blocks there and each block's Otherwise on Plex.</p>}
               </details>
             )}
@@ -20387,6 +20244,10 @@ const DashboardTiles = {
                   <p className="nx-server-note"><strong>Jellyfin &amp; Emby</strong> say which movie is starting, so this can pick horror trailers before a horror movie. Plex doesn't, so on Plex trailers come from the whole selection. The trailer for the movie that's about to play is never picked.</p>
                   <p className="nx-draft-field-hint">Plays trailers from NeX-Up &gt; Library Trailers. <button type="button" className="nx-draft-link" onClick={() => setActiveTab('nexup/library')}>Open Library Trailers</button></p>
                 </>}
+                {['nexup_trailers', 'library_trailers'].includes(selectedBlock.type) && <TrailerRatingFilter
+                  value={selectedBlock} includeTV={selectedBlock.type === 'nexup_trailers' && selectedBlock.source !== 'movies'}
+                  onChange={patch => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, ...patch } : block))}
+                />}
                 {['dynamic_preroll', 'coming_soon_list'].includes(selectedBlock.type) && <>
                   <label className="nx-draft-field"><span>Generated item</span><select
                     value={selectedBlock.type === 'coming_soon_list' ? `latest:${selectedBlock.layout || 'grid'}` : (selectedBlock.filename ? `file:${selectedBlock.filename}` : '')}
@@ -23796,42 +23657,10 @@ const DashboardTiles = {
     date.getMonth(),
     date.getDate() - ((date.getDay() + 6) % 7)
   );
-  const schedulesForDay = date => {
-    const dayTime = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-    // A disabled schedule cannot run, so it does not belong on the calendar.
-    return schedules.filter(schedule => schedule.is_active !== false
-      && isScheduleActiveOnDay(schedule, dayTime, toDayTime));
-  };
-  // Filler covers whatever a day's schedules do not. Work that out honestly:
-  // merge each schedule's covered minutes, then take the complement. A
-  // schedule with no time range runs all day, which correctly leaves no gap.
+  const schedulesForDay = date => schedules.filter(schedule => scheduleIntervalsOnDay(schedule, date).length > 0);
   const DAY_MINUTES = 24 * 60;
   const scheduleBusyIntervals = day => {
-    const spans = [];
-    schedulesForDay(day).forEach(schedule => {
-      const range = getScheduleTimeRange(schedule) || {};
-      const toMinutes = value => {
-        // Guard the blank case first: Number('') is 0, not NaN, so a missing
-        // time range would otherwise parse as midnight and make an all-day
-        // schedule look like it covered nothing.
-        const text = String(value ?? '').trim();
-        if (!text) return null;
-        const parts = text.split(':');
-        const hour = Number(parts[0]);
-        const minute = parts.length > 1 ? Number(parts[1]) : 0;
-        if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-        return (hour * 60) + minute;
-      };
-      const start = toMinutes(range.start);
-      const end = toMinutes(range.end);
-      if (start === null) { spans.push([0, DAY_MINUTES]); return; }
-      const finish = end === null ? DAY_MINUTES : end;
-      // A range that ends before it starts runs past midnight, so it covers
-      // both the tail of the day and its beginning.
-      if (finish < start) { spans.push([start, DAY_MINUTES], [0, finish]); }
-      else spans.push([start, finish]);
-    });
-    spans.sort((a, b) => a[0] - b[0]);
+    const spans = schedules.flatMap(schedule => scheduleIntervalsOnDay(schedule, day)).sort((a, b) => a[0] - b[0]);
     const merged = [];
     spans.forEach(span => {
       const last = merged[merged.length - 1];
@@ -23840,38 +23669,11 @@ const DashboardTiles = {
     });
     return merged;
   };
-  // One schedule's occupied minutes on a given day. The time lives in the
-  // recurrence pattern, not start_date: monthly schedules store the sentinel
-  // 2000-01-01, so reading the hour off start_date puts everything at
-  // midnight, which is why the old week grid (which began at 08:00) showed
-  // nothing at all for them.
-  const scheduleSpansForDay = day => {
-    const spans = [];
-    schedulesForDay(day).forEach(schedule => {
-      const range = getScheduleTimeRange(schedule) || {};
-      const toMinutes = value => {
-        const text = String(value ?? '').trim();
-        if (!text) return null;
-        const parts = text.split(':');
-        const hour = Number(parts[0]);
-        const minute = parts.length > 1 ? Number(parts[1]) : 0;
-        return Number.isFinite(hour) && Number.isFinite(minute) ? (hour * 60) + minute : null;
-      };
-      const start = toMinutes(range.start);
-      const end = toMinutes(range.end);
-      if (start === null) { spans.push({ schedule, start: 0, end: DAY_MINUTES, allDay: true }); return; }
-      const finish = end === null ? DAY_MINUTES : end;
-      if (finish < start) {
-        // Runs past midnight, so it occupies both ends of the day.
-        spans.push({ schedule, start, end: DAY_MINUTES, wraps: true });
-        spans.push({ schedule, start: 0, end: finish, wraps: true });
-      } else {
-        spans.push({ schedule, start, end: finish });
-      }
-    });
-    return spans.sort((a, b) => a.start - b.start || a.end - b.end);
-  };
-
+  const scheduleSpansForDay = day => schedules.flatMap(schedule =>
+    scheduleIntervalsOnDay(schedule, day).map(([start, end]) => ({
+      schedule, start, end, allDay: start === 0 && end === DAY_MINUTES
+    }))
+  ).sort((a, b) => a.start - b.start || a.end - b.end);
   const fillerGapsForDay = day => {
     // Filler that is switched on but has nothing selected plays nothing, so
     // drawing it on the calendar would promise something that will not happen.
@@ -36780,7 +36582,7 @@ const DashboardTiles = {
                     <div className="nx-comm-row-meta">
                       {preroll.creator && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><User size={13} /> {cleanDisplayText(preroll.creator)}</span>}
                       {preroll.category && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(preroll.category)}</span>}
-                      {preroll.is_ai && <span className="nx-comm-ai-badge"><Sparkles size={11} /> AI-generated</span>}
+                      <CommunityAIBadge isAI={preroll.is_ai} />
                       {preroll.duration && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={13} /> {preroll.duration}s</span>}
                       {preroll.file_size && preroll.file_size !== 'Unknown' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Package size={13} /> {preroll.file_size}</span>}
                     </div>
@@ -36888,7 +36690,7 @@ const DashboardTiles = {
                         <div><dt>Duration</dt><dd>{formatCommunityDuration(communityInspectorItem, communityItemMeta)}</dd></div>
                         <div><dt>File size</dt><dd>{formatCommunitySize(communityInspectorItem, communityItemMeta)}</dd></div>
                       </dl>
-                      {communityInspectorItem.is_ai && <span className="nx-comm-ai-badge"><Sparkles size={11} /> AI-generated</span>}
+                      <CommunityAIBadge isAI={communityInspectorItem.is_ai} />
                     </div>
                     <footer>
                       <button className="button button-secondary" onClick={() => setCommunityPreviewingPreroll(communityInspectorItem)}><Maximize2 size={14} /> Full preview</button>
@@ -36955,7 +36757,7 @@ const DashboardTiles = {
                 {communityRandomPreroll.category && (
                   <div className="nx-comm-row-meta">
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(communityRandomPreroll.category)}</span>
-                    {communityRandomPreroll.is_ai && <span className="nx-comm-ai-badge"><Sparkles size={11} /> AI-generated</span>}
+                    <CommunityAIBadge isAI={communityRandomPreroll.is_ai} />
                   </div>
                 )}
                 {communityShowAddToCategory[communityRandomPreroll.id] && (
@@ -37662,6 +37464,8 @@ const DashboardTiles = {
         darkMode={darkMode}
         version={systemVersion?.api_version}
         update={showUpdateBanner && updateInfo ? updateInfo : null}
+        apiUrl={apiUrl}
+        favoriteScope={authStatus.auth_enabled ? `user:${authStatus.user?.id}` : 'local'}
       />
       <div className={`nx-content nx-content-${activeSection}`}>
         {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
@@ -38421,7 +38225,7 @@ const DashboardTiles = {
                  : 'rgba(251, 191, 36, 0.3)'}`,
                borderRadius: '6px'
              }}>
-               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
                  <span style={{ fontSize: '1.2rem' }}>
                    {editingPreroll.community_preroll_id ? '' : ''}
                  </span>
@@ -38430,6 +38234,7 @@ const DashboardTiles = {
                      ? 'Community Match Found' 
                      : 'No Community Match'}
                  </strong>
+                 <CommunityAIBadge isAI={isAICommunitySource(editingPreroll.community_preroll_id)} />
                </div>
                
                {editingPreroll.community_preroll_id ? (

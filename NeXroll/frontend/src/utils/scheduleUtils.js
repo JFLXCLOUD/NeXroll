@@ -323,7 +323,7 @@ export const buildRecurrencePattern = ({
     end: timeRange.end || ''
   };
 
-  if (type === 'daily' && normalizedTimeRange.start) {
+  if (['daily', 'yearly', 'holiday', 'custom'].includes(type) && normalizedTimeRange.start) {
     pattern.timeRange = normalizedTimeRange;
   }
   if (type === 'weekly' && weekDays.length > 0) {
@@ -337,6 +337,113 @@ export const buildRecurrencePattern = ({
   }
 
   return pattern;
+};
+
+/** Older schedules omitted filters to mean every month/day, not no days. */
+export const getScheduleEditorRecurrence = (schedule) => {
+  let pattern = {};
+  try {
+    const parsed = JSON.parse(schedule.recurrence_pattern || '{}');
+    if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') pattern = parsed;
+  } catch (_) { /* The API exposes malformed rows for repair. */ }
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  return {
+    timeRange: pattern.timeRange && typeof pattern.timeRange === 'object' && !Array.isArray(pattern.timeRange) ? pattern.timeRange : { start: '', end: '' },
+    weekDays: Array.isArray(pattern.weekDays) && pattern.weekDays.length ? pattern.weekDays.map(d => String(d).toLowerCase()) : schedule.type === 'weekly' ? days : [],
+    selectedMonths: Array.isArray(pattern.months) && pattern.months.length ? pattern.months.map(Number) : schedule.type === 'monthly' ? Array.from({ length: 12 }, (_, i) => i + 1) : [],
+    monthDays: Array.isArray(pattern.monthDays) && pattern.monthDays.length ? pattern.monthDays.map(Number) : schedule.type === 'monthly' ? Array.from({ length: 31 }, (_, i) => i + 1) : []
+  };
+};
+
+export const mergeScheduleRecurrence = (type, pattern, existing) => {
+  if (!existing || existing.type !== type) return pattern;
+  let previous = {};
+  try { previous = JSON.parse(existing.recurrence_pattern || '{}'); } catch (_) { return pattern; }
+  if (!previous || Array.isArray(previous) || typeof previous !== 'object') return pattern;
+  const controlled = { weekly: ['weekDays'], monthly: ['months', 'monthDays'] }[type] || [];
+  const preserved = Object.fromEntries(Object.entries(previous).filter(([key]) => key !== 'timeRange' && !controlled.includes(key)));
+  return { ...preserved, ...pattern };
+};
+
+/** Editing a pre-2.0 Monthly row must not erase its finite activation window. */
+export const getScheduleStorageDates = (form) => {
+  if (form.type === 'monthly') return { start_date: form.start_date || '2000-01-01T00:00', end_date: form.end_date || '' };
+  const type = form.holiday_name && form.holiday_country ? 'holiday' : form.type;
+  return {
+    start_date: normalizeScheduleDateForStorage(type, form.start_date || (type === 'yearly' ? '2000-01-01T00:00' : '')),
+    end_date: normalizeScheduleDateForStorage(type, form.end_date || '')
+  };
+};
+
+export const getScheduleTimingProblem = (form, { timeRange = {}, weekDays = [], selectedMonths = [], monthDays = [] } = {}) => {
+  if (!['monthly', 'yearly'].includes(form.type) && !form.start_date) return 'Set a first active date before continuing.';
+  if (!['yearly', 'holiday'].includes(form.type) && form.start_date && form.end_date && new Date(form.end_date) < new Date(form.start_date)) return 'Last active date must be after the first active date.';
+  if (timeRange.end && !timeRange.start) return 'Set a daily start time or clear the daily end time.';
+  if (form.type === 'weekly' && !weekDays.length) return 'Pick at least one day of the week.';
+  if (form.type === 'monthly' && !selectedMonths.length) return 'Pick at least one month.';
+  if (form.type === 'monthly' && !monthDays.length) return 'Pick at least one day of the month.';
+  if (form.type === 'holiday' && Boolean(form.holiday_name) !== Boolean(form.holiday_country)) return 'Select both holiday and country, or clear both for a fixed-date holiday.';
+  return null;
+};
+
+/** Wall-clock calendar intervals, including yesterday's overnight occurrence. */
+export const scheduleIntervalsOnDay = (schedule, day) => {
+  if (!schedule.start_date || schedule.is_active === false || schedule.recurrence_error) return [];
+  let pattern;
+  try { pattern = JSON.parse(schedule.recurrence_pattern || '{}'); } catch (_) { return []; }
+  if (!pattern || Array.isArray(pattern) || typeof pattern !== 'object') return [];
+  const start = new Date(schedule.start_date);
+  const end = schedule.end_date ? new Date(schedule.end_date) : null;
+  const midnight = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  const minuteOf = value => value.getHours() * 60 + value.getMinutes();
+  const parseTime = value => {
+    const match = /^(\d{1,2})(?::(\d{2}))?$/.exec(value || '');
+    return match && Number(match[1]) < 24 && Number(match[2] || 0) < 60 ? Number(match[1]) * 60 + Number(match[2] || 0) : null;
+  };
+  const from = parseTime(pattern.timeRange?.start);
+  const to = parseTime(pattern.timeRange?.end || '23:59');
+  if ((pattern.timeRange?.start && from === null) || to === null || (pattern.timeRange?.end && from === null)) return [];
+  const annual = ['yearly', 'holiday'].includes(schedule.type);
+  const linked = Boolean(schedule.holiday_name && schedule.holiday_country);
+  const key = date => ((date.getMonth() + 1) * 100 + date.getDate()) * 1440 + minuteOf(date);
+  const active = at => {
+    const anchor = new Date(at);
+    const minute = minuteOf(at);
+    if (from !== null && from > to && minute <= to) {
+      anchor.setDate(anchor.getDate() - 1);
+      anchor.setHours(Math.floor(from / 60), from % 60, 0, 0);
+    }
+    if ((linked || schedule.type === 'holiday') && anchor.getFullYear() < start.getFullYear()) return false;
+    if (annual) {
+      if (linked) {
+        // The server resolves the next moving holiday, even across New Year.
+        const upcoming = schedule.next_run ? new Date(schedule.next_run) : null;
+        const resolved = upcoming?.getFullYear() === anchor.getFullYear() ? upcoming : start;
+        if (anchor.getMonth() !== resolved.getMonth() || anchor.getDate() !== resolved.getDate()) return false;
+      } else if (end) {
+        const first = key(start), last = key(end), current = key(anchor);
+        if (!(first <= last ? current >= first && current <= last : current >= first || current <= last)) return false;
+      } else if (schedule.type === 'holiday' && (anchor.getMonth() !== start.getMonth() || anchor.getDate() !== start.getDate())) return false;
+    } else if (anchor < start || (end && anchor > end)) return false;
+    if (pattern.months?.length && !pattern.months.map(Number).includes(anchor.getMonth() + 1)) return false;
+    if (pattern.monthDays?.length && !pattern.monthDays.map(Number).includes(anchor.getDate())) return false;
+    const names = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    if (pattern.weekDays?.length && !pattern.weekDays.map(value => String(value).toLowerCase()).includes(names[anchor.getDay()])) return false;
+    return from === null || (from <= to ? minute >= from && minute <= to : minute >= from || minute <= to);
+  };
+  // Activity can only change at a date boundary or one of these clock times.
+  const cuts = [...new Set([0, 1440, from, to + 1, minuteOf(start), end ? minuteOf(end) + 1 : null].filter(value => value !== null))].sort((a, b) => a - b);
+  const result = [];
+  for (let i = 0; i < cuts.length - 1; i += 1) {
+    const at = new Date(midnight);
+    at.setHours(Math.floor(cuts[i] / 60), cuts[i] % 60, 0, 0);
+    if (active(at)) {
+      const last = result[result.length - 1];
+      if (last && last[1] === cuts[i]) last[1] = cuts[i + 1];
+      else result.push([cuts[i], cuts[i + 1]]);
+    }
+  }
+  return result;
 };
 
 const parseMonthDay = (value) => {

@@ -6,6 +6,7 @@ import {
   Sparkles, ToggleLeft, ToggleRight, Trash2, Tv, Upload, Video, X
 } from 'lucide-react';
 import NeXUpGeneratorStudio from './NeXUpGeneratorStudio';
+import TrailerQuotaEditor, { TrailerQuotaReport } from './TrailerQuotaEditor';
 
 const formatDate = value => {
   if (!value) return 'Date unknown';
@@ -706,15 +707,17 @@ function LibraryTrailersPage({ onNavigate }) {
   useEffect(() => { loadSettings(); loadTrailers(); }, [loadSettings, loadTrailers]);
 
   // What the current choices cover, before anything is saved.
-  const selectionKey = config ? JSON.stringify(['mode', 'picked', 'genres', 'exclude_genres', 'certifications', 'languages', 'tags', 'year_from', 'year_to', 'min_imdb', 'min_rt', 'recent_days', 'always_include', 'never_include', 'priority'].map(k => config[k])) : '';
+  const selectionKey = config ? JSON.stringify(['mode', 'picked', 'genres', 'exclude_genres', 'certifications', 'languages', 'tags', 'year_from', 'year_to', 'min_imdb', 'min_rt', 'recent_days', 'always_include', 'never_include', 'priority', 'quotas', 'download', 'max_downloads', 'max_gb'].map(k => config[k])) : '';
   useEffect(() => {
     if (!config || !info?.radarr_connected) return undefined;
+    const controller = new AbortController();
     setPreviewing(true);
     const timer = setTimeout(async () => {
       try {
         const body = await libraryJson('/nexup/library/preview', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config), signal: controller.signal,
         });
+        if (controller.signal.aborted) return;
         setPreview(body);
         setPinnedInfo(previous => {
           const next = { ...previous };
@@ -723,14 +726,14 @@ function LibraryTrailersPage({ onNavigate }) {
         });
         setPreviewError(null);
       } catch (error) {
-        setPreviewError(error.message);
+        if (!controller.signal.aborted) setPreviewError(error.message);
       } finally {
-        setPreviewing(false);
+        if (!controller.signal.aborted) setPreviewing(false);
       }
     }, 400);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectionKey, info?.radarr_connected]);
+  }, [selectionKey, info?.radarr_connected, sync?.finished_at, trailers]);
 
   // Follow a running sync, then refresh the list once it finishes.
   useEffect(() => {
@@ -872,6 +875,7 @@ function LibraryTrailersPage({ onNavigate }) {
 
       {notice && <div className={`nx-ap-library-message ${notice.tone}`} role="status">{notice.text}</div>}
       {showSync && sync && <LibrarySyncCard sync={sync} onHide={() => setShowSync(false)} />}
+      {showSync && !sync?.running && <TrailerQuotaReport entries={sync?.result?.quotas} title="Targets at last sync" />}
 
       <div className="nx-ap-settings-grid">
         <section className="nx-ap-panel">
@@ -1056,13 +1060,18 @@ function LibraryTrailersPage({ onNavigate }) {
           </div>
         </section>
 
-        <section className="nx-ap-panel">
-          <header className="nx-ap-panel-head"><div><strong>Download limits</strong><span>Only downloads count toward these</span></div></header>
-          <div className="nx-ap-panel-body">
+        <section className="nx-ap-panel nx-lt-download-settings" aria-label="Download limits and targets">
+          <header className="nx-ap-panel-head"><div><strong>Download limits &amp; targets</strong><span>Set your capacity, then choose the mix of trailers to keep</span></div></header>
+          <div className="nx-ap-panel-body nx-lt-download-grid">
+            <div className="nx-lt-capacity">
+            <strong className="nx-lt-section-title">Capacity &amp; rotation</strong>
+            <p className="nx-ap-library-muted">These limits apply to downloads. Trailers next to your movies do not use download slots or storage.</p>
             <div className="nx-ap-control-row"><div><strong>Maximum downloaded trailers</strong><span>Trailers next to your movies are always included on top of this.</span></div><select aria-label="Maximum downloaded trailers" value={config.max_downloads} disabled={!config.download} onChange={event => change({ max_downloads: Number(event.target.value) })}>{LIBRARY_MAX_DOWNLOADS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>
             <div className="nx-ap-control-row"><div><strong>Maximum download storage</strong><span>Kept in a Library folder inside NeX-Up storage.</span></div><select aria-label="Maximum download storage" value={config.max_gb} disabled={!config.download} onChange={event => change({ max_gb: Number(event.target.value) })}>{LIBRARY_MAX_GB.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>
-            <div className="nx-ap-control-row"><div><strong>Download first</strong><span>{priority[2]} Movies you always include come first.</span></div><select aria-label="Download first" value={config.priority} disabled={!config.download} onChange={event => change({ priority: event.target.value })}>{LIBRARY_PRIORITY.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>
-            <p className="nx-ap-library-muted">When a limit is reached, trailers outside your filters make room first. After that, each sync swaps up to three downloads that have played for at least a week for movies that don&apos;t have a trailer yet, so the selection keeps changing.</p>
+            <div className="nx-ap-control-row"><div><strong>Download first</strong><span>{priority[2]} {config.quotas?.length ? 'Unmet targets take priority; remaining slots use this order with always-included movies first.' : 'Movies you always include come first.'}</span></div><select aria-label="Download first" value={config.priority} disabled={!config.download} onChange={event => change({ priority: event.target.value })}>{LIBRARY_PRIORITY.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>
+            <p className="nx-ap-library-muted">When a limit is reached, trailers outside your filters make room first. After that, each sync swaps up to three downloads that have played for at least a week for movies that don&apos;t have a trailer yet, so the selection keeps changing. With minimum targets, replacement also protects the target counts and waits for a successful download.</p>
+            </div>
+            <TrailerQuotaEditor standalone value={config.quotas || []} onChange={quotas => change({ quotas })} genres={facets?.genres || []} report={previewing || previewError ? [] : preview?.quotas || []} disabled={running} />
             {(summary.outside || 0) > 0 && (
               <div className="nx-lt-outside-row">
                 <span><strong>{summary.outside} trailer{summary.outside === 1 ? ' is' : 's are'} outside your filters.</strong> {summary.outside === 1 ? 'It still plays' : 'They still play'} until room is needed.</span>

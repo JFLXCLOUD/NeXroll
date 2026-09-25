@@ -1,10 +1,11 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
+import usePageFavorites from '../hooks/usePageFavorites';
 import {
   LayoutDashboard, Upload, Film, Video, Zap,
   Calendar, Plus, CalendarDays, BookOpen, GitCompare,
   Library, Sparkles, Link as LinkIcon, ClipboardList, Settings,
   Globe, ArrowRight, HardDrive, Key, FileText, Users, Download, Info, FolderTree,
-  Github, Heart, Archive,
+  Github, Heart, Archive, Star,
   ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, Search, CornerDownLeft, ArrowUpCircle
 } from 'lucide-react';
 
@@ -234,7 +235,13 @@ function Sidebar({
   darkMode,
   version,
   update,
+  apiUrl,
+  favoriteScope = 'local',
 }) {
+  const favorites = usePageFavorites(apiUrl, favoriteScope);
+  const currentPage = SEARCH_INDEX.find(item => item.id === (activeTab === 'community-prerolls' ? 'community-prerolls/browse' : activeTab));
+  const isFavorite = currentPage && favorites.pages.includes(currentPage.id);
+  const favoriteItems = favorites.pages.map(id => SEARCH_INDEX.find(item => item.id === id)).filter(Boolean);
   // Which top-level section is currently active (for auto-expanding its tree).
   const activeSectionId = useMemo(() => {
     const sec = NAV.find((n) => n.match(activeTab));
@@ -386,6 +393,32 @@ function Sidebar({
         )}
 
         <nav className="nx-sidebar-nav">
+          <section className="nx-sidebar-favorites" aria-label="Favorites">
+            <div className="nx-sidebar-favorites-heading">
+              {!collapsed && <strong>Favorites</strong>}
+              <button type="button" className={`nx-sidebar-favorite-toggle${isFavorite ? ' is-active' : ''}`}
+                disabled={!currentPage || !favorites.ready || favorites.saving}
+                aria-pressed={Boolean(isFavorite)}
+                title={isFavorite ? 'Remove this page from Favorites' : 'Favorite this page'}
+                aria-label={isFavorite ? 'Remove this page from Favorites' : 'Favorite this page'}
+                onClick={() => favorites.toggle(currentPage.id)}>
+                <Star size={17} fill={isFavorite ? 'currentColor' : 'none'} />
+              </button>
+            </div>
+            {!collapsed && !favoriteItems.length && <p className="nx-sidebar-favorites-hint">{favorites.ready ? 'Use the star to add this page.' : 'Loading Favorites...'}</p>}
+            {favoriteItems.map(item => {
+              const Icon = item.icon;
+              const label = item.crumb ? `${item.crumb} · ${item.label}` : item.label;
+              return <button key={item.id} type="button" className={`nx-sidebar-item${activeTab === item.id ? ' active' : ''}`}
+                title={label} aria-label={label} onClick={() => go(item.id)}>
+                <span className="nx-sidebar-icon"><Icon size={17} /></span>
+                <span className="nx-sidebar-label">{item.label}</span>
+              </button>;
+            })}
+            {favorites.error && <button type="button" className="nx-sidebar-favorites-error" title={favorites.error} onClick={favorites.refresh}>
+              {collapsed ? '!' : favorites.error}
+            </button>}
+          </section>
           {NAV.map((section) => {
             const SectionIcon = section.icon;
             const isActiveSection = activeSectionId === section.id;

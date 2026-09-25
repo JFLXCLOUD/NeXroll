@@ -23,6 +23,19 @@ const Harness = ({ initial = { condition: null, otherwise: null } }) => {
   );
 };
 
+test('availability can select a library rating pool or follow a trailer block', () => {
+  render(<Harness />);
+  fireEvent.click(screen.getByRole('button', { name: /add a condition/i }));
+  fireEvent.change(screen.getByLabelText('Trailer pool'), { target: { value: 'library' } });
+  fireEvent.click(screen.getByLabelText('Restrict age ratings'));
+  fireEvent.click(screen.getByLabelText('PG'));
+  expect(latest.condition.rules[0]).toMatchObject({ pool: 'library', ratings: ['PG'], restrict_ratings: true });
+  fireEvent.change(screen.getByLabelText('Trailer pool'), { target: { value: 'block' } });
+  expect(latest.condition.rules[0].pool).toBe('block');
+  expect(screen.queryByLabelText('Restrict age ratings')).not.toBeInTheDocument();
+  expect(screen.getByText(/Uses this trailer block/)).toBeInTheDocument();
+});
+
 describe('BlockConditionEditor', () => {
   test('adding a condition starts with "a trailer is available" and skips otherwise', () => {
     render(<Harness />);

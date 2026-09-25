@@ -1,3 +1,4 @@
+import { ratingSummary } from '../utils/trailerRatings';
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -315,6 +316,7 @@ const SequenceBlock = ({
             <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
               {block.count || 2} trailer{(block.count || 2) === 1 ? '' : 's'} for movies you own / {genres}
               {block.match_playing ? ' / same genre as the movie (Jellyfin & Emby)' : ''}
+              {ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}
             </div>
           </div>
         </>
@@ -377,6 +379,7 @@ const SequenceBlock = ({
               marginBottom: '5px'
             }}>
               <strong style={{ color: 'var(--text-color)' }}>Source:</strong> {sourceLabel}
+              {ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}
             </div>
             <div style={{
               fontSize: '14px',

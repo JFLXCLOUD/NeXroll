@@ -1,4 +1,4 @@
-import calendar
+from backend.sequence_conditions import sequence_block_to_play
 import datetime
 import json
 import random
@@ -18,7 +18,10 @@ from backend.plex_connector import PlexConnector
 from backend.jellyfin_connector import JellyfinConnector
 from backend.database import SessionLocal
 from backend.shuffle_bag import shuffle_bag_sample
+from backend.yearly_schedules import in_yearly_window
+from backend.schedule_recurrence import parse_recurrence, recurrence_error, WEEKDAYS
 from backend.library_trailers import eligible_library_trailers
+from backend.trailer_filters import filter_trailer_ratings, has_trailer_policy
 from backend.sequence_conditions import (
     PlaybackContext,
     block_to_play,
@@ -222,7 +225,7 @@ def resolve_nexup_trailer_block(block: dict, db, rotation_key=None) -> list:
         count = 2
     count = max(count, 1)
 
-    rows = eligible_nexup_trailers(db, source)
+    rows = filter_trailer_ratings(eligible_nexup_trailers(db, source), block)
     if not rows:
         return []
     if mode == "sequential":
@@ -294,7 +297,7 @@ def playback_context(db, media_type: Optional[str] = None,
                      now: Optional[datetime.datetime] = None,
                      item_id: Optional[str] = None,
                      server_type: Optional[str] = None,
-                     genres: Optional[list] = None) -> PlaybackContext:
+                     genres: Optional[list] = None, audio_format: Optional[str] = None) -> PlaybackContext:
     """The facts a block condition may ask about, for one resolution pass.
 
     ``media_type`` is what is about to play when the caller knows it: the
@@ -323,32 +326,37 @@ def playback_context(db, media_type: Optional[str] = None,
         found = details()
         return None if found is None else found.get("genres")
 
-    return PlaybackContext(
+    audio_found = {}
+    def audio_lookup():
+        from backend.media_audio import item_audio, FORMATS
+        if 'value' not in audio_found:
+            audio_found['value'] = ({'default': audio_format, 'formats': [audio_format], 'complete': True}
+                                    if audio_format in FORMATS else item_audio(db, item_id, server_type))
+        return audio_found['value']
+
+    context = PlaybackContext(
         now=now or _localized_now(db),
         media_type=(str(media_type).lower() if media_type else None),
         trailer_count=lambda source: len(eligible_nexup_trailers(db, source)),
         genre_lookup=genre_lookup,
         tmdb_lookup=lambda: (details() or {}).get("tmdb"),
+        audio_lookup=audio_lookup,
     )
+    def count_pool(rule):
+        pool = rule.get("pool", "upcoming")
+        if pool == "library":
+            return len(filtered_library_trailers(rule, db, context))
+        if pool == "upcoming":
+            return len(filter_trailer_ratings(eligible_nexup_trailers(db, rule.get("source", "both")), rule))
+        return None
+    context.trailer_pool_count = count_pool
+    return context
 
 
-def resolve_library_trailer_block(block: dict, db, rotation_key=None,
-                                  context: Optional[PlaybackContext] = None) -> list:
-    """Resolve a 'library_trailers' block to LibraryTrailer rows.
 
-      count: int     mode: 'random' | 'newest' (most recently added movies)
-      genres: [..]   only trailers for movies with any of these genres
-      match_playing: prefer trailers sharing a genre with what is about to
-                     play (Jellyfin/Emby); falls back to the whole pool when
-                     none do, or when the genre isn't known (Plex)
-
-    The trailer for the movie that is about to play is never picked for it.
-    """
-    try:
-        count = max(int(block.get("count") or 2), 1)
-    except (TypeError, ValueError):
-        count = 2
-    rows = eligible_library_trailers(db)
+def filtered_library_trailers(block: dict, db, context=None) -> list:
+    """The full eligible pool, without sampling or consuming rotation state."""
+    rows = filter_trailer_ratings(eligible_library_trailers(db), block)
 
     def overlaps(row, names):
         have = {g.lower() for g in row.genre_list()}
@@ -367,6 +375,26 @@ def resolve_library_trailer_block(block: dict, db, rotation_key=None,
                 matched = [r for r in rows if overlaps(r, playing)]
                 if matched:
                     rows = matched
+    return rows
+
+
+def resolve_library_trailer_block(block: dict, db, rotation_key=None,
+                                  context: Optional[PlaybackContext] = None) -> list:
+    """Resolve a 'library_trailers' block to LibraryTrailer rows.
+
+      count: int     mode: 'random' | 'newest' (most recently added movies)
+      genres: [..]   only trailers for movies with any of these genres
+      match_playing: prefer trailers sharing a genre with what is about to
+                     play (Jellyfin/Emby); falls back to the whole pool when
+                     none do, or when the genre isn't known (Plex)
+
+    The trailer for the movie that is about to play is never picked for it.
+    """
+    try:
+        count = max(int(block.get("count") or 2), 1)
+    except (TypeError, ValueError):
+        count = 2
+    rows = filtered_library_trailers(block, db, context)
     if not rows:
         return []
     if str(block.get("mode", "random")).lower() == "newest":
@@ -530,7 +558,7 @@ def resolve_sequence_paths(blocks, db, rotation_scope: tuple,
         if isinstance(block.get("condition"), dict):
             if ctx is None:
                 ctx = playback_context(db)
-            chosen = block_to_play(block, ctx)
+            chosen = sequence_block_to_play(blocks, block_index, ctx)
             if chosen is not block:
                 summary = describe_condition(block.get("condition"))
                 if chosen is None:
@@ -1423,6 +1451,9 @@ class Scheduler:
         
         # Get upcoming movies
         all_movies = await connector.get_all_movies_raw()
+        from backend.trailer_filters import refresh_trailer_ratings
+        refresh_trailer_ratings(db, models.ComingSoonTrailer, all_movies, "radarr_movie_id", "id")
+        db.commit()
         upcoming = connector.parse_upcoming_from_raw(all_movies, days_ahead)
         
         # Get existing trailer IDs
@@ -1472,6 +1503,7 @@ class Scheduler:
                     imdb_id=movie.get('imdb_id'),
                     title=movie['title'],
                     year=movie.get('year'),
+                    certification=movie.get('certification'),
                     overview=movie.get('overview', ''),
                     release_date=datetime.datetime.strptime(movie['release_date'], '%Y-%m-%d').date() if movie.get('release_date') else None,
                     release_type=movie.get('release_type'),
@@ -1545,6 +1577,9 @@ class Scheduler:
         
         # Get all series from Sonarr to check download status
         all_series = await connector.get_all_series()
+        from backend.trailer_filters import refresh_trailer_ratings
+        refresh_trailer_ratings(db, models.ComingSoonTVTrailer, all_series, "sonarr_series_id", "id")
+        db.commit()
         
         # Build a map of series_id -> {season_number: episodeFileCount}
         series_download_status = {}
@@ -1653,6 +1688,7 @@ class Scheduler:
                     title=show['title'],
                     year=show.get('year'),
                     season_number=show.get('season_number'),
+                    certification=show.get('certification'),
                     overview=show.get('overview', ''),
                     network=show.get('network'),
                     release_date=datetime.datetime.strptime(show['release_date'], '%Y-%m-%d').date() if show.get('release_date') else None,
@@ -1939,28 +1975,10 @@ class Scheduler:
         if self._last_holiday_date_refresh_day == refresh_day:
             return
 
-        linked = db.query(models.Schedule).filter(
-            models.Schedule.holiday_name.isnot(None),
-            models.Schedule.holiday_country.isnot(None),
-        ).all()
-        changed = 0
-        for schedule in linked:
-            # Resolve to the NEXT occurrence, not this year's. Pinning to the
-            # current year meant a holiday already past resolved backwards into
-            # the past: the schedule then sat on a date behind us, never showed
-            # on the calendar for its real next date, and never fired.
-            resolved = self._get_next_holiday_date(schedule.holiday_name, schedule.holiday_country)
-            if resolved is None:
-                continue
-            if schedule.start_date and schedule.start_date.date() == resolved:
-                continue
-            schedule.start_date = datetime.datetime.combine(resolved, datetime.time.min)
-            schedule.end_date = datetime.datetime.combine(resolved, datetime.time(23, 59, 59))
-            changed += 1
-
-        if changed:
-            db.commit()
-            _scheduler_log(f"Refreshed {changed} linked holiday schedule date(s) for {now.year}")
+        from backend.schedule_recurrence import refresh_linked_holidays
+        result = refresh_linked_holidays(db, now, self)
+        if result["updated_count"]:
+            _scheduler_log(f"Refreshed {result['updated_count']} linked holiday schedule date(s) for {now.year}")
         self._last_holiday_date_refresh_day = refresh_day
 
     def _backfill_missing_next_run(self, db: Session) -> None:
@@ -2785,7 +2803,7 @@ class Scheduler:
         finally:
             db.close()
 
-    def _is_schedule_active(self, schedule: models.Schedule, now: datetime.datetime) -> bool:
+    def _is_schedule_active(self, schedule: models.Schedule, now: datetime.datetime, _holiday_dates=None) -> bool:
         """
         Determine whether a schedule should be considered active at 'now'.
         
@@ -2803,26 +2821,31 @@ class Scheduler:
 
         schedule_type = getattr(schedule, "type", "") or ""
 
-        # An overnight recurrence belongs to the day on which it starts. For
-        # example, Friday 22:00-03:00 must remain active through Saturday 03:00,
-        # while Friday 01:00 must not count as the first Friday occurrence. Use
-        # this anchored datetime for date/day/month constraints; the actual
-        # wall-clock `now` is still used for the time-of-day comparison below.
+        def holiday_for_year(name, country, year):
+            if _holiday_dates is None:
+                return self._get_holiday_date(name, country, year)
+            # A next-run search can examine many dates. Resolve once per year
+            # for this search, including outages; a later search retries afresh.
+            key = (name, country, year)
+            if key not in _holiday_dates:
+                _holiday_dates[key] = self._get_holiday_date(name, country, year)
+            return _holiday_dates[key]
+
+        if recurrence_error(schedule):
+            return False
+        pattern = parse_recurrence(schedule.recurrence_pattern)
+        time_range = pattern.get("timeRange") or {}
+        def minutes(value):
+            hour, minute = value.split(":")
+            return int(hour) * 60 + int(minute)
+        start_minutes = minutes(time_range["start"]) if time_range.get("start") else None
+        end_minutes = minutes(time_range.get("end") or "23:59")
+        current_minutes = now.hour * 60 + now.minute
         recurrence_now = now
-        if schedule.recurrence_pattern:
-            try:
-                _anchor_pattern = json.loads(schedule.recurrence_pattern)
-                _anchor_range = _anchor_pattern.get("timeRange") if isinstance(_anchor_pattern, dict) else None
-                if _anchor_range and _anchor_range.get("start") and _anchor_range.get("end"):
-                    _start_parts = str(_anchor_range["start"]).split(":")
-                    _end_parts = str(_anchor_range["end"]).split(":")
-                    _start_minutes = int(_start_parts[0]) * 60 + (int(_start_parts[1]) if len(_start_parts) > 1 else 0)
-                    _end_minutes = int(_end_parts[0]) * 60 + (int(_end_parts[1]) if len(_end_parts) > 1 else 0)
-                    _current_minutes = now.hour * 60 + now.minute
-                    if _start_minutes > _end_minutes and _current_minutes <= _end_minutes:
-                        recurrence_now = now - datetime.timedelta(days=1)
-            except (json.JSONDecodeError, AttributeError, TypeError, ValueError, IndexError):
-                pass
+        # Overnight hours belong to the evening that starts the occurrence.
+        if start_minutes is not None and start_minutes > end_minutes and current_minutes <= end_minutes:
+            recurrence_now = (now - datetime.timedelta(days=1)).replace(
+                hour=start_minutes // 60, minute=start_minutes % 60, second=0, microsecond=0)
 
         # Holiday Browser schedules may be intentionally pinned to a future
         # year. Dynamic lookup must not make one recur before its configured
@@ -2845,7 +2868,7 @@ class Scheduler:
             h_name = getattr(schedule, "holiday_name", None)
             h_country = getattr(schedule, "holiday_country", None)
             if h_name and h_country:
-                holiday_date = self._get_holiday_date(h_name, h_country, recurrence_now.year)
+                holiday_date = holiday_for_year(h_name, h_country, recurrence_now.year)
                 if holiday_date is None:
                     # Holiday API unavailable this tick — fall back to the schedule's
                     # stored start_date (kept current for the year by the holiday
@@ -2873,23 +2896,8 @@ class Scheduler:
                 #    A true single-day yearly is now expressed by setting end_date
                 #    to the same day as start_date.
                 end = getattr(schedule, "end_date", None)
-                if end:
-                    try:
-                        this_year_start = schedule.start_date.replace(year=recurrence_now.year)
-                        this_year_end = end.replace(year=recurrence_now.year)
-                        # Handle ranges that span the year boundary (e.g. Dec 18 - Jan 3)
-                        if this_year_end < this_year_start:
-                            in_range = (recurrence_now >= this_year_start) or (recurrence_now <= this_year_end)
-                        else:
-                            in_range = this_year_start <= recurrence_now <= this_year_end
-                        if not in_range:
-                            _scheduler_verbose(
-                                f"Schedule '{schedule.name}' (yearly) not in range "
-                                f"{this_year_start} - {this_year_end}"
-                            )
-                            return False
-                    except ValueError:
-                        return False  # e.g., Feb 29 in non-leap year
+                if end and not in_yearly_window(schedule.start_date, end, recurrence_now):
+                    return False
                 # else: no end_date → active all year, fall through to time range check
             # Yearly passed date check — skip to time range check below
 
@@ -2898,7 +2906,7 @@ class Scheduler:
             h_name = getattr(schedule, "holiday_name", None)
             h_country = getattr(schedule, "holiday_country", None)
             if h_name and h_country:
-                holiday_date = self._get_holiday_date(h_name, h_country, recurrence_now.year)
+                holiday_date = holiday_for_year(h_name, h_country, recurrence_now.year)
                 if holiday_date is None:
                     # Holiday API unavailable this tick — fall back to the schedule's
                     # stored start_date so a transient lookup failure can't flip the
@@ -2915,16 +2923,7 @@ class Scheduler:
             else:
                 # No holiday fields — fall back to yearly-style month/day from start_date
                 if getattr(schedule, "end_date", None):
-                    try:
-                        this_year_start = schedule.start_date.replace(year=recurrence_now.year)
-                        this_year_end = schedule.end_date.replace(year=recurrence_now.year)
-                        if this_year_end < this_year_start:
-                            in_range = recurrence_now >= this_year_start or recurrence_now <= this_year_end
-                        else:
-                            in_range = this_year_start <= recurrence_now <= this_year_end
-                        if not in_range:
-                            return False
-                    except ValueError:
+                    if not in_yearly_window(schedule.start_date, schedule.end_date, recurrence_now):
                         return False
                 else:
                     if not (recurrence_now.month == schedule.start_date.month and recurrence_now.day == schedule.start_date.day):
@@ -2941,86 +2940,16 @@ class Scheduler:
             if not date_active:
                 return False
         
-        # Check recurrence pattern constraints (weekDays, monthDays, timeRange)
-        if schedule.recurrence_pattern:
-            try:
-                pattern = json.loads(schedule.recurrence_pattern)
-                
-                # Check weekDays for weekly schedules
-                week_days = pattern.get("weekDays")
-                if week_days and isinstance(week_days, list) and len(week_days) > 0:
-                    # Map Python weekday (0=Mon..6=Sun) to our day names
-                    day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
-                    current_day_name = day_map.get(recurrence_now.weekday())
-                    if current_day_name not in week_days:
-                        _scheduler_verbose(f"Schedule '{schedule.name}' not active on {current_day_name} (weekDays: {week_days})")
-                        return False
-                
-                # Check months (which months of the year) for monthly schedules
-                months = pattern.get("months")
-                if months and isinstance(months, list) and len(months) > 0:
-                    current_month = recurrence_now.month
-                    if current_month not in months:
-                        _scheduler_verbose(f"Schedule '{schedule.name}' not active in month {current_month} (months: {months})")
-                        return False
-
-                # Check monthDays (which days of the month) for monthly schedules
-                month_days = pattern.get("monthDays")
-                if month_days and isinstance(month_days, list) and len(month_days) > 0:
-                    current_day_of_month = recurrence_now.day
-                    if current_day_of_month not in month_days:
-                        _scheduler_verbose(f"Schedule '{schedule.name}' not active on day {current_day_of_month} (monthDays: {month_days})")
-                        return False
-                
-                # Check timeRange
-                time_range = pattern.get("timeRange")
-                if time_range and time_range.get("start"):
-                    # This schedule has a time-of-day constraint
-                    start_time_str = time_range.get("start", "")  # e.g., "22:00"
-                    end_time_str = time_range.get("end", "")  # e.g., "03:00"
-                    
-                    if start_time_str:
-                        # Parse time strings (HH:MM format)
-                        try:
-                            start_parts = start_time_str.split(":")
-                            start_hour = int(start_parts[0])
-                            start_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
-                            
-                            end_hour = 23
-                            end_minute = 59
-                            if end_time_str:
-                                end_parts = end_time_str.split(":")
-                                end_hour = int(end_parts[0])
-                                end_minute = int(end_parts[1]) if len(end_parts) > 1 else 59
-                            
-                            # Both 'now' and timeRange are in local time
-                            current_hour = now.hour
-                            current_minute = now.minute
-                            
-                            current_time_val = current_hour * 60 + current_minute
-                            start_time_val = start_hour * 60 + start_minute
-                            end_time_val = end_hour * 60 + end_minute
-                            
-                            # Handle overnight ranges (e.g., 22:00 to 03:00)
-                            if start_time_val <= end_time_val:
-                                # Normal range (e.g., 09:00 to 17:00)
-                                time_active = start_time_val <= current_time_val <= end_time_val
-                            else:
-                                # Overnight range (e.g., 22:00 to 03:00)
-                                # Active if current time is >= start OR <= end
-                                time_active = current_time_val >= start_time_val or current_time_val <= end_time_val
-                            
-                            if not time_active:
-                                _scheduler_verbose(f"Schedule '{schedule.name}' outside time range {start_time_str}-{end_time_str} (local: {current_hour:02d}:{current_minute:02d})")
-                            return time_active
-                            
-                        except (ValueError, IndexError) as e:
-                            _scheduler_log(f"Error parsing time range for schedule '{schedule.name}': {e}", level="WARNING")
-                            # If we can't parse the time, fall through to date-only logic
-            except json.JSONDecodeError:
-                pass  # Invalid JSON, ignore time range
-        
-        # No time range or couldn't parse - schedule is active based on date only
+        if pattern.get("weekDays") and WEEKDAYS[recurrence_now.weekday()] not in pattern["weekDays"]:
+            return False
+        if pattern.get("months") and recurrence_now.month not in pattern["months"]:
+            return False
+        if pattern.get("monthDays") and recurrence_now.day not in pattern["monthDays"]:
+            return False
+        if start_minutes is not None:
+            if start_minutes <= end_minutes:
+                return start_minutes <= current_minutes <= end_minutes
+            return current_minutes >= start_minutes or current_minutes <= end_minutes
         return True
 
     def _apply_category_to_plex(self, category_id: int, db: Session, schedule: models.Schedule = None) -> bool:
@@ -3284,7 +3213,7 @@ class Scheduler:
             context=playback_context(db, media_type="movie"),
         )
 
-        if not paths:
+        if not paths and not has_trailer_policy(seq):
             _scheduler_log("Sequence produced no preroll paths; aborting.")
             return ApplyResult()
 
@@ -3446,6 +3375,7 @@ class Scheduler:
 
         # Collect preroll paths from each schedule
         all_schedule_paths = []  # List of (schedule_name, paths_list)
+        trailer_policy_present = False
         
         for schedule in schedules:
             paths = []
@@ -3457,6 +3387,7 @@ class Scheduler:
                     if isinstance(seq, str):
                         seq = json.loads(seq)
                     if isinstance(seq, list):
+                        trailer_policy_present = trailer_policy_present or has_trailer_policy(seq)
                         paths.extend(resolve_sequence_paths(
                             seq,
                             db,
@@ -3490,8 +3421,10 @@ class Scheduler:
                     _scheduler_verbose(f"      ... and {len(paths) - 3} more")
         
         if not all_schedule_paths:
-            _scheduler_log("BLEND: No preroll paths collected from any schedule", level="WARNING")
-            return False
+            if not trailer_policy_present:
+                _scheduler_log("BLEND: No preroll paths collected from any schedule", level="WARNING")
+                return False
+            all_schedule_paths.append(("No matching trailers", []))
         
         # Interleave paths from all schedules (round-robin)
         final_paths = []
@@ -3612,7 +3545,7 @@ class Scheduler:
                 log_prefix="FILLER",
             )
 
-            if not paths:
+            if not paths and not has_trailer_policy(blocks):
                 _scheduler_log(f"Filler sequence '{saved_seq.name}' produced no preroll paths", level="WARNING")
                 return False
             
@@ -3860,143 +3793,40 @@ class Scheduler:
             return None
 
     def _calculate_next_run(self, schedule: models.Schedule) -> Optional[datetime.datetime]:
-        """Calculate a schedule's next activation safely.
+        """Next eligible instant according to the playback evaluator.
 
-        Monthly schedules are driven by recurrence_pattern (the UI deliberately
-        stores their start_date as 2000-01-01), so using start_date.day produced
-        incorrect metadata and could raise ValueError when replacing a 29th-31st
-        into a shorter month. Yearly leap-day schedules had the same crash.
+        Metadata describes availability, not priority. Empty legacy recurrence
+        means every day within the stored window, for every schedule type.
         """
-        if not schedule or not getattr(schedule, "start_date", None):
+        if not schedule or not getattr(schedule, "start_date", None) or recurrence_error(schedule):
             return None
-
         now = _localized_now()
-        schedule_type = str(getattr(schedule, "type", "") or "").lower()
-
-        pattern = {}
-        raw_pattern = getattr(schedule, "recurrence_pattern", None)
-        if raw_pattern:
-            try:
-                parsed = json.loads(raw_pattern) if isinstance(raw_pattern, str) else raw_pattern
-                if isinstance(parsed, dict):
-                    pattern = parsed
-            except (json.JSONDecodeError, TypeError):
-                pattern = {}
-
-        run_hour = schedule.start_date.hour
-        run_minute = schedule.start_date.minute
-        time_range = pattern.get("timeRange")
-        if isinstance(time_range, dict) and time_range.get("start"):
-            try:
-                parts = str(time_range["start"]).split(":")
-                parsed_hour = int(parts[0])
-                parsed_minute = int(parts[1]) if len(parts) > 1 else 0
-                if 0 <= parsed_hour <= 23 and 0 <= parsed_minute <= 59:
-                    run_hour, run_minute = parsed_hour, parsed_minute
-            except (TypeError, ValueError, IndexError):
-                pass
-
-        def _valid_numbers(values, low, high):
-            result = set()
-            for value in values or []:
-                try:
-                    number = int(value)
-                except (TypeError, ValueError):
-                    continue
-                if low <= number <= high:
-                    result.add(number)
-            return sorted(result)
-
-        # A schedule that has already finished has no next run, whatever its
-        # recurrence says. Without this a daily schedule kept advertising a
-        # date past its own end.
-        end_date = getattr(schedule, "end_date", None)
-
-        def _within_end(candidate):
-            return end_date is None or candidate <= end_date
-
-        if schedule_type == "daily":
-            # Today at the configured time if that has not passed, otherwise
-            # tomorrow. The window may also not have opened yet, in which case
-            # the first run is on start_date's own day.
+        pattern = parse_recurrence(schedule.recurrence_pattern)
+        time_range = pattern.get("timeRange") or {}
+        holiday_dates = {}
+        if self._is_schedule_active(schedule, now, holiday_dates):
+            return now
+        annual = schedule.type in ("yearly", "holiday")
+        linked = bool(getattr(schedule, "holiday_name", None) and getattr(schedule, "holiday_country", None))
+        if annual:
+            first_year = max(now.year, schedule.start_date.year) if linked or schedule.type == "holiday" else now.year
+            first_day = max(now.date(), datetime.date(first_year, 1, 1))
+        else:
             first_day = max(now.date(), schedule.start_date.date())
-            for day_offset in range(0, 400):
-                candidate = datetime.datetime.combine(
-                    first_day + datetime.timedelta(days=day_offset),
-                    datetime.time(run_hour, run_minute))
-                if candidate <= now:
-                    continue
-                if not _within_end(candidate):
-                    return None
-                return candidate
-            return None
-
-        if schedule_type == "weekly":
-            # Same day names the activity check matches on, so the date shown
-            # is the date it will actually fire.
-            day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday",
-                       4: "friday", 5: "saturday", 6: "sunday"}
-            week_days = pattern.get("weekDays")
-            wanted = {str(d).strip().lower() for d in week_days} if isinstance(week_days, list) else set()
-            first_day = max(now.date(), schedule.start_date.date())
-            for day_offset in range(0, 400):
-                day = first_day + datetime.timedelta(days=day_offset)
-                if wanted and day_map[day.weekday()] not in wanted:
-                    continue
-                candidate = datetime.datetime.combine(day, datetime.time(run_hour, run_minute))
-                if candidate <= now:
-                    continue
-                if not _within_end(candidate):
-                    return None
-                return candidate
-            return None
-
-        if schedule_type == "monthly":
-            months = _valid_numbers(pattern.get("months"), 1, 12) or list(range(1, 13))
-            month_days = _valid_numbers(pattern.get("monthDays"), 1, 31) or [schedule.start_date.day]
-
-            # Search far enough to cover sparse configurations such as February
-            # 29 only. Invalid dates are skipped rather than silently clamped.
-            for month_offset in range(0, 12 * 8):
-                absolute_month = (now.year * 12 + now.month - 1) + month_offset
-                year, month_index = divmod(absolute_month, 12)
-                month = month_index + 1
-                if month not in months:
-                    continue
-                last_day = calendar.monthrange(year, month)[1]
-                candidates = []
-                for day in month_days:
-                    if day > last_day:
-                        continue
-                    candidate = datetime.datetime(year, month, day, run_hour, run_minute)
-                    if candidate > now:
-                        candidates.append(candidate)
-                if candidates:
-                    soonest = min(candidates)
-                    return soonest if _within_end(soonest) else None
-            return None
-
-        if schedule_type in ("yearly", "holiday"):
-            holiday_name = getattr(schedule, "holiday_name", None)
-            holiday_country = getattr(schedule, "holiday_country", None)
-            for year in range(now.year, now.year + 9):
-                target_month = schedule.start_date.month
-                target_day = schedule.start_date.day
-
-                if schedule_type == "holiday" and holiday_name and holiday_country:
-                    holiday_date = self._get_holiday_date(holiday_name, holiday_country, year)
-                    if holiday_date is not None:
-                        target_month = holiday_date.month
-                        target_day = holiday_date.day
-
-                try:
-                    candidate = datetime.datetime(year, target_month, target_day, run_hour, run_minute)
-                except ValueError:
-                    continue
-                if candidate > now:
-                    return candidate if _within_end(candidate) else None
-            return None
-
+        times = {datetime.time(), schedule.start_date.time()}
+        if time_range.get("start"):
+            hour, minute = map(int, time_range["start"].split(":"))
+            times.add(datetime.time(hour, minute))
+        times = sorted(times)
+        # Eight years covers the leap-day gap across non-leap centuries.
+        for offset in range(366 * 8 + 1):
+            day = first_day + datetime.timedelta(days=offset)
+            if not annual and schedule.end_date and day > schedule.end_date.date() + datetime.timedelta(days=1):
+                break
+            for at in times:
+                candidate = datetime.datetime.combine(day, at)
+                if candidate > now and self._is_schedule_active(schedule, candidate, holiday_dates):
+                    return candidate
         return None
 
 # Global scheduler instance.

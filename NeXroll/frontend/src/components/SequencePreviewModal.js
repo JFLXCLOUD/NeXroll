@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Film, Inbox, X } from 'lucide-react';
 import { lockBodyScroll } from '../utils/modalBehavior';
 import { blocksHaveConditions, describeCondition, genresInSequence, needsPlaybackInfo } from '../utils/sequenceConditions';
+import { AUDIO_FORMATS } from '../utils/audioFormats';
 // eslint-disable-next-line no-unused-vars
 import SequenceTimeline from './SequenceTimeline';
 // eslint-disable-next-line no-unused-vars
@@ -54,6 +55,8 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   // Genre to preview a genre-conditioned sequence as; '' is "unknown", which
   // is what Plex always is.
   const [previewGenre, setPreviewGenre] = useState('');
+  const [previewAudio, setPreviewAudio] = useState('');
+  const hasAudioRules = blocks.some(block => block.condition?.rules?.some(rule => rule.kind === 'audio_format'));
   const sequenceGenres = genresInSequence(blocks);
   const videoRef = React.useRef(null);
   const overlayRef = React.useRef(null);
@@ -271,7 +274,10 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     let active = true;
     let innerCleanup;
     const controller = new AbortController();
-    const genreQuery = previewGenre ? `?genres=${encodeURIComponent(previewGenre)}` : '';
+    const params = new URLSearchParams();
+    if (previewGenre) params.set('genres', previewGenre);
+    if (previewAudio) params.set('audio_format', previewAudio);
+    const genreQuery = params.size ? `?${params}` : '';
     fetch(`/sequences/evaluate-conditions${genreQuery}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -321,7 +327,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       controller.abort();
       if (innerCleanup) innerCleanup();
     };
-  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre]);
+  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre, previewAudio]);
 
   // Start playback
   const startPlayback = () => {
@@ -607,6 +613,13 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               </select>
             </label>
           )}
+          {hasAudioRules && <label style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            Simulate stored audio
+            <select aria-label="Preview audio format" value={previewAudio} onChange={event => setPreviewAudio(event.target.value)}>
+              <option value="">Unknown / Plex</option>
+              {AUDIO_FORMATS.map(([key, label]) => <option key={key} value={key}>{label} (one stored track)</option>)}
+            </select>
+          </label>}
           {conditionNotes.length > 0 && (
             <div
               role="status"
@@ -620,7 +633,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
             >
               <strong>
                 Conditions, checked as if {previewGenre ? `a ${previewGenre} movie` : 'a movie'} were starting now
-                {sequenceGenres.length > 0 && !previewGenre ? ' on Plex, where the genre is never known' : ''}:
+                {sequenceGenres.length > 0 && !previewGenre && !previewAudio ? ' with unknown genre, as on Plex' : ''}:
               </strong>
               {conditionNotes.map(note => (
                 <div key={note.index}>
@@ -629,8 +642,8 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
                     ? <>plays, because {describeCondition(note.condition)}.</>
                     : <>
                       {note.outcome === 'skipped' ? 'is skipped' : 'plays its alternative'}
-                      {!previewGenre && needsPlaybackInfo(note.condition)
-                        ? ', because Plex cannot tell NeXroll the genre of what is playing.'
+                      {!previewGenre && !previewAudio && needsPlaybackInfo(note.condition)
+                        ? ', because the required playback metadata is unknown, as on Plex.'
                         : <>{' '}because this is not true: {describeCondition(note.condition)}.</>}
                     </>}
                 </div>

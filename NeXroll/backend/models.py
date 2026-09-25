@@ -180,6 +180,7 @@ class ComingSoonTrailer(Base):
     radarr_movie_id = Column(Integer, index=True)  # Radarr's internal movie ID
     tmdb_id = Column(Integer, index=True)  # TMDB ID for cross-referencing
     imdb_id = Column(String, nullable=True)  # IMDB ID
+    certification = Column(String, nullable=True)  # Film/show age rating; unknown until metadata sync
     title = Column(String, index=True)  # Movie title
     year = Column(Integer, nullable=True)  # Release year
     overview = Column(Text, nullable=True)  # Movie description
@@ -213,6 +214,7 @@ class ComingSoonTVTrailer(Base):
     tvdb_id = Column(Integer, index=True)  # TVDB ID for cross-referencing
     tmdb_id = Column(Integer, nullable=True)  # TMDB ID
     imdb_id = Column(String, nullable=True)  # IMDB ID
+    certification = Column(String, nullable=True)  # Film/show age rating; unknown until metadata sync
     title = Column(String, index=True)  # Show title
     year = Column(Integer, nullable=True)  # Show start year
     season_number = Column(Integer, nullable=True)  # Season number (1 for new shows)
@@ -253,6 +255,7 @@ class LibraryTrailer(Base):
     id = Column(Integer, primary_key=True, index=True)
     radarr_movie_id = Column(Integer, index=True)
     tmdb_id = Column(Integer, index=True, nullable=True)
+    certification = Column(String, nullable=True)  # Film/show age rating; unknown until metadata sync
     title = Column(String, index=True)
     year = Column(Integer, nullable=True)
     genres = Column(Text, nullable=True)  # JSON list of genre names
@@ -537,6 +540,17 @@ class User(Base):
     last_login_at = Column(DateTime, nullable=True)  # Track last login
     failed_login_attempts = Column(Integer, default=0)  # For lockout protection
     locked_until = Column(DateTime, nullable=True)  # Account lockout timestamp
+
+
+    navigation_favorites = relationship('NavigationFavorite', cascade='all, delete-orphan')
+
+
+class NavigationFavorite(Base):
+    __tablename__ = 'navigation_favorites'
+    scope = Column(String, primary_key=True)
+    page = Column(String, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
 
 class Session(Base):

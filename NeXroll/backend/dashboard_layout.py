@@ -41,6 +41,7 @@ TILE_KEYS = (
     "prerolls",
     "quick_actions",
     "storage_mix",
+    "library_trailers",
     "whats_next",
     "servers",
     "schedules",
@@ -73,12 +74,12 @@ DEFAULT_PREFERENCES = {
 # so a newly added tile never has to be registered in two places.
 PRESETS = {
     "essential": (
-        "now_showing", "system_health", "prerolls", "quick_actions", "storage_mix",
+        "now_showing", "system_health", "prerolls", "quick_actions", "storage_mix", "library_trailers",
     ),
     "operations": (
         "now_showing", "whats_next", "system_health",
         "prerolls", "schedules", "servers", "storage_mix",
-        "quick_actions", "scheduler", "nexup",
+        "quick_actions", "scheduler", "nexup", "library_trailers",
     ),
 }
 

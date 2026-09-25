@@ -161,6 +161,7 @@ class NextRunTests(unittest.TestCase):
         schedule = make_schedule(
             type="yearly",
             start_date=datetime.datetime(2000, 2, 29, 18, 0),
+            end_date=datetime.datetime(2000, 2, 29, 23, 59),
         )
 
         with patch.object(
@@ -623,7 +624,7 @@ class SchedulerTransitionTests(unittest.TestCase):
         refresh_now = datetime.datetime(2026, 1, 2, 8, 0)
         with self.Session() as db, patch.object(
             self.scheduler,
-            "_get_next_holiday_date",
+            "_get_holiday_date",
             return_value=next_thanksgiving,
         ) as holiday_lookup:
             self.scheduler._refresh_linked_holiday_dates_if_needed(db, refresh_now)
@@ -633,16 +634,15 @@ class SchedulerTransitionTests(unittest.TestCase):
             pinned_later = db.get(models.Schedule, later_id)
             unlinked = db.get(models.Schedule, unlinked_id)
             self.assertEqual(stale.start_date, datetime.datetime(2026, 11, 26))
-            self.assertEqual(stale.end_date, datetime.datetime(2026, 11, 26, 23, 59, 59))
-            self.assertEqual(pinned_later.start_date, datetime.datetime(2026, 11, 26))
-            self.assertEqual(pinned_later.end_date, datetime.datetime(2026, 11, 26, 23, 59, 59))
+            self.assertEqual(stale.end_date, datetime.datetime(2026, 11, 26, 23, 59))
+            self.assertEqual(pinned_later.start_date, datetime.datetime(2027, 11, 25))
+            self.assertEqual(pinned_later.end_date, datetime.datetime(2027, 11, 25, 23, 59))
             # A schedule with no holiday link is not swept up in the refresh.
             self.assertEqual(unlinked.start_date, datetime.datetime(2025, 11, 27))
 
-        # The date is resolved without a year argument, and only for the two
-        # linked schedules.
-        self.assertEqual(holiday_lookup.call_count, 2)
-        holiday_lookup.assert_called_with("Thanksgiving", "US")
+        # Only the unpinned schedule resolves, in the configured local year.
+        self.assertEqual(holiday_lookup.call_count, 1)
+        holiday_lookup.assert_called_with("Thanksgiving", "US", 2026)
 
     def test_linked_holiday_refresh_runs_once_per_local_day(self):
         with self.Session() as db:
@@ -659,7 +659,7 @@ class SchedulerTransitionTests(unittest.TestCase):
 
         with self.Session() as db, patch.object(
             self.scheduler,
-            "_get_next_holiday_date",
+            "_get_holiday_date",
             return_value=datetime.date(2026, 11, 26),
         ) as holiday_lookup:
             self.scheduler._refresh_linked_holiday_dates_if_needed(
