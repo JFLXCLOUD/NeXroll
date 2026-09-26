@@ -22890,14 +22890,17 @@ const DashboardTiles = {
     }
   };
 
-  // Save a mapping found by "Find it for me". A row for the same NeXroll
-  // folder is replaced rather than duplicated.
-  const applyDetectedMapping = async (suggestion) => {
-    const same = (a, b) => (a || '').replace(/[\\/]+$/, '').toLowerCase() === (b || '').replace(/[\\/]+$/, '').toLowerCase();
+  // Save the mappings found by "Find it for me" (one per folder NeXroll sends
+  // Plex files from). A row for the same NeXroll folder is replaced rather
+  // than duplicated.
+  const applyDetectedMappings = async (suggestions) => {
+    const bare = (p) => (p || '').replace(/[\\/]+$/, '').toLowerCase();
+    const incoming = (suggestions || []).map(s => ({ local: s.local, plex: s.plex }));
+    const replaced = new Set(incoming.map(s => bare(s.local)));
     const rows = (pathMappings || [])
       .map(m => ({ local: (m.local || '').trim(), plex: (m.plex || '').trim() }))
-      .filter(m => m.local && m.plex && !same(m.local, suggestion.local));
-    const list = [...rows, { local: suggestion.local, plex: suggestion.plex }];
+      .filter(m => m.local && m.plex && !replaced.has(bare(m.local)));
+    const list = [...rows, ...incoming];
     try {
       await tryPutMappings(list, 'array').catch(async () => await tryPutMappings(list, 'object'));
       await loadPathMappings();
@@ -30473,7 +30476,7 @@ const DashboardTiles = {
       {plexStatus === 'Connected' && (
         <div className="nx-plexpath-tools">
           <PlexPathCheck apiUrl={apiUrl} refreshKey={plexCheckKey} onResult={setPlexPathSummary} />
-          <FindPlexFolder apiUrl={apiUrl} onUseMapping={applyDetectedMapping} />
+          <FindPlexFolder apiUrl={apiUrl} onUseMappings={applyDetectedMappings} />
         </div>
       )}
 

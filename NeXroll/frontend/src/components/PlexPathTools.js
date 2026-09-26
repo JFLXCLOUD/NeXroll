@@ -105,8 +105,51 @@ export function PlexPathCheck({ apiUrl, refreshKey = 0, onResult }) {
   );
 }
 
-// "Find it for me": search the Plex server for NeXroll's preroll folder.
-export function FindPlexFolder({ apiUrl, onUseMapping }) {
+// "Find it for me": search the Plex server for every folder NeXroll hands it
+// files from (prerolls, NeX-Up trailers kept elsewhere, movie folders that
+// Library Trailers read) and propose the mappings.
+function describeConfirmation(f) {
+  if (f.used_marker) return 'Confirmed with a small test file NeXroll placed in the folder and then removed.';
+  const n = f.verified?.length || 0;
+  const what = f.kind === 'library' || f.kind === 'nexup' ? 'trailers' : 'prerolls';
+  return `Confirmed by finding ${n} of your ${what} there.`;
+}
+
+function FolderResult({ f }) {
+  if (!f.found) {
+    return (
+      <div className="nx-plexpath-folder-result nx-plexpath-tone-bad">
+        <strong>{f.label}</strong> <code>{f.local_folder}</code>
+        <p>{f.reason}</p>
+      </div>
+    );
+  }
+  if (!f.mapping_needed) {
+    return (
+      <div className="nx-plexpath-folder-result nx-plexpath-tone-ok">
+        <strong>{f.label}</strong>
+        <p>
+          {f.already_working
+            ? <>Already works: Plex opens it as <code>{f.plex_folder}</code>.</>
+            : <>Plex sees it at the same path, <code>{f.plex_folder}</code>, so no mapping is needed.</>}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="nx-plexpath-folder-result nx-plexpath-tone-ok">
+      <strong>{f.label}</strong>
+      <div className="nx-plexpath-pair">
+        <div><span>NeXroll</span><code>{f.suggestion.local}</code></div>
+        <div aria-hidden="true" className="nx-plexpath-arrow">{'\u2192'}</div>
+        <div><span>Plex</span><code>{f.suggestion.plex}</code></div>
+      </div>
+      <p className="nx-plexpath-note">{describeConfirmation(f)}</p>
+    </div>
+  );
+}
+
+export function FindPlexFolder({ apiUrl, onUseMappings }) {
   const [state, setState] = useState({ phase: 'idle' });
   const search = async () => {
     setState({ phase: 'searching' });
@@ -120,12 +163,20 @@ export function FindPlexFolder({ apiUrl, onUseMapping }) {
     }
   };
   const { phase, data, error } = state;
+  const folders = data ? (Array.isArray(data.folders) && data.folders.length ? data.folders : [{ ...data, label: 'Prerolls', kind: 'prerolls' }]) : [];
+  const suggestions = data ? (data.suggestions || (data.mapping_needed && data.suggestion ? [data.suggestion] : [])) : [];
+  const several = folders.length > 1;
+  const add = async () => {
+    setState(s => ({ ...s, adding: true }));
+    const ok = await onUseMappings(suggestions);
+    setState(s => ({ ...s, adding: false, added: ok !== false }));
+  };
   return (
     <div className="nx-plexpath-find">
       <div className="nx-plexpath-find-head">
         <div>
           <strong>Find it for me</strong>
-          <span>NeXroll looks through the folders your Plex server can see for the one holding your prerolls, and sets up the mapping.</span>
+          <span>NeXroll looks through the folders your Plex server can see for the ones holding your prerolls and trailers, and sets up the mappings.</span>
         </div>
         <button type="button" className="button nx-plexpath-primary" onClick={search} disabled={phase === 'searching'}>
           <Search size={14} /> {phase === 'searching' ? 'Searching Plex...' : 'Find it for me'}
@@ -133,41 +184,22 @@ export function FindPlexFolder({ apiUrl, onUseMapping }) {
       </div>
       {phase === 'searching' && <p className="nx-plexpath-note">Searching the Plex server's folders. This can take up to half a minute on a large server.</p>}
       {phase === 'done' && error && <p className="nx-plexpath-result nx-plexpath-tone-bad">{error}</p>}
-      {phase === 'done' && data && !data.found && <p className="nx-plexpath-result nx-plexpath-tone-bad">{data.reason}</p>}
-      {phase === 'done' && data?.found && data.already_working && (
-        <p className="nx-plexpath-result nx-plexpath-tone-ok">
-          Your mappings already work: Plex opens NeXroll's preroll folder as <code>{data.plex_folder}</code>.
-        </p>
-      )}
-      {phase === 'done' && data?.found && !data.already_working && !data.mapping_needed && (
-        <p className="nx-plexpath-result nx-plexpath-tone-ok">
-          Plex sees NeXroll's preroll folder at the same path, <code>{data.plex_folder}</code>, so no mapping is needed.
-        </p>
-      )}
-      {phase === 'done' && data?.found && data.mapping_needed && data.suggestion && (
-        <div className="nx-plexpath-result nx-plexpath-tone-ok">
-          <p>Found it. Plex sees NeXroll's preroll folder under a different path:</p>
-          <div className="nx-plexpath-pair">
-            <div><span>NeXroll</span><code>{data.suggestion.local}</code></div>
-            <div aria-hidden="true" className="nx-plexpath-arrow">{'→'}</div>
-            <div><span>Plex</span><code>{data.suggestion.plex}</code></div>
+      {phase === 'done' && data && (
+        <div className="nx-plexpath-result">
+          {several && (
+            <p>NeXroll sends Plex files from {folders.length} folders. Here is how Plex sees each one:</p>
+          )}
+          {!several && suggestions.length > 0 && <p>Found it. Plex sees NeXroll's preroll folder under a different path:</p>}
+          <div className="nx-plexpath-folder-list">
+            {folders.map(f => <FolderResult key={`${f.kind}:${f.local_folder}`} f={f} />)}
           </div>
-          <p className="nx-plexpath-note">
-            {data.used_marker
-              ? 'Confirmed with a small test file NeXroll placed in the folder and then removed.'
-              : `Confirmed by finding ${data.verified?.length || 0} of your prerolls there.`}
-          </p>
-          {state.added
-            ? <p className="nx-plexpath-added"><CheckCircle size={15} className="nx-plexpath-ok" /> Mapping added. Plex gets these paths the next time NeXroll applies your prerolls.</p>
+          {suggestions.length > 0 && (state.added
+            ? <p className="nx-plexpath-added"><CheckCircle size={15} className="nx-plexpath-ok" /> {suggestions.length === 1 ? 'Mapping added.' : 'Mappings added.'} Plex gets these paths the next time NeXroll applies your prerolls.</p>
             : (
-              <button type="button" className="button nx-plexpath-primary" disabled={state.adding} onClick={async () => {
-                setState(s => ({ ...s, adding: true }));
-                const ok = await onUseMapping(data.suggestion);
-                setState(s => ({ ...s, adding: false, added: ok !== false }));
-              }}>
-                {state.adding ? 'Adding...' : 'Add this mapping'}
+              <button type="button" className="button nx-plexpath-primary" disabled={state.adding} onClick={add}>
+                {state.adding ? 'Adding...' : suggestions.length === 1 ? 'Add this mapping' : `Add these ${suggestions.length} mappings`}
               </button>
-            )}
+            ))}
         </div>
       )}
     </div>

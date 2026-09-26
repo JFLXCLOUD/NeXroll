@@ -12,12 +12,13 @@ class FakePlex:
     folder -> (subfolder names, file names). Folders not in the dict come back
     empty, which is what Plex returns for a folder it cannot see."""
 
-    def __init__(self, tree, roots=None, platform="Linux", refuse=False, fail=()):
+    def __init__(self, tree, roots=None, platform="Linux", refuse=False, fail=(), libraries=()):
         self.tree = tree
         self.roots = roots if roots is not None else sorted(p for p in tree if p.count("/") == 1 and p != "/")
         self.platform = platform
         self.refuse = refuse
         self.fail = set(fail)
+        self.libraries = list(libraries)
         self.requests = []
 
     def _sep(self, path):
@@ -34,6 +35,9 @@ class FakePlex:
         res.status_code = 401 if self.refuse else 200
         if path == "/":
             res.json.return_value = {"MediaContainer": {"platform": self.platform}}
+        elif path == "/library/sections":
+            res.json.return_value = {"MediaContainer": {"Directory": [
+                {"type": "movie", "Location": [{"path": loc}]} for loc in self.libraries]}}
         elif path == "/services/browse":
             res.json.return_value = {"MediaContainer": {"Path": [{"path": r, "title": r} for r in self.roots]}}
         else:

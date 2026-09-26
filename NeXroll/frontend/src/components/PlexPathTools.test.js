@@ -53,12 +53,12 @@ test('Find it for me proposes the mapping and hands it back when accepted', asyn
   const suggestion = { local: '/data/prerolls', plex: '/Volumes/Plex/PreRoll' };
   fetch.mockImplementation(() => reply({ found: true, already_working: false, mapping_needed: true, suggestion, verified: ['a', 'b', 'c'] }));
   const onUse = jest.fn();
-  render(<FindPlexFolder apiUrl={apiUrl} onUseMapping={onUse} />);
+  render(<FindPlexFolder apiUrl={apiUrl} onUseMappings={onUse} />);
   fireEvent.click(screen.getByRole('button', { name: /Find it for me/ }));
   expect(await screen.findByText('/Volumes/Plex/PreRoll')).toBeInTheDocument();
   expect(screen.getByText('Confirmed by finding 3 of your prerolls there.')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Add this mapping' }));
-  expect(onUse).toHaveBeenCalledWith(suggestion);
+  expect(onUse).toHaveBeenCalledWith([suggestion]);
   expect(await screen.findByText(/Mapping added\./)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Add this mapping' })).not.toBeInTheDocument();
   expect(fetch.mock.calls[0][0]).toBe('/settings/path-mappings/detect');
@@ -67,7 +67,7 @@ test('Find it for me proposes the mapping and hands it back when accepted', asyn
 
 test('Find it for me explains when nothing was found', async () => {
   fetch.mockImplementation(() => reply({ found: false, reason: 'No folder the Plex server can see contains NeXroll\'s prerolls.' }));
-  render(<FindPlexFolder apiUrl={apiUrl} onUseMapping={() => {}} />);
+  render(<FindPlexFolder apiUrl={apiUrl} onUseMappings={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: /Find it for me/ }));
   expect(await screen.findByText(/No folder the Plex server can see/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Add this mapping' })).not.toBeInTheDocument();
@@ -75,9 +75,34 @@ test('Find it for me explains when nothing was found', async () => {
 
 test('Find it for me says when no mapping is needed', async () => {
   fetch.mockImplementation(() => reply({ found: true, already_working: true, mapping_needed: false, plex_folder: '/data/Prerolls' }));
-  render(<FindPlexFolder apiUrl={apiUrl} onUseMapping={() => {}} />);
+  render(<FindPlexFolder apiUrl={apiUrl} onUseMappings={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: /Find it for me/ }));
-  expect(await screen.findByText(/Your mappings already work/)).toBeInTheDocument();
+  expect(await screen.findByText(/Already works: Plex opens it as/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Add/ })).not.toBeInTheDocument();
+});
+
+test('Find it for me covers every folder and adds all needed mappings at once', async () => {
+  const pre = { local: '/data/prerolls', plex: '/Volumes/Plex/PreRoll' };
+  const movies = { local: '/movies', plex: '/Volumes/Plex/Movies' };
+  fetch.mockImplementation(() => reply({
+    found: true, mapping_needed: true, suggestion: pre,
+    folders: [
+      { kind: 'prerolls', label: 'Prerolls', local_folder: '/data/prerolls', found: true, mapping_needed: true, suggestion: pre, verified: ['a'] },
+      { kind: 'nexup', label: 'NeX-Up trailers', local_folder: '/trailers', found: true, already_working: true, mapping_needed: false, plex_folder: '/Volumes/Plex/Trailers' },
+      { kind: 'library', label: 'Movie library (Library Trailers)', local_folder: '/movies', found: true, mapping_needed: true, suggestion: movies, verified: ['x', 'y'] },
+    ],
+    suggestions: [pre, movies],
+  }));
+  const onUse = jest.fn();
+  render(<FindPlexFolder apiUrl={apiUrl} onUseMappings={onUse} />);
+  fireEvent.click(screen.getByRole('button', { name: /Find it for me/ }));
+  expect(await screen.findByText('NeXroll sends Plex files from 3 folders. Here is how Plex sees each one:')).toBeInTheDocument();
+  expect(screen.getByText('Movie library (Library Trailers)')).toBeInTheDocument();
+  expect(screen.getByText('Confirmed by finding 2 of your trailers there.')).toBeInTheDocument();
+  expect(screen.getByText('/Volumes/Plex/Trailers')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Add these 2 mappings' }));
+  expect(onUse).toHaveBeenCalledWith([pre, movies]);
+  expect(await screen.findByText(/Mappings added\./)).toBeInTheDocument();
 });
 
 test('the picker walks Plex folders and returns the chosen one', async () => {

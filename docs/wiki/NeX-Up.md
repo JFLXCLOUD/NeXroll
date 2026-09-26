@@ -156,6 +156,8 @@ Either can be switched off. With downloads off, only trailer files you already h
 
 **Folder mapping:** Radarr reports each movie's folder as Radarr sees it. If NeXroll sees the same folders under a different path, for example in Docker or over a network share, add a folder mapping such as `/movies` to `D:\Movies`, so NeXroll can find the trailer files.
 
+To **play** those trailers, Plex needs to open them too, which may take a second mapping (NeXroll to Plex) under **Settings > Path Mappings**. **Find it for me** there finds your movie folder on the Plex side and adds it. See [Library Trailers beside your movies](Path-Mappings#library-trailers-beside-your-movies). Jellyfin and Emby need neither mapping for playback.
+
 ### Limits and rotation
 
 - **Maximum downloaded trailers** and **Maximum download storage** apply to downloads only. Trailers next to your movies take no extra space and are always included.
@@ -696,7 +698,7 @@ services:
 
 ### Path Mappings for Media Servers
 
-If your media server (Plex, Jellyfin, or Emby) needs to access trailers for playback injection, it must also be able to reach the trailer files. Add the same host path as a volume in your media server container:
+Plex plays trailers straight from its own disk, so it must be able to reach the trailer files. With the storage folder inside your preroll folder (the suggested place), the preroll folder's mapping already covers them. Otherwise, mount the same host folder into your Plex container too:
 
 ```yaml
   plex:
@@ -704,13 +706,13 @@ If your media server (Plex, Jellyfin, or Emby) needs to access trailers for play
       - /path/to/your/trailers:/media/trailers    # Same host path, different container path
 ```
 
-Then add a path mapping in **NeXroll → Settings → Path Mappings**:
+Then use **Find it for me** in **Settings > Path Mappings**, which finds the trailer folder on the Plex side and adds the mapping, or add it yourself:
 
-| NeXroll Path | Plex/Media Server Path |
+| Folder as NeXroll sees it | Same folder as Plex sees it |
 |---|---|
 | /data/nexup_trailers | /media/trailers |
 
-For Jellyfin and Emby, path mappings can be configured via the plugin's **Configure Plugin** button, which sets them automatically.
+Jellyfin and Emby need no mapping: their NeXroll Intros plugin downloads each trailer from NeXroll. See [Path Mappings](Path-Mappings).
 
 ---
 

@@ -25,8 +25,13 @@ You don't have to work it out yourself. From 2.2.1, **Settings > Path Mappings**
 ## The quick way (2.2.1)
 
 1. Connect Plex under [Connect](Connect) with the Plex server owner's account.
-2. Go to **Settings > Path Mappings** and click **Find it for me**. NeXroll looks through the folders your Plex server can see for the one holding your prerolls. It only proposes a folder after finding some of your actual preroll files in it, subfolders included.
-3. Click **Add this mapping**.
+2. Go to **Settings > Path Mappings** and click **Find it for me**. NeXroll looks through the folders your Plex server can see for every folder it hands Plex files from:
+   - your preroll folder;
+   - NeX-Up's trailer storage, if you moved it outside the preroll folder;
+   - the movie folders [Library Trailers](NeX-Up#library-trailers) read trailer files from, when a trailer sits beside the movie.
+
+   It only proposes a folder after finding some of your actual files in it, subfolders included, and says which folders already work.
+3. Click **Add this mapping** (or **Add these mappings** when there are several).
 4. Apply a schedule or category, then click **Check again** under **Can Plex open your prerolls?**
 
 The first-run setup wizard offers the same **Find it for me** on its **Paths** step, which appears whenever Plex is connected. It works even before you have added any prerolls: NeXroll puts a small, clearly named test file in the folder, looks for it from Plex, and removes it.
@@ -56,7 +61,18 @@ Plex:     /Volumes/Plex/PreRoll/Halloween/Evil Dead 2.m4v
 - **Case.** On a Windows NeXroll, the NeXroll side ignores letter case. The Plex side must match exactly on a Linux Plex server, where `/data/Prerolls` and `/data/prerolls` are different folders.
 - **No match means no change.** A path that matches no mapping is sent to Plex as it is. That's right when both see the same path, and wrong otherwise. From 2.2.1, NeXroll checks with Plex first; see [What NeXroll checks for you](#what-nexroll-checks-for-you).
 
-NeX-Up trailers go to Plex the same way. If your trailer storage folder is outside the preroll folder, it needs its own mapping.
+NeX-Up trailers go to Plex the same way. Trailer storage inside the preroll folder (the suggested place) is covered by the preroll folder's mapping; storage elsewhere needs its own, which **Find it for me** adds.
+
+### Library Trailers beside your movies
+
+A Library Trailer that is a file next to the movie reaches Plex from your **movie library**, not from the preroll folder, so it involves two different mappings:
+
+| Mapping | Where | What it does |
+|---|---|---|
+| Radarr to NeXroll | NeX-Up > Library Trailers > Folder mapping | Lets NeXroll **find** the trailer: turns Radarr's movie folder into the folder NeXroll sees |
+| NeXroll to Plex | Settings > Path Mappings | Lets Plex **play** it: turns the folder NeXroll sees into the folder Plex sees |
+
+For example, Radarr reports `/movies/Alien (1979)`, NeXroll finds it at `D:\Movies\Alien (1979)`, and Plex plays it from `/data/media/Movies/Alien (1979)`: the first mapping is `/movies` → `D:\Movies`, the second `D:\Movies` → `/data/media/Movies`. When all three see the same path, neither is needed. **Find it for me** sets up the second one; downloaded Library Trailers live in NeX-Up's storage and need neither.
 
 ---
 

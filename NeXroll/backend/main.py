@@ -15172,6 +15172,89 @@ def _known_preroll_paths(db: Session, local_root: str, limit: int = 400) -> list
     return out[:limit]
 
 
+def _relative_under(root: str, paths, limit: int = 400) -> list:
+    """``paths`` inside ``root``, relative to it with ``/`` separators."""
+    out: list = []
+    seen: set = set()
+    for p in paths:
+        if not p:
+            continue
+        try:
+            rel = os.path.relpath(os.path.normpath(os.path.abspath(p)), root).replace(os.sep, "/")
+        except ValueError:
+            continue
+        if rel.startswith("..") or rel in seen:
+            continue
+        seen.add(rel)
+        out.append(rel)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _is_inside(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([os.path.normcase(os.path.abspath(path)),
+                                   os.path.normcase(os.path.abspath(root))]) == os.path.normcase(os.path.abspath(root))
+    except ValueError:
+        return False
+
+
+def _plex_path_folders(db: Session) -> list:
+    """Every folder whose files NeXroll can hand to Plex, and how to spot it.
+
+    Prerolls always; NeX-Up's trailer storage when it sits outside the preroll
+    folder (inside, the preroll folder's mapping already covers it); and the
+    movie folders Library Trailers read trailers from when a trailer file sits
+    beside the movie. Each entry carries ``known``: paths relative to the folder
+    that the search on the Plex side can look for.
+    """
+    folders = [{"kind": "prerolls", "label": "Prerolls", "local_folder": os.path.normpath(PREROLLS_DIR),
+                "known": _known_preroll_paths(db, PREROLLS_DIR)}]
+
+    setting = db.query(models.Setting).first()
+    storage = getattr(setting, "nexup_storage_path", None) if setting else None
+    if storage and not _is_inside(storage, PREROLLS_DIR):
+        storage = os.path.normpath(storage)
+        trailer_paths = []
+        for model in (models.ComingSoonTrailer, models.ComingSoonTVTrailer, models.LibraryTrailer):
+            q = db.query(model.local_path).filter(model.local_path != None)  # noqa: E711
+            if model is models.LibraryTrailer:
+                q = q.filter(models.LibraryTrailer.source == "download")
+            trailer_paths.extend(p for (p,) in q.all())
+        known = _relative_under(storage, trailer_paths)
+        if not known and os.path.isdir(storage):
+            known = _relative_under(storage, (
+                os.path.join(base, n) for base, _dirs, names in os.walk(storage) for n in names
+                if os.path.splitext(n)[1].lower() in plex_visibility.VIDEO_EXTENSIONS))
+        folders.append({"kind": "nexup", "label": "NeX-Up trailers", "local_folder": storage, "known": known})
+
+    # Library Trailers that are files beside the movie: <library>/<Movie>/<trailer>
+    # or <library>/<Movie>/Trailers/<trailer>. Group by library folder.
+    by_root: dict = {}
+    for (p,) in db.query(models.LibraryTrailer.local_path).filter(
+            models.LibraryTrailer.source == "local", models.LibraryTrailer.local_path != None).all():  # noqa: E711
+        movie_dir = os.path.dirname(os.path.normpath(p))
+        if os.path.basename(movie_dir).lower() in ("trailers", "trailer"):
+            movie_dir = os.path.dirname(movie_dir)
+        root = os.path.dirname(movie_dir)
+        if root and not _is_inside(root, PREROLLS_DIR):
+            by_root.setdefault(root, []).append(p)
+    roots = sorted(by_root)
+    if len(roots) > 4:
+        # Movies nested more deeply (A/, B/, ...); one mapping at their common folder.
+        try:
+            common = os.path.commonpath(roots)
+            by_root = {common: [p for r in roots for p in by_root[r]]}
+            roots = [common]
+        except ValueError:
+            roots = roots[:4]
+    for root in roots:
+        folders.append({"kind": "library", "label": "Movie library (Library Trailers)",
+                        "local_folder": root, "known": _relative_under(root, by_root[root])})
+    return folders
+
+
 @app.get("/plex/browse")
 def plex_browse(path: str = "", db: Session = Depends(get_db)):
     """List a folder on the Plex server as Plex sees it (the Browse Plex picker)."""
@@ -15204,20 +15287,41 @@ def plex_browse(path: str = "", db: Session = Depends(get_db)):
 
 @app.post("/settings/path-mappings/detect")
 def detect_path_mapping(req: Optional[DetectMappingRequest] = None, db: Session = Depends(get_db)):
-    """Find where the Plex server sees a NeXroll folder and propose the mapping.
+    """Find where the Plex server sees NeXroll's folders and propose mappings.
 
-    Checks the existing mappings first; otherwise searches Plex's filesystem
-    for a folder holding the same prerolls (see plex_visibility.find_folder).
-    Nothing is saved: the caller adds the mapping if the user accepts it.
+    Without ``local_folder`` this covers every folder NeXroll hands Plex files
+    from (see _plex_path_folders): prerolls, NeX-Up storage kept outside the
+    preroll folder, and the movie folders Library Trailers read from. For each
+    it checks the existing mappings first, then searches Plex's filesystem for
+    a folder holding the same files (plex_visibility.find_folder). Nothing is
+    saved: the caller adds the mappings the user accepts.
+
+    The top-level fields describe the first folder (prerolls), as before;
+    ``folders`` has one result per folder and ``suggestions`` every mapping
+    that is needed.
     """
-    local_root = os.path.normpath((req.local_folder if req and req.local_folder else None) or PREROLLS_DIR)
     _, files = _plex_files(db, max_calls=150, time_budget=35)
     if files is None:
         raise HTTPException(status_code=409, detail="Plex is not connected")
-    known = _known_preroll_paths(db, local_root)
-    # A fresh install, which is exactly when this is first needed, has nothing
-    # in the folder to look for. Put a small, clearly named file there for the
-    # search to find, and remove it afterwards.
+    if req and req.local_folder:
+        local = os.path.normpath(req.local_folder)
+        folders = [{"kind": "folder", "label": "Folder", "local_folder": local, "known": _known_preroll_paths(db, local)}]
+    else:
+        folders = _plex_path_folders(db)
+    results = []
+    for i, folder in enumerate(folders):
+        # Each folder gets its own time budget, so one slow search cannot starve the rest.
+        searcher = files if i == 0 else (_plex_files(db, max_calls=120, time_budget=25)[1] or files)
+        res = _detect_folder(db, searcher, folder["local_folder"], folder["known"])
+        results.append({"kind": folder["kind"], "label": folder["label"], **res})
+    suggestions = [r["suggestion"] for r in results if r.get("mapping_needed") and r.get("suggestion")]
+    return {**results[0], "folders": results, "suggestions": suggestions}
+
+
+def _detect_folder(db: Session, files, local_root: str, known: list) -> dict:
+    """Detect one folder. An empty folder (a fresh install, which is exactly
+    when this is first needed) gets a small, clearly named file for the
+    search to find, removed afterwards."""
     marker = None if known else _write_location_marker(local_root)
     try:
         return _detect_with(db, files, local_root, [marker] if marker else known, marker is not None)

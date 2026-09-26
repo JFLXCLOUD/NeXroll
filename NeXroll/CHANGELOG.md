@@ -7,7 +7,7 @@
 ### Added
 
 - **Can Plex open your prerolls?** Settings > Path Mappings asks your Plex server whether it can open each preroll it is set to play, and says why not when it can't. Plex only: Jellyfin and Emby never need a mapping.
-- **Find it for me.** Searches the folders your Plex server can see for the one holding your prerolls, confirms it by finding your files there, and adds the mapping in one click.
+- **Find it for me.** Searches the folders your Plex server can see for every folder NeXroll hands Plex files from (your prerolls, NeX-Up trailers stored outside the preroll folder, and the movie folders Library Trailers read trailer files from), confirms each by finding your files there, and adds the mappings in one click.
 - **Browse Plex.** Pick a mapping's Plex folder from Plex's own view of its disk instead of typing it.
 - **Test Translation checks with Plex** as well as showing the translated path.
 - **The first-run wizard sets up the mapping too.** Its Paths step now appears whenever Plex is connected, not only on Docker (a Plex on another computer needs a mapping just as much), and is skipped when only Jellyfin or Emby is connected. Find it for me works on a brand-new install with no prerolls yet, using a small test file it removes afterwards.

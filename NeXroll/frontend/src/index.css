@@ -11391,3 +11391,12 @@ body.light .nx-draft-cal-event { color: #157a55; }
   .nx-wiz-path-row > svg { transform: rotate(90deg); margin: 0 auto !important; }
   .nx-wiz-path-row > button { margin-left: auto; min-height: 44px; }
 }
+/* Find it for me: one result per folder NeXroll sends Plex files from. */
+.nx-plexpath-folder-list { display: grid; gap: 0.5rem; margin: 0.4rem 0 0.6rem; }
+.nx-plexpath-folder-result { padding: 0.6rem 0.7rem; border-radius: 6px; font-size: 0.85rem; line-height: 1.5; overflow-wrap: anywhere; }
+.nx-plexpath-folder-result.nx-plexpath-tone-ok { background: var(--success-soft); }
+.nx-plexpath-folder-result.nx-plexpath-tone-bad { background: var(--error-soft); }
+.nx-plexpath-folder-result > strong { display: block; margin-bottom: 0.3rem; }
+.nx-plexpath-folder-result > code { display: block; margin-bottom: 0.3rem; font-size: 0.8rem; }
+.nx-plexpath-folder-result p { margin: 0.2rem 0 0; }
+.nx-plexpath-find .nx-plexpath-result:not(.nx-plexpath-tone-ok):not(.nx-plexpath-tone-bad) { padding: 0; }

@@ -454,15 +454,18 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     }
   };
 
-  // Save the mapping "Find it for me" proposed, replacing any row for the same
-  // NeXroll folder. Returns whether it saved, for the panel's confirmation.
-  const saveFoundMapping = async (suggestion) => {
+  // Save the mappings "Find it for me" proposed (one per folder NeXroll sends
+  // Plex files from), replacing any row for the same NeXroll folder. Returns
+  // whether it saved, for the panel's confirmation.
+  const saveFoundMappings = async (suggestions) => {
     const bare = (p) => (p || '').trim().replace(/[\\/]+$/, '').toLowerCase();
+    const incoming = (suggestions || []).map((s) => ({ local: s.local, plex: s.plex }));
+    const replaced = new Set(incoming.map((s) => bare(s.local)));
     const mappings = [
       ...pathRows
         .map((r) => ({ local: (r.local || '').trim(), plex: (r.plex || '').trim() }))
-        .filter((r) => r.local && r.plex && bare(r.local) !== bare(suggestion.local)),
-      { local: suggestion.local, plex: suggestion.plex },
+        .filter((r) => r.local && r.plex && !replaced.has(bare(r.local))),
+      ...incoming,
     ];
     try {
       const res = await fetch(apiUrl('settings/path-mappings'), {
@@ -472,7 +475,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       });
       if (!res.ok) return false;
       setPathRows(mappings);
-      setPathResult({ ok: true, msg: 'Mapping saved.' });
+      setPathResult({ ok: true, msg: incoming.length === 1 ? 'Mapping saved.' : `${incoming.length} mappings saved.` });
       return true;
     } catch {
       return false;
@@ -792,7 +795,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             {/* With Plex connected, NeXroll can ask Plex instead of the user working it out. */}
             {plexReady && (
               <div style={{ marginTop: '1rem' }}>
-                <FindPlexFolder apiUrl={apiUrl} onUseMapping={saveFoundMapping} />
+                <FindPlexFolder apiUrl={apiUrl} onUseMappings={saveFoundMappings} />
                 <p style={{ color: sub, fontSize: '0.8rem', margin: '0.6rem 0 0' }}>
                   If NeXroll and Plex share the same path there is nothing to add, and Find it for me says so.
                   Otherwise you can fill in the mapping yourself below.
