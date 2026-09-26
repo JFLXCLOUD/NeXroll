@@ -23,6 +23,7 @@ import YearlyScheduleFields from './components/YearlyScheduleFields';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import NexUpApprovedPages from './components/NexUpApprovedPages';
+import { PlexPathCheck, FindPlexFolder, PlexFolderPicker, StatusIcon, statusText } from './components/PlexPathTools';
 import { captureDynamicPrerollFrame, drawThemeBackdropFrame, fontStackFor, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
 import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount, sequenceHasUnsavedChanges } from './utils/sequenceValidator';
 import {
@@ -1525,6 +1526,11 @@ function App() {
   // Path Mappings & External Mapping UI state
   const [pathMappings, setPathMappings] = useState([]);
   const [pathMappingsLoading, setPathMappingsLoading] = useState(false);
+  // Row whose Plex path is being picked with Browse Plex (null when closed),
+  // and a counter that re-runs the "Can Plex open your prerolls?" check.
+  const [plexPickerRow, setPlexPickerRow] = useState(null);
+  const [plexCheckKey, setPlexCheckKey] = useState(0);
+  const [plexPathSummary, setPlexPathSummary] = useState(null);
 
   // Preroll Storage Folder
   const [prerollFolderInfo, setPrerollFolderInfo] = useState(null);
@@ -8718,12 +8724,22 @@ const DashboardTiles = {
         // selected for editing over on the Connect page — those are independent.
         const pathsServers = getConnectedServers();
         const pathsActiveLabel = pathsServers.length ? describeServers(pathsServers) : 'None';
+        // "Verified" and "Last tested" used to be invented: one counted fields the
+        // API never returns, the other said "Today" whenever a mapping existed.
+        // Both now come from asking Plex (PlexPathCheck).
+        const plexOnline = plexStatus === 'Connected';
+        const s = plexPathSummary;
+        const canOpen = !plexOnline ? { value: 'No Plex', tone: '' }
+          : !s ? { value: 'Checking', tone: '' }
+          : !s.total ? { value: 'Nothing set', tone: '' }
+          : { value: `${s.total - s.missing} of ${s.total}`, tone: s.missing ? (s.missing === s.total ? 'danger' : 'warning') : 'success' };
+        const hostNames = { MacOSX: 'macOS', Windows: 'Windows', Linux: 'Linux' };
         items = [
           { label: 'Mappings', value: realMappings.length },
-          { label: 'Verified', value: realMappings.filter(mapping => mapping.verified || mapping.is_valid).length, tone: 'success' },
+          { label: 'Plex can open', value: canOpen.value, tone: canOpen.tone },
           { label: pathsServers.length > 1 ? 'Servers' : 'Active server', value: pathsActiveLabel,
             tone: pathsServers.length ? 'info' : '' },
-          { label: 'Last tested', value: realMappings.length ? 'Today' : 'Not yet', tone: realMappings.length ? 'success' : 'warning' }
+          { label: 'Plex runs on', value: plexOnline && s && s.platform ? (hostNames[s.platform] || s.platform) : '-', tone: plexOnline && s && s.platform ? 'info' : '' }
         ];
       } else if (activeTab === 'settings/storage') {
         items = [];
@@ -22366,7 +22382,7 @@ const DashboardTiles = {
             <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>Docker</h3>
             <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
               When running NeXroll in Docker, use <strong>Sign in with Plex</strong> above to connect.
-              After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
+              After connecting, open <em>Settings &gt; Path Mappings</em> and use <em>Find it for me</em>, or add a mapping yourself, to translate container/local paths
               (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
               (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code> on Windows, or <code>/mnt/prerolls</code> on Linux).
             </p>
@@ -22868,8 +22884,28 @@ const DashboardTiles = {
       await tryPutMappings(list, 'array').catch(async () => await tryPutMappings(list, 'object'));
       alert('Path mappings saved.');
       await loadPathMappings();
+      setPlexCheckKey(k => k + 1);
     } catch (e) {
       alert('Failed to save mappings: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  // Save a mapping found by "Find it for me". A row for the same NeXroll
+  // folder is replaced rather than duplicated.
+  const applyDetectedMapping = async (suggestion) => {
+    const same = (a, b) => (a || '').replace(/[\\/]+$/, '').toLowerCase() === (b || '').replace(/[\\/]+$/, '').toLowerCase();
+    const rows = (pathMappings || [])
+      .map(m => ({ local: (m.local || '').trim(), plex: (m.plex || '').trim() }))
+      .filter(m => m.local && m.plex && !same(m.local, suggestion.local));
+    const list = [...rows, { local: suggestion.local, plex: suggestion.plex }];
+    try {
+      await tryPutMappings(list, 'array').catch(async () => await tryPutMappings(list, 'object'));
+      await loadPathMappings();
+      setPlexCheckKey(k => k + 1);
+      return true;
+    } catch (e) {
+      alert('Failed to save the mapping: ' + (e && e.message ? e.message : e));
+      return false;
     }
   };
 
@@ -22886,7 +22922,7 @@ const DashboardTiles = {
       const res = await fetch('/settings/path-mappings/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: lines })
+        body: JSON.stringify({ paths: lines, check_plex: plexStatus === 'Connected' })
       });
       const text = await res.text();
       let data = null;
@@ -22901,7 +22937,7 @@ const DashboardTiles = {
         const input = r.input ?? r.source ?? r.local ?? r.original ?? '';
         const output = r.output ?? r.result ?? r.plex ?? r.target ?? '';
         const matched = 'matched' in r ? !!r.matched : (input && output && input !== output);
-        return { input, output, matched };
+        return { input, output, matched, plex: r.plex || null };
       });
       setMappingTestResults(norm);
     } catch (e) {
@@ -30428,9 +30464,18 @@ const DashboardTiles = {
         <FolderSync size={20} style={{ color: '#00d4ff' }} /> Path Mappings (Plex)
       </h2>
       <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-        Define how local or UNC paths should be translated to Plex-readable paths when applying prerolls.
-        Longest-prefix rule applies; Windows local prefixes are matched case-insensitively.
+        Plex plays prerolls straight from its own disk, so it needs every file's path as the Plex server sees it.
+        When NeXroll reaches the same folder under a different path, as it does in Docker, on another computer
+        or through a network share, add a mapping: the folder as NeXroll sees it on the left, as Plex sees it on
+        the right. The longest matching folder wins.
       </p>
+
+      {plexStatus === 'Connected' && (
+        <div className="nx-plexpath-tools">
+          <PlexPathCheck apiUrl={apiUrl} refreshKey={plexCheckKey} onResult={setPlexPathSummary} />
+          <FindPlexFolder apiUrl={apiUrl} onUseMapping={applyDetectedMapping} />
+        </div>
+      )}
 
       {/* These rules really are Plex-only: Plex plays prerolls off its own
           filesystem, so it needs a path it can resolve, whereas the Jellyfin and
@@ -30479,11 +30524,11 @@ const DashboardTiles = {
               border: '1px solid var(--border-color)'
             }}>
               <div style={{ flex: 1 }}>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Local/UNC Path</label>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Folder as NeXroll sees it</label>
                 <input
                   type="text"
                   className="input"
-                  placeholder="\\\\NAS\\share\\prerolls or C:\\Media\\Prerolls"
+                  placeholder={'/data/prerolls or C:\\Media\\Prerolls'}
                   value={m.local}
                   onChange={(e) => updateMappingRow(idx, 'local', e.target.value)}
                   style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-color)' }}
@@ -30491,15 +30536,23 @@ const DashboardTiles = {
               </div>
               <ArrowRight size={18} style={{ color: '#00d4ff', flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Plex Path</label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="/mnt/NAS/prerolls or /Volumes/Media/Prerolls"
-                  value={m.plex}
-                  onChange={(e) => updateMappingRow(idx, 'plex', e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-color)' }}
-                />
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Same folder as Plex sees it</label>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder={'/Volumes/Media/Prerolls or \\\\NAS\\Prerolls'}
+                    value={m.plex}
+                    onChange={(e) => updateMappingRow(idx, 'plex', e.target.value)}
+                    style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-color)' }}
+                  />
+                  {plexStatus === 'Connected' && (
+                    <button type="button" className="button nx-plexpath-ghost" onClick={() => setPlexPickerRow(idx)}
+                      title="Pick this folder from the Plex server's own view" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      <FolderOpen size={14} style={{ marginRight: '0.3rem' }} /> Browse Plex
+                    </button>
+                  )}
+                </div>
               </div>
               <button
                 type="button"
@@ -30562,6 +30615,13 @@ const DashboardTiles = {
           </button>
         </div>
       </div>
+      <PlexFolderPicker
+        apiUrl={apiUrl}
+        open={plexPickerRow !== null}
+        initialPath={plexPickerRow !== null ? ((pathMappings[plexPickerRow] || {}).plex || '') : ''}
+        onPick={(p) => { updateMappingRow(plexPickerRow, 'plex', p); setPlexPickerRow(null); }}
+        onClose={() => setPlexPickerRow(null)}
+      />
     </div>
 
     {/* Test Translation Card */}
@@ -30570,7 +30630,8 @@ const DashboardTiles = {
         <FlaskConical size={20} style={{ color: '#a855f7' }} /> Test Translation
       </h2>
       <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-        Paste one or more local/UNC paths below to preview their translated Plex paths.
+        Paste the full path of one or more prerolls as NeXroll sees them, one per line. NeXroll shows the path it
+        would give Plex{plexStatus === 'Connected' ? ' and asks Plex whether it can open it' : ''}.
       </p>
 
       <div className="nx-setting-row">
@@ -30624,8 +30685,16 @@ const DashboardTiles = {
                   fontFamily: 'monospace'
                 }}>
                   <code style={{ color: 'var(--text-color)' }}>{r.input}</code>
-                  <ArrowRight size={12} style={{ margin: '0 0.5rem', verticalAlign: 'middle' }} />
+                  {/* A text arrow, not an icon, so the pair survives being copied into a support thread. */}
+                  <span style={{ margin: '0 0.5rem' }}>{'→'}</span>
                   <code style={{ color: r.matched ? '#22c55e' : 'var(--text-secondary)' }}>{r.output || '(no change)'}</code>
+                  {!r.matched && <span className="nx-plexpath-inline-note"> (no mapping matched, so Plex gets the same path)</span>}
+                  {r.plex && (
+                    <div className="nx-plexpath-test-plex">
+                      <div className="nx-plexpath-test-status"><StatusIcon status={r.plex.status} size={13} /> <span>{statusText(r.plex.status)}</span></div>
+                      {r.plex.reason && <div className="nx-plexpath-inline-note">{r.plex.reason}</div>}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

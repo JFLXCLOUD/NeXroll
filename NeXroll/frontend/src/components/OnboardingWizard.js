@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Rocket, Server, Sparkles, HardDrive, UserPlus, CheckCircle,
   ChevronLeft, ChevronRight, Loader2, ExternalLink, Check, AlertCircle,
-  FolderSync, ArrowRight, Plus, X, Box, HelpCircle
+  FolderSync, ArrowRight, Plus, X, Box, HelpCircle, FolderOpen
 } from 'lucide-react';
+import { FindPlexFolder, PlexFolderPicker, StatusIcon, statusText } from './PlexPathTools';
 
 /**
  * NeXroll v2 — First-run Onboarding Wizard
@@ -19,12 +20,12 @@ import {
  *   onFinish()                       called after POST /onboarding/complete succeeds
  */
 
-// The Paths step exists only on a container install, so the run's step list is
-// built from this rather than being fixed.
+// The Paths step only appears when Plex needs it (see showPaths), so the run's
+// step list is built from this rather than being fixed.
 const BASE_STEPS = [
   { key: 'welcome', label: 'Welcome', icon: Rocket },
   { key: 'server', label: 'Media Server', icon: Server },
-  { key: 'paths', label: 'Paths', icon: FolderSync, dockerOnly: true },
+  { key: 'paths', label: 'Paths', icon: FolderSync, pathsStep: true },
   { key: 'nexup', label: 'NeX-Up', icon: Sparkles },
   { key: 'storage', label: 'Storage', icon: HardDrive },
   { key: 'account', label: 'Account', icon: UserPlus },
@@ -75,8 +76,8 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
   const [acctBusy, setAcctBusy] = useState(false);
   const [acctResult, setAcctResult] = useState(null);
 
-  // Docker path mappings. dockerInfo stays null off-container, which is what
-  // keeps the Paths step out of the list entirely.
+  // Path mappings. dockerInfo stays null off-container; installInfo always
+  // carries the preroll folder and any saved mappings.
   const [dockerInfo, setDockerInfo] = useState(null);
   const [installInfo, setInstallInfo] = useState(null);
   const [install, setInstall] = useState(null); // {is_rerun, users_exist, has_server}
@@ -86,6 +87,22 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
   const [pathHelpOpen, setPathHelpOpen] = useState(false);
   const [testPath, setTestPath] = useState('');
   const [testOut, setTestOut] = useState(null);
+  // Whether Plex is connected, from this wizard or an earlier run. Only Plex
+  // needs path mappings, and with it connected NeXroll can ask Plex directly.
+  const [plexReady, setPlexReady] = useState(false);
+  const [pickerRow, setPickerRow] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(apiUrl('/plex/status'), { credentials: 'include' });
+        const data = res.ok ? await res.json() : null;
+        if (!cancelled && data && data.connected) setPlexReady(true);
+      } catch { /* treated as not connected */ }
+    })();
+    return () => { cancelled = true; };
+  }, [apiUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,21 +127,26 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         // Pre-fill trailer storage with whatever is configured, else the
         // recommended folder, so the common case is one click.
         setNexupStorage(data.nexup_storage_path || data.nexup_suggested_path || '');
-        if (!data.is_docker) return;
-        setDockerInfo(data);
         // Seed the first row with the one mapping every install needs: the
         // folder NeXroll writes prerolls into. The user only has to supply the
         // right-hand side, which is the half only they can know.
         if (Array.isArray(data.mappings) && data.mappings.length) setPathRows(data.mappings);
         else if (data.prerolls_dir) setPathRows([{ local: data.prerolls_dir, plex: '' }]);
+        if (data.is_docker) setDockerInfo(data);
       } catch { /* not fatal: the step simply does not appear */ }
     })();
     return () => { cancelled = true; };
   }, [apiUrl]);
 
+  // The Paths step appears whenever Plex is connected, Docker or not (a Plex on
+  // another computer needs a mapping just as much), and on Docker until a
+  // server is chosen. Only Plex uses mappings, so an install connected only to
+  // Jellyfin or Emby skips it.
+  const pluginOnly = connectedServers.length > 0 && !connectedServers.includes('plex') && !plexReady;
+  const showPaths = plexReady || (!!dockerInfo && !pluginOnly);
   const steps = useMemo(
-    () => BASE_STEPS.filter((s) => !s.dockerOnly || !!dockerInfo),
-    [dockerInfo]
+    () => BASE_STEPS.filter((s) => !s.pathsStep || showPaths),
+    [showPaths]
   );
   const step = steps[Math.min(stepIdx, steps.length - 1)];
   const next = () => setStepIdx((i) => Math.min(i + 1, steps.length - 1));
@@ -161,6 +183,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       const data = await safeJson(res);
       if (res.ok) {
         setConnectedServers((prev) => (prev.includes(serverType) ? prev : [...prev, serverType]));
+        if (serverType === 'plex') setPlexReady(true);
         setServerResult({ ok: true, msg: 'Connected successfully.' });
         setServerUrl('');
         setServerApiKey('');
@@ -212,6 +235,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             if (c.ok && cd && cd.connected) {
               setPlexOAuth((p) => ({ ...p, status: 'connected' }));
               setConnectedServers((prev) => (prev.includes('plex') ? prev : [...prev, 'plex']));
+              setPlexReady(true);
               setServerResult({ ok: true, msg: cd.server_name ? `Connected to ${cd.server_name}.` : 'Connected to Plex.' });
             } else {
               setPlexOAuth((p) => ({ ...p, status: 'idle' }));
@@ -377,8 +401,8 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     { label: 'Media server', done: !!(serverResult && serverResult.ok) || plexOAuth.status === 'connected' || !!(install && install.has_server),
       detail: (serverResult && serverResult.ok) || plexOAuth.status === 'connected' || (install && install.has_server)
         ? 'Connected' : 'Not connected yet' },
-    ...(dockerInfo ? [{ label: 'Path mappings', done: !!(pathResult && pathResult.ok) || !!(dockerInfo.mappings && dockerInfo.mappings.length),
-      detail: (pathResult && pathResult.ok) || (dockerInfo.mappings && dockerInfo.mappings.length) ? 'Saved' : 'Not set — prerolls may not play' }] : []),
+    ...(showPaths ? [{ label: 'Path mappings', done: !!(pathResult && pathResult.ok) || !!(installInfo && installInfo.mappings && installInfo.mappings.length),
+      detail: (pathResult && pathResult.ok) || (installInfo && installInfo.mappings && installInfo.mappings.length) ? 'Saved' : 'Not set, so Plex may not find your prerolls' }] : []),
     { label: 'NeX-Up', done: !!(nexupResult && nexupResult.ok), detail: (nexupResult && nexupResult.ok) ? 'Connected' : 'Optional, skipped' },
     { label: 'Storage', done: !!(storageResult && storageResult.ok), detail: (storageResult && storageResult.ok) ? 'Custom folder saved' : 'Using the default folder' },
     { label: 'Account', done: accountExists || !!(acctResult && acctResult.ok), detail: accountExists || (acctResult && acctResult.ok) ? 'Ready' : 'No login required' },
@@ -386,7 +410,10 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
 
   const isDockerInstall = !!(installInfo && installInfo.is_docker);
   const suggestedNexupPath = (installInfo && installInfo.nexup_suggested_path) || '';
-  const exampleLocal = (dockerInfo && dockerInfo.prerolls_dir) || '/data/prerolls';
+  const exampleLocal = (installInfo && installInfo.prerolls_dir) || '/data/prerolls';
+  // A sample file under that folder, in the folder's own separator style.
+  const exampleFile = exampleLocal.includes('\\') && !exampleLocal.includes('/')
+    ? `${exampleLocal}\\holiday\\xmas.mp4` : `${exampleLocal}/holiday/xmas.mp4`;
   const mountList = (dockerInfo && Array.isArray(dockerInfo.mounts)) ? dockerInfo.mounts : [];
   // Fill the first empty NeXroll-side field, or append a row if all are taken.
   const applyMountToRow = (mount) => setPathRows((rows) => {
@@ -427,8 +454,33 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     }
   };
 
+  // Save the mapping "Find it for me" proposed, replacing any row for the same
+  // NeXroll folder. Returns whether it saved, for the panel's confirmation.
+  const saveFoundMapping = async (suggestion) => {
+    const bare = (p) => (p || '').trim().replace(/[\\/]+$/, '').toLowerCase();
+    const mappings = [
+      ...pathRows
+        .map((r) => ({ local: (r.local || '').trim(), plex: (r.plex || '').trim() }))
+        .filter((r) => r.local && r.plex && bare(r.local) !== bare(suggestion.local)),
+      { local: suggestion.local, plex: suggestion.plex },
+    ];
+    try {
+      const res = await fetch(apiUrl('settings/path-mappings'), {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mappings }),
+      });
+      if (!res.ok) return false;
+      setPathRows(mappings);
+      setPathResult({ ok: true, msg: 'Mapping saved.' });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   // Translate a real path through the saved rules, so the user can see the
-  // answer their media server will be given rather than trusting the mapping.
+  // answer Plex will be given, and ask Plex whether it can open it.
   const runPathTest = async () => {
     const target = (testPath || '').trim();
     if (!target) return;
@@ -437,7 +489,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       const res = await fetch(apiUrl('settings/path-mappings/test'), {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: [target] }),
+        body: JSON.stringify({ paths: [target], check_plex: plexReady }),
       });
       const data = await safeJson(res);
       const first = data && Array.isArray(data.results) ? data.results[0] : null;
@@ -724,18 +776,29 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         {step.key === 'paths' && (
           <div>
             <h2 style={{ color: txt, marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Box size={20} style={{ color: '#818cf8' }} /> One thing Docker needs
+              <Box size={20} style={{ color: '#818cf8' }} /> {dockerInfo ? 'One thing Docker needs' : 'Make sure Plex can find your prerolls'}
             </h2>
             <p style={{ color: sub, marginTop: 0, lineHeight: 1.6 }}>
-              NeXroll is running in a container. Inside it, your files live at one path.
-              Your media server sees those same files at a <em>different</em> path. When
-              NeXroll tells the server which preroll to play, it has to send the path the
-              server understands.
+              {dockerInfo
+                ? 'NeXroll is running in a container. Inside it, your files live at one path. Plex sees those same files at a different path. '
+                : 'Plex plays prerolls straight from its own disk. If Plex runs on another computer, or reaches the folder through a network share, it sees your prerolls under a different path from NeXroll. '}
+              When NeXroll tells Plex which preroll to play, it has to send the path Plex understands.
             </p>
             <p style={{ color: sub, marginTop: '0.6rem', lineHeight: 1.6 }}>
-              Get this wrong and nothing looks broken: the server accepts the setting and
-              then quietly plays no preroll. So it is worth two minutes now.
+              Get this wrong and nothing looks broken: Plex accepts the setting and
+              then quietly plays no preroll. Only Plex needs this; Jellyfin and Emby get prerolls from NeXroll directly.
             </p>
+
+            {/* With Plex connected, NeXroll can ask Plex instead of the user working it out. */}
+            {plexReady && (
+              <div style={{ marginTop: '1rem' }}>
+                <FindPlexFolder apiUrl={apiUrl} onUseMapping={saveFoundMapping} />
+                <p style={{ color: sub, fontSize: '0.8rem', margin: '0.6rem 0 0' }}>
+                  If NeXroll and Plex share the same path there is nothing to add, and Find it for me says so.
+                  Otherwise you can fill in the mapping yourself below.
+                </p>
+              </div>
+            )}
 
             {/* Worked example, using this install's real preroll folder. */}
             <div style={{
@@ -746,18 +809,18 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               <div style={{ fontWeight: 700, color: txt, fontSize: '0.85rem', marginBottom: '0.6rem' }}>
                 The same file, two names
               </div>
-              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.78rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+              <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.78rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere', minWidth: 0 }}>
                 <div style={{ color: sub }}>
                   NeXroll sees{'\u00a0\u00a0'}
-                  <span style={{ color: txt }}>{exampleLocal}/holiday/xmas.mp4</span>
+                  <span style={{ color: txt }}>{exampleFile}</span>
                 </div>
                 <div style={{ color: sub }}>
-                  Server sees{'\u00a0\u00a0\u00a0'}
+                  Plex sees{'\u00a0\u00a0\u00a0\u00a0\u00a0'}
                   <span style={{ color: txt }}>/mnt/media/prerolls/holiday/xmas.mp4</span>
                 </div>
               </div>
               <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: sub }}>
-                So the mapping is <code style={{ color: '#818cf8' }}>{exampleLocal}</code>
+                So the mapping is <code style={{ color: '#818cf8', overflowWrap: 'anywhere' }}>{exampleLocal}</code>
                 {' '}<ArrowRight size={11} style={{ verticalAlign: 'middle' }} />{' '}
                 <code style={{ color: '#818cf8' }}>/mnt/media/prerolls</code>. Only the start of
                 the path changes; NeXroll keeps the rest.
@@ -797,7 +860,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             {/* The mapping rows. */}
             <div style={{ marginTop: '1.1rem', display: 'grid', gap: '0.6rem' }}>
               {pathRows.map((row, idx) => (
-                <div key={idx} style={{ display: 'flex', gap: '0.45rem', alignItems: 'flex-end' }}>
+                <div key={idx} className="nx-wiz-path-row" style={{ display: 'flex', gap: '0.45rem', alignItems: 'flex-end' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {idx === 0 && <label style={labelStyle}>Path inside NeXroll</label>}
                     <input
@@ -809,13 +872,22 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                   </div>
                   <ArrowRight size={16} style={{ color: '#818cf8', flexShrink: 0, marginBottom: '0.65rem' }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {idx === 0 && <label style={labelStyle}>Path your media server uses</label>}
-                    <input
-                      style={inputStyle}
-                      value={row.plex}
-                      placeholder="/mnt/media/prerolls"
-                      onChange={(e) => updatePathRow(idx, 'plex', e.target.value)}
-                    />
+                    {idx === 0 && <label style={labelStyle}>Path Plex uses</label>}
+                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                      <input
+                        style={inputStyle}
+                        value={row.plex}
+                        placeholder="/mnt/media/prerolls"
+                        onChange={(e) => updatePathRow(idx, 'plex', e.target.value)}
+                      />
+                      {plexReady && (
+                        <button type="button" onClick={() => setPickerRow(idx)}
+                          title="Pick this folder from the Plex server's own view"
+                          style={{ ...ghostBtn, padding: '0.55rem 0.6rem', flexShrink: 0 }}>
+                          <FolderOpen size={14} /> Browse Plex
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -838,26 +910,27 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               onClick={() => setPathHelpOpen((o) => !o)}
               style={{ ...ghostBtn, marginTop: '0.9rem', border: 'none', padding: '0.3rem 0', color: '#818cf8' }}
             >
-              <HelpCircle size={15} /> Where do I find my server&apos;s path?
+              <HelpCircle size={15} /> Where do I find the path Plex uses?
             </button>
             {pathHelpOpen && (
               <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: sub, lineHeight: 1.65 }}>
                 <p style={{ margin: '0 0 0.5rem' }}>
-                  <strong style={{ color: txt }}>If your media server also runs in Docker:</strong> open
+                  <strong style={{ color: txt }}>If Plex also runs in Docker:</strong> open
                   its compose file or container settings and look at its volumes. Each one reads{' '}
                   <code>host path : container path</code>. The <em>right</em> side is what that server
                   sees, and that is what belongs in the right-hand column above.
                 </p>
                 <p style={{ margin: '0 0 0.5rem' }}>
-                  <strong style={{ color: txt }}>If your media server runs directly on the host</strong>{' '}
+                  <strong style={{ color: txt }}>If Plex runs directly on the host</strong>{' '}
                   (or another machine): use the folder as that machine sees it, for example{' '}
                   <code>/mnt/media/prerolls</code>, <code>D:\Media\Prerolls</code>, or{' '}
                   <code>\\NAS\media\prerolls</code>.
                 </p>
                 <p style={{ margin: 0 }}>
-                  <strong style={{ color: txt }}>Still unsure?</strong> In Plex, open Settings, Manage,
-                  Libraries, then Edit a library: the folders listed there are exactly the paths Plex
-                  uses. Jellyfin and Emby show the same under their library settings.
+                  <strong style={{ color: txt }}>Still unsure?</strong>{' '}
+                  {plexReady ? 'Use Browse Plex beside the right-hand column to pick the folder from Plex\'s own view. Or, ' : ''}
+                  in Plex, open Settings, Manage, Libraries, then Edit a library: the folders listed there
+                  are exactly the paths Plex uses.
                 </p>
               </div>
             )}
@@ -877,7 +950,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                   <input
                     style={{ ...inputStyle, flex: 1 }}
                     value={testPath}
-                    placeholder={`${exampleLocal}/holiday/xmas.mp4`}
+                    placeholder={exampleFile}
                     onChange={(e) => setTestPath(e.target.value)}
                   />
                   <button type="button" style={ghostBtn} onClick={runPathTest} disabled={!testPath.trim()}>
@@ -887,19 +960,39 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                 {testOut && !testOut.pending && (
                   <div style={{ marginTop: '0.55rem', fontSize: '0.8rem', color: sub }}>
                     {testOut.error || !testOut.output ? (
-                      <span style={{ color: '#ef4444' }}>
-                        No mapping matched that path. Check that the left-hand column above starts the same way.
-                      </span>
+                      <span style={{ color: '#ef4444' }}>Could not translate that path. Try again.</span>
                     ) : (
                       <>
-                        Your media server will be told:{' '}
-                        <code style={{ color: '#22c55e' }}>{testOut.output}</code>
+                        {testOut.matched === false && (
+                          <div style={{ color: '#f59e0b', marginBottom: '0.3rem' }}>
+                            No mapping matched that path, so Plex would get it unchanged. Check that the left-hand column above starts the same way.
+                          </div>
+                        )}
+                        Plex will be told:{' '}
+                        <code style={{ color: testOut.matched === false ? txt : '#22c55e', overflowWrap: 'anywhere' }}>{testOut.output}</code>
+                        {testOut.plex && (
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.35rem', marginTop: '0.35rem' }}>
+                            <StatusIcon status={testOut.plex.status} size={14} />
+                            <span>
+                              <strong style={{ color: txt }}>{statusText(testOut.plex.status)}.</strong>
+                              {testOut.plex.reason ? ` ${testOut.plex.reason}` : ''}
+                            </span>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
                 )}
               </div>
             )}
+
+            <PlexFolderPicker
+              apiUrl={apiUrl}
+              open={pickerRow !== null}
+              initialPath={pickerRow !== null ? ((pathRows[pickerRow] || {}).plex || '') : ''}
+              onPick={(p) => { updatePathRow(pickerRow, 'plex', p); setPickerRow(null); }}
+              onClose={() => setPickerRow(null)}
+            />
 
             <p style={{ color: sub, fontSize: '0.78rem', marginTop: '1rem', marginBottom: 0 }}>
               You can skip this and set it up later under Settings, Path Mappings.
