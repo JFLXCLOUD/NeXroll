@@ -9862,9 +9862,12 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
   gap: 8px;
   margin-top: 11px;
 }
+/* Every part has a fixed cell, and the check's column is reserved on every
+   option. Left to auto-placement, the check (which spans both rows) was placed
+   before the name and took its column, pushing the name to the far right. */
 .nx-theme-option {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) 13px;
   align-items: center;
   gap: 3px 8px;
   padding: 9px 10px;
@@ -9883,6 +9886,7 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
   background: color-mix(in srgb, var(--accent-color) 9%, var(--card-bg));
 }
 .nx-theme-swatch {
+  grid-column: 1;
   grid-row: 1 / span 2;
   display: flex;
   width: 26px;
@@ -9892,9 +9896,10 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
   border-radius: 7px;
 }
 .nx-theme-swatch i { flex: 1; display: block; }
-.nx-theme-option-name { font-size: 12px; font-weight: 700; line-height: 1.2; }
+.nx-theme-option-name { grid-column: 2; grid-row: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 700; line-height: 1.2; }
 .nx-theme-option-base {
   grid-column: 2;
+  grid-row: 2;
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 600;
@@ -9902,7 +9907,7 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
   text-transform: uppercase;
   line-height: 1.2;
 }
-.nx-theme-option-check { grid-row: 1 / span 2; color: var(--accent-color); }
+.nx-theme-option-check { grid-column: 3; grid-row: 1 / span 2; color: var(--accent-color); }
 
 /* Fallback filler controls. These were inline-styled at a larger scale than the
    rest of the page — 0.9rem sub-labels sitting above 0.73rem section headings,

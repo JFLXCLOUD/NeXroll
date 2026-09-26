@@ -23,6 +23,7 @@
 - **The External API's category apply reported success even when Plex refused the change.**
 - **A mapping for `/data/pre` also caught `/data/prerolls2`.** Mappings now match whole folder names, in one shared implementation instead of ten copies.
 - **The Path Mappings header showed invented numbers.** "Verified" was always 0 and "Last tested" said "Today" whenever a mapping existed. It now shows how many prerolls Plex can open and what Plex runs on.
+- **Choosing a theme in Settings pushed its name to the edge of the button.** The check mark took the name's place; it now sits at the right without moving anything.
 - **Path Mappings was cramped on phones.** The page is one column, each mapping stacks, and long paths wrap.
 
 ## [2.2.0] - 09-25-2026
