@@ -8,6 +8,7 @@ from typing import Optional
 from pathlib import Path
 from datetime import datetime
 from backend import secure_store
+from backend import plex_visibility
 
 def _is_dir_writable(p: str) -> bool:
     try:
@@ -111,6 +112,8 @@ class PlexConnector:
         self.config_file = self._find_config_file()
         self.headers = {}
         self._verify = _infer_tls_verify(self.url)
+        # Outcome of the Plex path check made by the last set_preroll() call.
+        self.last_visibility: Optional[plex_visibility.GateResult] = None
 
         # Try to load stable token from config file if no token provided
         if not token:
@@ -373,10 +376,44 @@ class PlexConnector:
 
         return result
 
+    def visibility_summary(self) -> Optional[dict]:
+        """The last path check in a form API responses can carry."""
+        g = self.last_visibility
+        if g is None:
+            return None
+        return {
+            "action": g.action,
+            "message": g.message,
+            "checked": len(g.results),
+            "missing": [{"path": r["path"], "reason": r["reason"]} for r in g.missing][:25],
+        }
+
     def set_preroll(self, preroll_path: str) -> bool:
         """Set the preroll video in Plex server settings.
         If the combined string is too long for Plex, automatically selects
-        a random subset of paths that fits within Plex's limits."""
+        a random subset of paths that fits within Plex's limits.
+
+        Before anything is written, Plex is asked whether it can see each file
+        (see plex_visibility). Files it cannot see are left out; if it can see
+        none of them, nothing is written and Plex keeps its current prerolls,
+        which is reported as a failure with the reason in last_visibility.
+        When the check cannot run, the value is written exactly as before."""
+        self.last_visibility = None
+        if preroll_path:
+            try:
+                gate = plex_visibility.gate_preroll_value(
+                    plex_visibility.PlexFiles.from_connector(self), preroll_path)
+                self.last_visibility = gate
+                if gate.action in ("withheld", "filtered"):
+                    print(f"WARNING: {gate.message}")
+                    for r in gate.missing[:10]:
+                        print(f"  Plex cannot see {r['path']}: {r['reason']}")
+                if gate.action == "withheld":
+                    return False
+                if gate.action == "filtered":
+                    preroll_path = gate.value
+            except Exception as e:
+                print(f"INFO: Plex path check skipped ({e}); writing the preroll unchecked")
         try:
             path_len = len(preroll_path)
             path_count = preroll_path.count(';') + 1 if preroll_path else 0

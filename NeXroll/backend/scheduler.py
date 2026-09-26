@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 import backend.models as models
 from backend.plex_connector import PlexConnector
+from backend import path_mapping
 from backend.jellyfin_connector import JellyfinConnector
 from backend.database import SessionLocal
 from backend.shuffle_bag import shuffle_bag_sample
@@ -2712,39 +2713,7 @@ class Scheduler:
             
             # Translate local paths to Plex paths using the same function as scheduler
             def _translate_for_plex(local_path: str) -> str:
-                try:
-                    lp = os.path.normpath(local_path)
-                    best = None
-                    best_src = None
-                    best_len = -1
-                    for m in mappings:
-                        src = os.path.normpath(str(m.get("local")))
-                        if sys.platform.startswith("win"):
-                            if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                                best = m
-                                best_src = src
-                                best_len = len(src)
-                        else:
-                            if lp.startswith(src) and len(src) > best_len:
-                                best = m
-                                best_src = src
-                                best_len = len(src)
-                    if best:
-                        dst_prefix = str(best.get("plex"))
-                        rest = lp[len(best_src):].lstrip("\\/")
-                        try:
-                            if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                                out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                            elif "\\" in dst_prefix:
-                                out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                            else:
-                                out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                        except Exception:
-                            out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
-                        return out
-                except Exception:
-                    pass
-                return local_path
+                return path_mapping.translate(local_path, mappings)
             
             expected_paths = [_translate_for_plex(p) for p in preroll_paths_local]
             
@@ -3026,39 +2995,7 @@ class Scheduler:
             mappings = []
 
         def _translate_for_plex(local_path: str) -> str:
-            try:
-                lp = os.path.normpath(local_path)
-                best = None
-                best_src = None
-                best_len = -1
-                for m in mappings:
-                    src = os.path.normpath(str(m.get("local")))
-                    if sys.platform.startswith("win"):
-                        if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                            best = m
-                            best_src = src
-                            best_len = len(src)
-                    else:
-                        if lp.startswith(src) and len(src) > best_len:
-                            best = m
-                            best_src = src
-                            best_len = len(src)
-                if best:
-                    dst_prefix = str(best.get("plex"))
-                    rest = lp[len(best_src):].lstrip("\\/")
-                    try:
-                        if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                        elif "\\" in dst_prefix:
-                            out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                        else:
-                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                    except Exception:
-                        out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
-                    return out
-            except Exception:
-                pass
-            return local_path
+            return path_mapping.translate(local_path, mappings)
 
         preroll_paths_plex = [_translate_for_plex(p) for p in preroll_paths_local]
 
@@ -3249,39 +3186,7 @@ class Scheduler:
             mappings = []
 
         def _translate_for_plex(local_path: str) -> str:
-            try:
-                lp = os.path.normpath(local_path)
-                best = None
-                best_src = None
-                best_len = -1
-                for m in mappings:
-                    src = os.path.normpath(str(m.get("local")))
-                    if sys.platform.startswith("win"):
-                        if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                            best = m
-                            best_src = src
-                            best_len = len(src)
-                    else:
-                        if lp.startswith(src) and len(src) > best_len:
-                            best = m
-                            best_src = src
-                            best_len = len(src)
-                if best:
-                    dst_prefix = str(best.get("plex"))
-                    rest = lp[len(best_src):].lstrip("\\/")
-                    try:
-                        if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                        elif "\\" in dst_prefix:
-                            out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                        else:
-                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                    except Exception:
-                        out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
-                    return out
-            except Exception:
-                pass
-            return local_path
+            return path_mapping.translate(local_path, mappings)
 
         paths_plex = [_translate_for_plex(p) for p in paths]
         
@@ -3460,36 +3365,7 @@ class Scheduler:
             mappings = []
         
         def _translate_for_plex(local_path: str) -> str:
-            try:
-                lp = os.path.normpath(local_path)
-                best = None
-                best_src = None
-                best_len = -1
-                for m in mappings:
-                    src = os.path.normpath(str(m.get("local")))
-                    if sys.platform.startswith("win"):
-                        if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                            best = m
-                            best_src = src
-                            best_len = len(src)
-                    else:
-                        if lp.startswith(src) and len(src) > best_len:
-                            best = m
-                            best_src = src
-                            best_len = len(src)
-                if best:
-                    dst_prefix = str(best.get("plex"))
-                    rest = lp[len(best_src):].lstrip("\\/")
-                    if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                    elif "\\" in dst_prefix:
-                        out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                    else:
-                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                    return out
-            except Exception:
-                pass
-            return local_path
+            return path_mapping.translate(local_path, mappings)
         
         paths_plex = [_translate_for_plex(p) for p in final_paths]
         
@@ -3575,36 +3451,7 @@ class Scheduler:
                 mappings = []
             
             def _translate_for_plex(local_path: str) -> str:
-                try:
-                    lp = os.path.normpath(local_path)
-                    best = None
-                    best_src = None
-                    best_len = -1
-                    for m in mappings:
-                        src = os.path.normpath(str(m.get("local")))
-                        if sys.platform.startswith("win"):
-                            if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                                best = m
-                                best_src = src
-                                best_len = len(src)
-                        else:
-                            if lp.startswith(src) and len(src) > best_len:
-                                best = m
-                                best_src = src
-                                best_len = len(src)
-                    if best:
-                        dst_prefix = str(best.get("plex"))
-                        rest = lp[len(best_src):].lstrip("\\/")
-                        if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                        elif "\\" in dst_prefix:
-                            out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                        else:
-                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                        return out
-                except Exception:
-                    pass
-                return local_path
+                return path_mapping.translate(local_path, mappings)
             
             paths_plex = [_translate_for_plex(p) for p in paths]
             
@@ -3676,36 +3523,7 @@ class Scheduler:
                 mappings = []
             
             def _translate_for_plex(local_path: str) -> str:
-                try:
-                    lp = os.path.normpath(local_path)
-                    best = None
-                    best_src = None
-                    best_len = -1
-                    for m in mappings:
-                        src = os.path.normpath(str(m.get("local")))
-                        if sys.platform.startswith("win"):
-                            if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                                best = m
-                                best_src = src
-                                best_len = len(src)
-                        else:
-                            if lp.startswith(src) and len(src) > best_len:
-                                best = m
-                                best_src = src
-                                best_len = len(src)
-                    if best:
-                        dst_prefix = str(best.get("plex"))
-                        rest = lp[len(best_src):].lstrip("\\/")
-                        if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                        elif "\\" in dst_prefix:
-                            out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                        else:
-                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                        return out
-                except Exception:
-                    pass
-                return local_path
+                return path_mapping.translate(local_path, mappings)
             
             plex_path = _translate_for_plex(video_path)
             

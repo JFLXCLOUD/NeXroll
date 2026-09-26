@@ -30,6 +30,9 @@ DEFAULT_WEIGHTS = {
     "storage": 10,
     "conflicts": 10,
     "community_index": 5,
+    # Only present when Plex is configured. A preroll Plex cannot open plays
+    # nothing, so this weighs close to the media server itself.
+    "plex_paths": 20,
 }
 
 # Fraction of a check's weight deducted at each status.
@@ -132,6 +135,31 @@ def conflicts_check(count: Optional[int]) -> dict:
         "conflicts", "Schedule conflicts", WARN,
         f"{count} schedule conflict{'s' if count != 1 else ''} need a look", count
     )
+
+
+def plex_paths_check(report: Optional[dict]) -> dict:
+    """Whether Plex could see the preroll files NeXroll last gave it.
+
+    ``report`` is plex_visibility.last_report(). Nothing checked yet, or a
+    check that could not run, is unknown and costs nothing.
+    """
+    label = "Plex can open prerolls"
+    if not report or report.get("action") in (None, "skipped", "unverified"):
+        return make_check("plex_paths", label, UNKNOWN, "", "Not checked yet")
+    total = int(report.get("total") or 0)
+    missing = int(report.get("missing_count") or 0)
+    seen = total - missing
+    first = (report.get("missing") or [{}])[0]
+    where = f"{first.get('path')}: {first.get('reason')}" if first.get("path") else ""
+    if report.get("action") == "withheld":
+        return make_check("plex_paths", label, ERROR,
+                          f"Plex cannot see any of the {total} preroll file(s), so they were not applied. {where}".strip(),
+                          f"0 of {total} visible")
+    if missing:
+        return make_check("plex_paths", label, WARN,
+                          f"Plex cannot see {missing} of {total} preroll file(s). {where}".strip(),
+                          f"{seen} of {total} visible")
+    return make_check("plex_paths", label, OK, "", f"{total} of {total} visible")
 
 
 def media_server_check(servers) -> dict:

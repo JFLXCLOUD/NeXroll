@@ -53,6 +53,7 @@ if not getattr(sys, "frozen", False):
 from backend.database import SessionLocal, engine, DB_PATH
 import backend.models as models
 from backend.plex_connector import PlexConnector
+from backend import path_mapping, plex_visibility
 from backend.scheduler import (
     scheduler,
     _has_valid_sequence,
@@ -1855,6 +1856,13 @@ class PathMappingsPayload(BaseModel):
 
 class TestTranslationRequest(BaseModel):
     paths: list[str]
+    # Also ask Plex whether it can see each translated path.
+    check_plex: bool = False
+
+
+class DetectMappingRequest(BaseModel):
+    # NeXroll folder to find on the Plex side; defaults to the preroll folder.
+    local_folder: Optional[str] = None
 
 class MapRootRequest(BaseModel):
     root_path: str
@@ -5546,11 +5554,19 @@ async def external_apply_category(
     # Apply to Plex
     try:
         connector = PlexConnector(setting.plex_url, setting.plex_token)
-        connector.set_preroll(preroll_string)
-        
+        applied = connector.set_preroll(preroll_string)
+        check = connector.visibility_summary()
+        if not applied:
+            # This used to report success whatever Plex said.
+            if check and check["action"] == "withheld":
+                raise HTTPException(status_code=409, detail={"message": check["message"], "plex_path_check": check})
+            raise HTTPException(status_code=502, detail="Plex did not accept the preroll setting")
+
         # Update active category
         setting.active_category = category_id
         db.commit()
+    except HTTPException:
+        raise
     except Exception as e:
         log_event('ERROR', 'api', f'External API: Failed to apply category {category_id} to Plex: {e}', source='external_apply_category')
         raise HTTPException(status_code=500, detail=f"Failed to apply to Plex: {str(e)}")
@@ -5560,7 +5576,8 @@ async def external_apply_category(
         "category_id": category_id,
         "category_name": category.name,
         "preroll_count": len(paths),
-        "plex_mode": plex_mode
+        "plex_mode": plex_mode,
+        "plex_path_check": check,
     }
 
 
@@ -10937,44 +10954,7 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
         mappings = []
 
     def _translate_for_plex(local_path: str) -> str:
-        try:
-            lp = os.path.normpath(local_path)
-            best = None
-            best_src = None
-            best_len = -1
-            for m in mappings:
-                src = os.path.normpath(str(m.get("local")))
-                # Case-insensitive on Windows
-                if sys.platform.startswith("win"):
-                    if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                        best = m
-                        best_src = src
-                        best_len = len(src)
-                else:
-                    if lp.startswith(src) and len(src) > best_len:
-                        best = m
-                        best_src = src
-                        best_len = len(src)
-            if best:
-                dst_prefix = str(best.get("plex"))
-                rest = lp[len(best_src):].lstrip("\\/")
-                # Join using the separator implied by the mapping's plex prefix
-                try:
-                    if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                        # Likely Plex path on POSIX
-                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                    elif "\\" in dst_prefix:
-                        # Likely Windows path
-                        out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                    else:
-                        # Fallback: safest to use forward slashes for Plex
-                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                except Exception:
-                    out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
-                return out
-        except Exception:
-            pass
-        return local_path
+        return path_mapping.translate(local_path, mappings)
 
     preroll_paths_plex = [_translate_for_plex(p) for p in preroll_paths_local]
     multi_preroll_path = delimiter.join(preroll_paths_plex)
@@ -11045,9 +11025,9 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
         detail = (
             f"Plex platform appears {'Windows' if target_windows else 'POSIX'}, but translated preroll paths look "
             f"{'POSIX' if target_windows else 'Windows'} (e.g., '{mismatches[0]}'). "
-            "Add a path mapping under Settings → 'UNC/Local → Plex Path Mappings' so NeXroll can translate local/container paths "
-            "to the exact path Plex can see on its host. Example mapping: " + example_hint +
-            ". Use 'Test Translation' in Settings to validate, then retry Apply."
+            "Add a path mapping under Settings > Path Mappings, where 'Find it for me' can set it up, so NeXroll can "
+            "translate local/container paths to the exact path Plex can see on its host. Example mapping: " + example_hint +
+            ". Use 'Test Translation' there to check it with Plex, then retry Apply."
         )
         raise HTTPException(status_code=422, detail=detail)
 
@@ -11081,10 +11061,14 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
             "preroll_count": len(prerolls),
             "prerolls": [p.filename for p in prerolls],
             "rotation_info": ("Plex will play all prerolls in order (Sequential ,)" if getattr(category, "plex_mode", "shuffle") == "playlist" else "Plex will pick one preroll at random each time (Random ;)"),
-            "plex_updated": True
+            "plex_updated": True,
+            "plex_path_check": connector.visibility_summary(),
         }
     else:
         # Don't update the database if Plex update failed
+        check = connector.visibility_summary()
+        if check and check["action"] == "withheld":
+            raise HTTPException(status_code=409, detail={"message": check["message"], "plex_path_check": check})
         raise HTTPException(
             status_code=500,
             detail="Failed to update Plex preroll settings. The CinemaTrailersPrerollID could not be set. Please check your Plex server connection and ensure you have the necessary permissions."
@@ -11823,45 +11807,31 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         mappings = []
 
     def _translate(local_path: str) -> str:
-        try:
-            lp = os.path.normpath(local_path)
-            best = None
-            best_src = None
-            best_len = -1
-            for m in mappings:
-                src = os.path.normpath(str(m.get("local")))
-                if sys.platform.startswith("win"):
-                    if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                        best, best_src, best_len = m, src, len(src)
-                else:
-                    if lp.startswith(src) and len(src) > best_len:
-                        best, best_src, best_len = m, src, len(src)
-            if best:
-                dst = str(best.get("plex"))
-                rest = lp[len(best_src):].lstrip("\\/")
-                if "/" in dst and "\\" not in dst:
-                    return dst.rstrip("/") + "/" + rest.replace("\\", "/")
-                elif "\\" in dst:
-                    return dst.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                else:
-                    return dst.rstrip("/") + "/" + rest.replace("\\", "/")
-        except Exception:
-            pass
-        return local_path
+        return path_mapping.translate(local_path, mappings)
 
     translated = [_translate(p) for p in paths]
     # Sequences are always playlist mode (ordered playback)
     preroll_string = ",".join(translated)
 
     applied_to = []
+    plex_check = None
+    plex_failed = False
 
-    # Apply to Plex
-    if getattr(setting, "plex_url", None) and getattr(setting, "plex_token", None):
+    # Apply to Plex. The token lives in the secure store (the settings column is
+    # cleared on connect), so this only needs the URL; PlexConnector loads the
+    # token itself. Requiring the column skipped Plex on most installs while
+    # still reporting success.
+    if getattr(setting, "plex_url", None):
         try:
             connector = PlexConnector(setting.plex_url, setting.plex_token)
-            connector.set_preroll(preroll_string)
-            applied_to.append("plex")
+            if connector.set_preroll(preroll_string):
+                applied_to.append("plex")
+            else:
+                plex_failed = True
+                _file_log("Plex did not take the sequence; see the Plex path check for the reason")
+            plex_check = connector.visibility_summary()
         except Exception as e:
+            plex_failed = True
             _file_log(f"Failed to apply sequence to Plex: {e}")
 
     # Apply to Jellyfin/Emby: the plugin polls /plugin/intros on each playback, and
@@ -11873,6 +11843,10 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         applied_to.append("emby")
 
     if not applied_to:
+        if plex_failed:
+            if plex_check and plex_check["action"] == "withheld":
+                raise HTTPException(status_code=409, detail={"message": plex_check["message"], "plex_path_check": plex_check})
+            raise HTTPException(status_code=502, detail="Plex did not accept the sequence")
         raise HTTPException(status_code=400, detail="No media server configured (Plex/Jellyfin/Emby)")
 
     # Set a short override so the scheduler doesn't immediately revert, and track applied sequence
@@ -11898,7 +11872,8 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         "success": True,
         "sequence_name": saved_seq.name,
         "preroll_count": len(paths),
-        "applied_to": applied_to
+        "applied_to": applied_to,
+        "plex_path_check": plex_check,
     }
 
 def _is_within_directory(directory: str, target: str) -> bool:
@@ -15137,46 +15112,185 @@ def test_path_mappings(req: TestTranslationRequest, db: Session = Depends(get_db
         mappings = []
 
     def _translate(local_path: str):
-        lp = os.path.normpath(local_path)
-        best = None
-        best_src = None
-        best_len = -1
-        for m in mappings:
-            src = os.path.normpath(str(m.get("local")))
-            if sys.platform.startswith("win"):
-                if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                    best = m
-                    best_src = src
-                    best_len = len(src)
-            else:
-                if lp.startswith(src) and len(src) > best_len:
-                    best = m
-                    best_src = src
-                    best_len = len(src)
-        if best:
-            dst_prefix = str(best.get("plex"))
-            rest = lp[len(best_src):].lstrip("\\/")
-            try:
-                if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                    out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                elif "\\" in dst_prefix:
-                    out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                else:
-                    out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-            except Exception:
-                out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
-            return {
-                "input": local_path,
-                "output": out,
-                "matched_local_prefix": best_src,
-                "mapping": best,
-                "matched": True,
-            }
-        return {"input": local_path, "output": local_path, "matched": False}
+        return path_mapping.translate_detail(local_path, mappings)
 
     paths = list(req.paths or [])
     results = [_translate(p) for p in paths]
-    return {"results": results}
+    plex_checked = False
+    if req.check_plex:
+        _, files = _plex_files(db, max_calls=40, time_budget=15)
+        if files is not None:
+            plex_checked = True
+            for r in results:
+                state, reason = files.status(r["output"])
+                r["plex"] = {"status": state, "reason": reason}
+    return {"results": results, "plex_checked": plex_checked}
+
+
+def _plex_files(db: Session, **limits):
+    """(connector, PlexFiles) for the configured Plex, or (None, None)."""
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "plex_url", None):
+        return None, None
+    connector = PlexConnector(setting.plex_url, setting.plex_token)
+    return connector, plex_visibility.PlexFiles.from_connector(connector, **limits)
+
+
+def _known_preroll_paths(db: Session, local_root: str, limit: int = 400) -> list:
+    """Prerolls under ``local_root``, relative to it with ``/`` separators.
+
+    Library rows come first; files on disk fill in for a folder NeXroll has
+    not scanned yet, such as a share that was just mounted.
+    """
+    root = os.path.normpath(local_root)
+    out: list = []
+    seen: set = set()
+
+    def add(abs_path: str):
+        try:
+            rel = os.path.relpath(os.path.normpath(abs_path), root)
+        except ValueError:
+            return
+        rel = rel.replace(os.sep, "/")
+        if rel.startswith("..") or rel in seen:
+            return
+        seen.add(rel)
+        out.append(rel)
+
+    for (p,) in db.query(models.Preroll.path).all():
+        if p and os.path.isabs(p):
+            add(p)
+    if len(out) < 3 and os.path.isdir(root):
+        skip = {"thumbnails", ".nexroll-trash"}
+        for base, dirs, names in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".")]
+            for n in names:
+                if os.path.splitext(n)[1].lower() in plex_visibility.VIDEO_EXTENSIONS:
+                    add(os.path.join(base, n))
+            if len(out) >= limit:
+                break
+    return out[:limit]
+
+
+@app.get("/plex/browse")
+def plex_browse(path: str = "", db: Session = Depends(get_db)):
+    """List a folder on the Plex server as Plex sees it (the Browse Plex picker)."""
+    _, files = _plex_files(db, max_calls=6, time_budget=15)
+    if files is None:
+        raise HTTPException(status_code=409, detail="Plex is not connected")
+    platform = files.platform()
+    if not path:
+        roots = files.roots()
+        if roots is None:
+            raise HTTPException(status_code=502, detail="Plex would not list its folders. NeXroll must be connected with the Plex server owner's account.")
+        roots = [r for r in roots if not plex_visibility.is_system_folder(r)]
+        return {"path": "", "parent": None, "platform": platform,
+                "dirs": [{"name": r, "path": r} for r in roots], "file_count": 0, "video_count": 0, "videos": []}
+    listing = files.list_dir(path, fresh=True)
+    if listing is None:
+        raise HTTPException(status_code=502, detail="Plex did not answer the folder request")
+    mod = path_mapping.plex_path_module(path)
+    parent = mod.dirname(path.rstrip("/\\")) or ""
+    if parent == path:
+        parent = ""
+    videos = sorted((f for f in listing.files if os.path.splitext(f)[1].lower() in plex_visibility.VIDEO_EXTENSIONS),
+                    key=str.casefold)
+    return {
+        "path": path, "parent": parent, "platform": platform,
+        "dirs": sorted(({"name": n, "path": p} for n, p in listing.dirs.items()), key=lambda d: d["name"].casefold()),
+        "file_count": len(listing.files), "video_count": len(videos), "videos": videos[:12],
+    }
+
+
+@app.post("/settings/path-mappings/detect")
+def detect_path_mapping(req: Optional[DetectMappingRequest] = None, db: Session = Depends(get_db)):
+    """Find where the Plex server sees a NeXroll folder and propose the mapping.
+
+    Checks the existing mappings first; otherwise searches Plex's filesystem
+    for a folder holding the same prerolls (see plex_visibility.find_folder).
+    Nothing is saved: the caller adds the mapping if the user accepts it.
+    """
+    local_root = os.path.normpath((req.local_folder if req and req.local_folder else None) or PREROLLS_DIR)
+    _, files = _plex_files(db, max_calls=150, time_budget=35)
+    if files is None:
+        raise HTTPException(status_code=409, detail="Plex is not connected")
+    known = _known_preroll_paths(db, local_root)
+    # A fresh install, which is exactly when this is first needed, has nothing
+    # in the folder to look for. Put a small, clearly named file there for the
+    # search to find, and remove it afterwards.
+    marker = None if known else _write_location_marker(local_root)
+    try:
+        return _detect_with(db, files, local_root, [marker] if marker else known, marker is not None)
+    finally:
+        if marker:
+            try:
+                os.remove(os.path.join(local_root, marker))
+            except OSError:
+                pass
+
+
+def _write_location_marker(folder: str) -> Optional[str]:
+    """Write a temporary marker file into ``folder``; its name, or None."""
+    import secrets
+    name = f"NeXroll-location-check-{secrets.token_hex(4)}.txt"
+    try:
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, name), "w", encoding="utf-8") as fh:
+            fh.write("Temporary file NeXroll uses to find this folder from your Plex server. Safe to delete.\n")
+        return name
+    except OSError:
+        return None
+
+
+def _detect_with(db: Session, files, local_root: str, known: list, using_marker: bool) -> dict:
+    base = {"local_folder": local_root, "platform": files.platform(),
+            "known_count": 0 if using_marker else len(known), "used_marker": using_marker}
+    if not known:
+        return {**base, "found": False, "calls": files.calls,
+                "reason": ("NeXroll could not write to this folder to look for it from Plex, and it has no "
+                           "prerolls yet. Add a preroll, then try again.")}
+
+    setting = db.query(models.Setting).first()
+    mappings = path_mapping.mappings_from_setting(setting)
+    samples = sorted(known, key=lambda k: (-k.count("/"), k))[:3]
+    translated = [path_mapping.translate(os.path.join(local_root, *s.split("/")), mappings) for s in samples]
+    if all(files.status(t)[0] == plex_visibility.VISIBLE for t in translated):
+        plex_root = path_mapping.translate(local_root, mappings).rstrip("/\\") or local_root
+        return {**base, "found": True, "already_working": True, "plex_folder": plex_root,
+                "mapping_needed": False, "verified": samples, "calls": files.calls}
+
+    libraries = plex_visibility.library_locations(files)
+    res = plex_visibility.find_folder(files, known, os.path.basename(local_root), libraries)
+    if not res.get("found") and using_marker:
+        # A network share can take a few seconds to show another machine's new
+        # file (Windows caches directory listings for ten), so look once more.
+        time.sleep(6)
+        plex_visibility.clear_listing_cache()
+        files = plex_visibility.PlexFiles(files.url, files.headers.get("X-Plex-Token"), verify=files.verify,
+                                          max_calls=150, time_budget=35)
+        res = plex_visibility.find_folder(files, known, os.path.basename(local_root), libraries)
+    if not res.get("found"):
+        return {**base, **res}
+    plex_root = res["plex_path"]
+    same = os.path.normcase(os.path.normpath(plex_root)) == os.path.normcase(local_root)
+    return {**base, "found": True, "already_working": False, "plex_folder": plex_root,
+            "mapping_needed": not same, "suggestion": None if same else {"local": local_root, "plex": plex_root},
+            "verified": res.get("verified"), "calls": res.get("calls")}
+
+
+@app.get("/plex/preroll-check")
+def plex_preroll_check(db: Session = Depends(get_db)):
+    """Check the files in Plex's preroll preference right now, whoever set it."""
+    connector, files = _plex_files(db, max_calls=80, time_budget=25)
+    if files is None:
+        return {"plex_configured": False}
+    value = connector.get_current_preroll()
+    if value is None:
+        return {"plex_configured": True, "reachable": False}
+    res = plex_visibility.check_value(files, value)
+    return {"plex_configured": True, "reachable": True, "platform": files.platform(), "value": value,
+            "action": res.action, "message": res.message, "results": res.results,
+            "enabled": plex_visibility.enabled()}
 
 
 # Folder browser endpoint for Import feature
@@ -15992,6 +16106,14 @@ def system_health_summary(conflicts: Optional[int] = None, db: Session = Depends
             "media_server", "Media server", health_summary.WARN,
             "Unable to check the media server connection; retry or review Connections",
             "Check unavailable"))
+
+    # Whether Plex could open the prerolls it was last given. Plex-only:
+    # Jellyfin and Emby download prerolls from NeXroll and never need a path.
+    try:
+        if getattr(db.query(models.Setting).first(), "plex_url", None):
+            checks.append(health_summary.plex_paths_check(plex_visibility.last_report()))
+    except Exception:
+        pass
 
     # Library contents
     try:
@@ -26994,39 +27116,7 @@ def apply_category_to_jellyfin(category_id: int, db: Session = Depends(get_db)):
         mappings = []
 
     def _translate_for_server(local_path: str) -> str:
-        try:
-            lp = os.path.normpath(local_path)
-            best = None
-            best_src = None
-            best_len = -1
-            for m in mappings:
-                src = os.path.normpath(str(m.get("local")))
-                if sys.platform.startswith("win"):
-                    if lp.lower().startswith(src.lower()) and len(src) > best_len:
-                        best = m
-                        best_src = src
-                        best_len = len(src)
-                else:
-                    if lp.startswith(src) and len(src) > best_len:
-                        best = m
-                        best_src = src
-                        best_len = len(src)
-            if best:
-                dst_prefix = str(best.get("plex"))
-                rest = lp[len(best_src):].lstrip("\\/")
-                try:
-                    if ("/" in dst_prefix) and ("\\" not in dst_prefix):
-                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                    elif "\\" in dst_prefix:
-                        out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
-                    else:
-                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
-                except Exception:
-                    out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
-                return out
-        except Exception:
-            pass
-        return local_path
+        return path_mapping.translate(local_path, mappings)
 
     translated_paths = [_translate_for_server(p) for p in preroll_paths_local]
 
