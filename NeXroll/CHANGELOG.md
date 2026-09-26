@@ -1,5 +1,26 @@
 ﻿# Changelog
 
+## [2.2.1] - unreleased
+
+> Path mappings, the setting new Plex users most often get stuck on, now check themselves with Plex and can set themselves up.
+
+### Added
+
+- **Can Plex open your prerolls?** Settings > Path Mappings asks your Plex server whether it can open each preroll it is set to play, and says why not when it can't. Plex only: Jellyfin and Emby never need a mapping.
+- **Find it for me.** Searches the folders your Plex server can see for the one holding your prerolls, confirms it by finding your files there, and adds the mapping in one click.
+- **Browse Plex.** Pick a mapping's Plex folder from Plex's own view of its disk instead of typing it.
+- **Test Translation checks with Plex** as well as showing the translated path.
+- **The first-run wizard sets up the mapping too.** Its Paths step now appears whenever Plex is connected, not only on Docker (a Plex on another computer needs a mapping just as much), and is skipped when only Jellyfin or Emby is connected. Find it for me works on a brand-new install with no prerolls yet, using a small test file it removes afterwards.
+
+### Fixed
+
+- **Prerolls Plex could not open were applied anyway.** A path that matched no mapping went to Plex unchanged, so a Docker-only path such as `/data/prerolls/...` reached Plex and nothing played, with no warning anywhere. NeXroll now checks each file with Plex before applying: files Plex can't see are left out, and if it can see none of them Plex keeps its current prerolls. System health shows the result. When the check can't run, prerolls are applied exactly as before, and `NEXROLL_PLEX_PATH_CHECK=0` turns it off.
+- **Applying a saved sequence skipped Plex on most installs while reporting success.** It required the Plex token in a settings column that connecting has cleared since beta.10.
+- **The External API's category apply reported success even when Plex refused the change.**
+- **A mapping for `/data/pre` also caught `/data/prerolls2`.** Mappings now match whole folder names, in one shared implementation instead of ten copies.
+- **The Path Mappings header showed invented numbers.** "Verified" was always 0 and "Last tested" said "Today" whenever a mapping existed. It now shows how many prerolls Plex can open and what Plex runs on.
+- **Path Mappings was cramped on phones.** The page is one column, each mapping stacks, and long paths wrap.
+
 ## [2.2.0] - 09-25-2026
 
 > The stable release of the 2.1 and 2.2 betas. A sequence can now react to the
