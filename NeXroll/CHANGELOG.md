@@ -23,6 +23,10 @@
 - **The External API's category apply reported success even when Plex refused the change.**
 - **A mapping for `/data/pre` also caught `/data/prerolls2`.** Mappings now match whole folder names, in one shared implementation instead of ten copies.
 - **The Path Mappings header showed invented numbers.** "Verified" was always 0 and "Last tested" said "Today" whenever a mapping existed. It now shows how many prerolls Plex can open and what Plex runs on.
+- **Backups left out your media server logins.** The Plex token and Jellyfin and Emby API keys were in neither backup, so restoring on another machine meant reconnecting by hand. Both backups now carry them, and a restore puts them back.
+- **A System Backup could miss your latest changes.** Its database copy left out anything SQLite had not yet moved from its write-ahead log, often the last few minutes of edits. It now takes a consistent copy.
+- **Restoring a Database Backup could hide a schedule conflict.** Ignored conflicts kept the old schedule ids and pointed at different schedules after the restore. They now follow their schedules, and sidebar favorites are backed up too.
+- **A System Restore on another machine kept the old machine's folders.** New NeX-Up downloads went to a folder that only existed there, and uploaded Generator logos, soundtracks and backdrops were not found. The restore now uses this install's folders and relinks those files, no longer needs the whole backup to fit in memory, and says to restart when it's done.
 - **Choosing a theme in Settings pushed its name to the edge of the button.** The check mark took the name's place; it now sits at the right without moving anything.
 - **Path Mappings was cramped on phones.** The page is one column, each mapping stacks, and long paths wrap.
 

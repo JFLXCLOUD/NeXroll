@@ -5634,7 +5634,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         'Uploading backup…', 'Extracting & restoring… (this can take a bit)');
       resetBackupProgress();
       const restoredItems = data.restored ? data.restored.join(', ') : 'files';
-      showAlert(`System restored successfully! Restored: ${restoredItems}`, 'success');
+      const restart = data.restart_required ? ' Restart NeXroll to finish: it is still running on the database it started with.' : '';
+      showAlert(`System restored successfully! Restored: ${restoredItems}.${restart}`, 'success');
       setBackupFile(null);
       const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
       if (fileInput) fileInput.value = '';
@@ -30761,7 +30762,8 @@ const DashboardTiles = {
             <h3>Database Backup</h3>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', flex: 1 }}>
-            Export all schedules, categories, preroll metadata, sequences, and settings to a portable JSON file.
+            Export all schedules, categories, preroll metadata, sequences, settings and media server credentials to a
+            portable JSON file. It holds your server tokens and API keys, so keep it private.
           </p>
           <button 
             onClick={handleBackupDatabase} 
@@ -30793,7 +30795,7 @@ const DashboardTiles = {
             <li>Database (nexroll.db + JSON export)</li>
             <li>All preroll video files and thumbnails</li>
             <li>Generated prerolls, Coming Soon lists, and brand assets</li>
-            <li>Settings & configuration</li>
+            <li>Settings, configuration and media server credentials</li>
           </ul>
           <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0 0 1rem' }}>
             Downloaded movie and TV trailers are left out - NeX-Up re-downloads those, and

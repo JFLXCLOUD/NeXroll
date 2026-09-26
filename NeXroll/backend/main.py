@@ -16588,6 +16588,15 @@ _SETTINGS_SEQUENCE_FKS = ("filler_sequence_id",)
 # so restoring onto a different host does not point storage at a missing drive.
 _SETTINGS_PATH_COLUMNS = ("preroll_folder", "nexup_storage_path")
 
+# Uploaded logos, soundtracks and backdrops for the generators, by absolute path.
+# Like the folders above, applied only when the file exists here; a system
+# restore relinks them to the copies it extracts.
+_SETTINGS_FILE_PATH_COLUMNS = (
+    "nexup_dynamic_preroll_custom_logo_path", "nexup_dynamic_preroll_custom_audio_path",
+    "nexup_dynamic_preroll_custom_backdrop_path", "nexup_coming_soon_list_custom_logo_path",
+    "nexup_coming_soon_list_custom_audio_path", "nexup_coming_soon_list_custom_backdrop_path",
+)
+
 # Exported as ISO strings, so they have to be parsed back before assignment.
 _SETTINGS_DATETIME_COLUMNS = ("community_fair_use_accepted_at",)
 
@@ -16653,6 +16662,10 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
             if not os.path.isdir(str(value)):
                 report["skipped_paths"].append(f"{name}={value}")
                 continue
+        elif name in _SETTINGS_FILE_PATH_COLUMNS and value:
+            if not os.path.isfile(str(value)):
+                report["skipped_paths"].append(f"{name}={value}")
+                continue
 
         try:
             setattr(setting, name, value)
@@ -16660,6 +16673,158 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
         except Exception as e:
             _file_log(f"restore: could not set settings.{name}: {e}")
 
+    return report
+
+
+# The Plex token and Jellyfin/Emby API keys live in the OS secret store, not the
+# Settings row, so exporting settings never carried them and a restore onto a new
+# machine could not reach any media server. They travel in their own block, and a
+# restore writes them into this machine's secret store.
+_BACKUP_CREDENTIALS = (
+    ("plex_token", "get_plex_token", "set_plex_token"),
+    ("jellyfin_api_key", "get_jellyfin_api_key", "set_jellyfin_api_key"),
+    ("emby_api_key", "get_emby_api_key", "set_emby_api_key"),
+)
+
+
+def _export_credentials() -> dict:
+    out = {}
+    for name, getter, _setter in _BACKUP_CREDENTIALS:
+        try:
+            value = getattr(secure_store, getter)()
+        except Exception:
+            value = None
+        if value:
+            out[name] = value
+    return out
+
+
+def _restore_credentials(data) -> list:
+    """Write backed-up credentials to this machine's secret store. Returns the
+    names stored; a backup without them leaves the current ones alone."""
+    restored = []
+    if not isinstance(data, dict):
+        return restored
+    for name, _getter, setter in _BACKUP_CREDENTIALS:
+        value = data.get(name)
+        if not (isinstance(value, str) and value.strip()):
+            continue
+        try:
+            if getattr(secure_store, setter)(value.strip()):
+                restored.append(name)
+        except Exception as e:
+            _file_log(f"restore: could not store {name}: {e}")
+    return restored
+
+
+def _remap_ignored_conflicts(raw, schedule_id_map: dict) -> str:
+    """Translate ignored conflict keys ("7-12") to the restored schedules' ids.
+
+    A restore gives every schedule a new id, so the old keys named unrelated
+    schedules: the ignore was lost and could hide a real conflict instead.
+    Keys that cannot be translated are dropped. The key format matches
+    getSchedulePairKey in the frontend, which sorts the ids as text.
+    """
+    try:
+        keys = json.loads(raw) if isinstance(raw, str) else (raw or [])
+    except (TypeError, ValueError):
+        keys = []
+    out = []
+    for key in keys if isinstance(keys, list) else []:
+        try:
+            old_ids = [int(part) for part in str(key).split("-")]
+        except ValueError:
+            continue
+        new_ids = [schedule_id_map.get(i) for i in old_ids]
+        if len(new_ids) != 2 or not all(new_ids):
+            continue
+        new_key = "-".join(sorted(str(i) for i in new_ids))
+        if new_key not in out:
+            out.append(new_key)
+    return json.dumps(out)
+
+
+def _snapshot_sqlite(db_path: str) -> Optional[str]:
+    """A consistent copy of the live database, recent commits included.
+
+    The database runs in WAL mode, so recent commits sit in nexroll.db-wal
+    until SQLite checkpoints them. Copying nexroll.db alone left those out of
+    the system backup, and restoring it lost them. SQLite's online backup API
+    copies the database as a reader sees it. Returns None if that fails.
+    """
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(prefix="nexroll_backup_", suffix=".db")
+    os.close(fd)
+    try:
+        src = sqlite3.connect(db_path, timeout=30)
+        try:
+            dst = sqlite3.connect(path)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+        return path
+    except Exception as e:
+        _file_log(f"backup: consistent database copy failed, copying the file instead: {e}")
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return None
+
+
+def _fit_restored_database_to_this_install(db_file: str, own_preroll_folder, nexup_root: str,
+                                           nexup_members: list) -> dict:
+    """Point a restored database's folders and brand assets at this machine.
+
+    A system backup's database is copied whole, so it names the old machine's
+    preroll folder, NeX-Up storage and uploaded logos, soundtracks and
+    backdrops. A folder that does not exist here is replaced by this install's
+    own (as the JSON restore does), so new NeX-Up files land beside the
+    restored ones; an asset path is relinked to the copy the restore extracts.
+    Works on the extracted file with sqlite3, before the application opens it.
+    """
+    import sqlite3
+    report = {"paths_kept": [], "assets_relinked": 0}
+    by_name = {}
+    for member in nexup_members:
+        rel = member[len("nexup/"):]
+        by_name.setdefault(rel.rsplit("/", 1)[-1], os.path.join(nexup_root, *rel.split("/")))
+    con = sqlite3.connect(db_file)
+    try:
+        columns = {row[1] for row in con.execute("PRAGMA table_info(settings)")}
+        wanted = [c for c in ("preroll_folder", "nexup_storage_path", *_SETTINGS_FILE_PATH_COLUMNS) if c in columns]
+        if not wanted:
+            return report
+        for row in con.execute(f"SELECT rowid, {', '.join(wanted)} FROM settings").fetchall():
+            rowid, values = row[0], dict(zip(wanted, row[1:]))
+            updates = {}
+            folder = values.get("preroll_folder")
+            if folder and not os.path.isdir(folder):
+                keep = own_preroll_folder if own_preroll_folder and os.path.isdir(own_preroll_folder) else None
+                updates["preroll_folder"] = keep
+                report["paths_kept"].append(f"preroll_folder={folder}")
+            storage = values.get("nexup_storage_path")
+            if storage and not os.path.isdir(storage):
+                os.makedirs(nexup_root, exist_ok=True)
+                updates["nexup_storage_path"] = nexup_root
+                report["paths_kept"].append(f"nexup_storage_path={storage}")
+            for column in _SETTINGS_FILE_PATH_COLUMNS:
+                value = values.get(column)
+                if value and not os.path.isfile(value):
+                    leaf = str(value).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+                    if leaf in by_name:
+                        updates[column] = by_name[leaf]
+                        report["assets_relinked"] += 1
+            if updates:
+                assignments = ", ".join(f"{c} = ?" for c in updates)
+                con.execute(f"UPDATE settings SET {assignments} WHERE rowid = ?", (*updates.values(), rowid))
+        con.commit()
+    finally:
+        con.close()
     return report
 
 
@@ -16687,8 +16852,21 @@ def backup_status(db: Session = Depends(get_db)):
         return {"last_backup_at": None}
 
 
+def _backup_may_include_credentials(request) -> bool:
+    """Media server credentials go only to the UI, not to an API key.
+
+    With sign-in on, a read-only External API key can fetch a backup. That key
+    is meant for dashboards and automation; it must not hand out the Plex
+    token. A request with no API key passed the gate as a signed-in session,
+    or sign-in is off.
+    """
+    if request is None:
+        return True
+    return not (request.headers.get("X-Api-Key") or request.query_params.get("api_key"))
+
+
 @app.get("/backup/database")
-def backup_database(db: Session = Depends(get_db)):
+def backup_database(request: Request = None, db: Session = Depends(get_db)):
     """Export database to JSON.
 
     v1.13.13: backup payload was previously missing many model fields, so a
@@ -16700,9 +16878,11 @@ def backup_database(db: Session = Depends(get_db)):
     """
     try:
         data = {
-            # v4 adds settings, ignored paths and community templates; v3 added
-            # preroll IDs for safe reference remapping.
-            "schema_version": 4,
+            # v5 adds media server credentials, schedule IDs (for remapping
+            # ignored conflicts) and sidebar favorites; v4 added settings,
+            # ignored paths and community templates; v3 added preroll IDs for
+            # safe reference remapping.
+            "schema_version": 5,
             "prerolls": [
                 {
                     "id": p.id,
@@ -16736,6 +16916,7 @@ def backup_database(db: Session = Depends(get_db)):
             ],
             "schedules": [
                 {
+                    "id": s.id,  # ignored conflicts name schedules by id
                     "name": s.name,
                     "type": s.type,
                     "start_date": s.start_date.isoformat() if s.start_date else None,
@@ -16813,6 +16994,14 @@ def backup_database(db: Session = Depends(get_db)):
                     "is_public": getattr(t, "is_public", True),
                 } for t in db.query(models.CommunityTemplate).all()
             ],
+            # Sidebar favorites of the install itself. Per-user favorites stay
+            # behind with the user accounts they belong to.
+            "navigation_favorites": [
+                {"page": f.page}
+                for f in db.query(models.NavigationFavorite).filter(models.NavigationFavorite.scope == "local")
+                .order_by(models.NavigationFavorite.created_at, models.NavigationFavorite.page).all()
+            ],
+            "credentials": _export_credentials() if _backup_may_include_credentials(request) else {},
             "exported_at": datetime.datetime.utcnow().isoformat(),
             "exported_by_version": app_version,
         }
@@ -16850,7 +17039,7 @@ class _ZipDrainSink:
 
 
 @app.post("/backup/files")
-def backup_files():
+def backup_files(request: Request = None):
     """Stream a comprehensive system backup ZIP (database, prerolls, thumbnails,
     settings) and compress it on the fly.
 
@@ -16876,7 +17065,7 @@ def backup_files():
         try:
             db = SessionLocal()
             try:
-                json_bytes = json.dumps(backup_database(db=db), indent=2, default=str).encode("utf-8")
+                json_bytes = json.dumps(backup_database(request=request, db=db), indent=2, default=str).encode("utf-8")
             finally:
                 db.close()
         except Exception as db_err:
@@ -16886,8 +17075,10 @@ def backup_files():
         # tree / node_modules so a backup never sweeps in thousands of those files.
         _skip = {"node_modules", "bgutil-provider"}
         entries = []
+        db_snapshot = None
         if os.path.exists(DB_PATH):
-            entries.append((DB_PATH, "database/nexroll.db"))
+            db_snapshot = _snapshot_sqlite(DB_PATH)
+            entries.append((db_snapshot or DB_PATH, "database/nexroll.db"))
         if os.path.exists(PREROLLS_DIR):
             for root, dirs, files in os.walk(PREROLLS_DIR):
                 dirs[:] = [d for d in dirs if d.lower() not in _skip]
@@ -16975,6 +17166,11 @@ def backup_files():
                     zf.close()
                 except Exception:
                     pass
+                if db_snapshot:
+                    try:
+                        os.unlink(db_snapshot)
+                    except OSError:
+                        pass
             d = sink.drain()
             if d:
                 yield d
@@ -17165,6 +17361,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         # Schedules are restored before saved sequences, so retain their old
         # sequence IDs and reconnect them after the sequences have new IDs.
         pending_schedule_sequence_links = []
+        old_schedule_id_to_new_id = {}
 
         # Restore schedules
         for schedule_data in backup_data.get("schedules", []):
@@ -17228,6 +17425,10 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     old_source_sequence_id = schedule_data.get("source_sequence_id")
                     if old_source_sequence_id is not None:
                         pending_schedule_sequence_links.append((schedule.id, old_source_sequence_id))
+                    try:
+                        old_schedule_id_to_new_id[int(schedule_data["id"])] = schedule.id
+                    except (KeyError, TypeError, ValueError):
+                        pass  # backups before schema 5 carry no schedule ids
             except Exception as schedule_err:
                 print(f"Error adding schedule {schedule_data.get('name')}: {schedule_err}")
                 continue
@@ -17324,6 +17525,12 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 old_id_to_new_id,
                 old_sequence_id_to_new_id,
             )
+            # Ignored conflicts name schedules by id; without the ids (backups
+            # before schema 5) they cannot be translated and are dropped.
+            restored_setting = db.query(models.Setting).first()
+            if restored_setting is not None and "ignored_conflicts" in (backup_data.get("settings") or {}):
+                restored_setting.ignored_conflicts = _remap_ignored_conflicts(
+                    (backup_data.get("settings") or {}).get("ignored_conflicts"), old_schedule_id_to_new_id)
             db.commit()
             if settings_report["applied"]:
                 print(f"RESTORE: applied {settings_report['applied']} settings values")
@@ -17354,6 +17561,24 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 db.rollback()
                 print(f"RESTORE: {key} restore failed (non-fatal): {row_err}")
 
+        if "navigation_favorites" in backup_data:
+            try:
+                db.query(models.NavigationFavorite).filter(models.NavigationFavorite.scope == "local").delete(synchronize_session=False)
+                seen_pages = set()
+                for index, row in enumerate(backup_data.get("navigation_favorites") or []):
+                    page = row.get("page") if isinstance(row, dict) else None
+                    if page and page not in seen_pages:
+                        seen_pages.add(page)
+                        db.add(models.NavigationFavorite(
+                            scope="local", page=page, user_id=None,
+                            created_at=datetime.datetime.utcnow() + datetime.timedelta(microseconds=index)))
+                db.commit()
+            except Exception as fav_err:
+                db.rollback()
+                print(f"RESTORE: favorites restore failed (non-fatal): {fav_err}")
+
+        restored_credentials = _restore_credentials(backup_data.get("credentials"))
+
         # Reconcile DB paths against actual on-disk files after restore. This is the
         # cross-platform migration fix: JSON backups carry absolute paths from the
         # source machine (e.g. C:\Users\... from Windows), which never resolve in
@@ -17383,6 +17608,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
             "schema_version": backup_data.get("schema_version"),
             "settings_restored": settings_report.get("applied", 0),
             "settings_paths_skipped": settings_report.get("skipped_paths", []),
+            "credentials_restored": restored_credentials,
             "rescan": scan_stats,
         }
     except Exception as e:
@@ -17396,39 +17622,79 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
 @app.post("/restore/files")
 def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Import system backup from ZIP archive (handles new comprehensive format and legacy format)"""
+    import tempfile
+    import shutil
+    from backend.database import DB_PATH
+
+    chunk = 1024 * 1024
+    work_dir = tempfile.mkdtemp(prefix="nexroll_restore_")
+
+    def extract(zip_ref, name, target_path):
+        # Streamed: a system backup holds the whole library, and reading a
+        # member (or the upload) into memory at once failed on small machines.
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with zip_ref.open(name) as src, open(target_path, "wb") as dst:
+            shutil.copyfileobj(src, dst, chunk)
+
     try:
-        from backend.database import DB_PATH
-        import tempfile
-        import shutil
-        
-        # Save uploaded ZIP file temporarily
-        temp_dir = tempfile.gettempdir()
-        zip_path = os.path.join(temp_dir, "nexroll_restore_temp.zip")
+        zip_path = os.path.join(work_dir, "backup.zip")
         with open(zip_path, "wb") as f:
-            content = file.file.read()
-            f.write(content)
-        
+            shutil.copyfileobj(file.file, f, chunk)
+
         restored_items = []
-        
+        paths_kept = []
+        credentials_restored = []
+
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             namelist = zip_ref.namelist()
-            
+
             # Detect backup format
             is_new_format = any(n.startswith("database/") or n.startswith("prerolls/") for n in namelist)
-            
+
             if is_new_format:
-                # New comprehensive format
                 print("RESTORE: Detected new comprehensive backup format")
-                
+                nexup_files = [n for n in namelist if n.startswith("nexup/") and not n.endswith("/")]
+
+                # This install's own folders, read before its database is replaced.
+                own_setting = db.query(models.Setting).first()
+                own_preroll_folder = getattr(own_setting, "preroll_folder", None) if own_setting else None
+                own_nexup_root = _resolve_nexup_root(own_setting)
+                db.close()  # release the connection so the database file can be replaced
+
+                # The JSON copy carries what the database file cannot: the
+                # media server credentials kept in the OS secret store.
+                credentials = None
+                if "database/nexroll_data.json" in namelist:
+                    try:
+                        credentials = json.loads(zip_ref.read("database/nexroll_data.json")).get("credentials")
+                    except Exception as cred_err:
+                        print(f"RESTORE: could not read credentials from the backup: {cred_err}")
+
+                nexup_root = own_nexup_root or os.path.join(os.path.dirname(DB_PATH), "NeXup")
+
                 # 1. Restore database file if present
                 if "database/nexroll.db" in namelist:
                     print("RESTORE: Restoring database file...")
                     from backend.database import engine as _engine
-                    # Extract to temp location first
-                    db_temp = os.path.join(temp_dir, "nexroll_restore.db")
-                    with zip_ref.open("database/nexroll.db") as src:
-                        with open(db_temp, "wb") as dst:
-                            dst.write(src.read())
+                    db_temp = os.path.join(work_dir, "nexroll.db")
+                    extract(zip_ref, "database/nexroll.db", db_temp)
+
+                    # Keep the backup's NeX-Up folder when it exists on this
+                    # machine (a same-machine restore); otherwise use this install's.
+                    try:
+                        import sqlite3
+                        _con = sqlite3.connect(db_temp)
+                        try:
+                            _row = _con.execute("SELECT nexup_storage_path FROM settings WHERE nexup_storage_path IS NOT NULL LIMIT 1").fetchone()
+                        finally:
+                            _con.close()
+                        if _row and _row[0] and os.path.isdir(_row[0]):
+                            nexup_root = _row[0]
+                    except Exception:
+                        pass
+                    fit = _fit_restored_database_to_this_install(db_temp, own_preroll_folder, nexup_root, nexup_files)
+                    paths_kept = fit["paths_kept"]
+
                     # Release all pooled SQLite connections BEFORE touching the file.
                     # Without this, Windows may refuse to overwrite an open DB handle,
                     # and the OLD database's WAL/SHM sidecars could be replayed over
@@ -17439,9 +17705,8 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                         print(f"RESTORE: engine.dispose failed (non-fatal): {_eng_err}")
                     # Copy to actual location (backup existing first)
                     if os.path.exists(DB_PATH):
-                        backup_db = DB_PATH + ".backup"
                         try:
-                            shutil.copy2(DB_PATH, backup_db)
+                            shutil.copy2(DB_PATH, DB_PATH + ".backup")
                         except Exception:
                             pass
                     # Drop stale WAL/SHM sidecars that belong to the old database.
@@ -17453,77 +17718,39 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                         except Exception as _side_err:
                             print(f"RESTORE: could not remove {DB_PATH + _side}: {_side_err}")
                     shutil.copy2(db_temp, DB_PATH)
-                    os.unlink(db_temp)
                     restored_items.append("database")
-                
-                # 2. Restore preroll files
-                preroll_files = [n for n in namelist if n.startswith("prerolls/") and not n.endswith("/")]
-                if preroll_files:
-                    print(f"RESTORE: Restoring {len(preroll_files)} preroll files...")
+                    if fit["assets_relinked"]:
+                        restored_items.append(f"{fit['assets_relinked']} relinked brand assets")
+
+                # 2. Preroll files, 3. thumbnails: into this install's own folders.
+                for prefix, root_dir, label in (("prerolls/", PREROLLS_DIR, "preroll files"),
+                                                ("thumbnails/", THUMBNAILS_DIR, "thumbnails")):
+                    members = [n for n in namelist if n.startswith(prefix) and not n.endswith("/")]
+                    if not members:
+                        continue
+                    print(f"RESTORE: Restoring {len(members)} {label}...")
                     written = 0
-                    for name in preroll_files:
-                        # Extract relative path after "prerolls/"
-                        rel_path = name[len("prerolls/"):]
-                        target_path = os.path.join(PREROLLS_DIR, rel_path)
-                        # Zip-slip guard: never write outside PREROLLS_DIR
-                        if not _is_within_directory(PREROLLS_DIR, target_path):
+                    for name in members:
+                        target_path = os.path.join(root_dir, name[len(prefix):])
+                        # Zip-slip guard: never write outside the target folder
+                        if not _is_within_directory(root_dir, target_path):
                             print(f"RESTORE: skipping unsafe archive entry: {name}")
                             continue
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                        with zip_ref.open(name) as src:
-                            with open(target_path, "wb") as dst:
-                                dst.write(src.read())
+                        extract(zip_ref, name, target_path)
                         written += 1
-                    restored_items.append(f"{written} preroll files")
-                
-                # 3. Restore thumbnails
-                thumb_files = [n for n in namelist if n.startswith("thumbnails/") and not n.endswith("/")]
-                if thumb_files:
-                    print(f"RESTORE: Restoring {len(thumb_files)} thumbnail files...")
-                    written = 0
-                    for name in thumb_files:
-                        rel_path = name[len("thumbnails/"):]
-                        target_path = os.path.join(THUMBNAILS_DIR, rel_path)
-                        # Zip-slip guard: never write outside THUMBNAILS_DIR
-                        if not _is_within_directory(THUMBNAILS_DIR, target_path):
-                            print(f"RESTORE: skipping unsafe archive entry: {name}")
-                            continue
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                        with zip_ref.open(name) as src:
-                            with open(target_path, "wb") as dst:
-                                dst.write(src.read())
-                        written += 1
-                    restored_items.append(f"{written} thumbnails")
-                
-                # 3b. Restore NeX-Up generated prerolls and brand assets. Written
-                # under this install's own storage path, not the one baked into
-                # the archive, so a restore onto a different host lands correctly.
-                nexup_files = [n for n in namelist if n.startswith("nexup/") and not n.endswith("/")]
+                    restored_items.append(f"{written} {label}")
+
+                # 3b. NeX-Up generated prerolls and brand assets, written under
+                # this install's own storage so a restore onto a different host
+                # lands correctly.
                 if nexup_files:
-                    try:
-                        _st = SessionLocal()
-                        try:
-                            nexup_root = _resolve_nexup_root(_st.query(models.Setting).first())
-                        finally:
-                            _st.close()
-                    except Exception:
-                        nexup_root = None
-                    if not nexup_root:
-                        # Nothing on disk yet: create the conventional location
-                        # beside the database so the archive has somewhere to land.
-                        from backend.database import DB_PATH as _DBP
-                        nexup_root = os.path.join(os.path.dirname(_DBP), "NeXup")
                     written = 0
                     for name in nexup_files:
-                        rel_path = name[len("nexup/"):]
-                        target_path = os.path.join(nexup_root, rel_path)
+                        target_path = os.path.join(nexup_root, name[len("nexup/"):])
                         if not _is_within_directory(nexup_root, target_path):
                             print(f"RESTORE: skipping unsafe archive entry: {name}")
                             continue
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                        with zip_ref.open(name) as src_f:
-                            with open(target_path, "wb") as dst:
-                                dst.write(src_f.read())
+                        extract(zip_ref, name, target_path)
                         written += 1
                     if written:
                         restored_items.append(f"{written} generated prerolls/assets")
@@ -17543,32 +17770,38 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                 # 4. Restore settings if present
                 if "settings/settings.json" in namelist:
                     print("RESTORE: Restoring settings...")
-                    settings_path = os.path.join(data_dir, "settings.json")
-                    with zip_ref.open("settings/settings.json") as src:
-                        with open(settings_path, "wb") as dst:
-                            dst.write(src.read())
+                    extract(zip_ref, "settings/settings.json", os.path.join(data_dir, "settings.json"))
                     restored_items.append("settings")
-                
+
+                credentials_restored = _restore_credentials(credentials)
+                if credentials_restored:
+                    restored_items.append("media server credentials")
+
             else:
                 # Legacy format - just prerolls folder directly (zip-slip safe)
                 print("RESTORE: Detected legacy backup format")
                 _safe_extractall(zip_ref, PREROLLS_DIR)
                 restored_items.append("preroll files (legacy format)")
-        
-        # Clean up temp file
-        os.unlink(zip_path)
-        
+
         return {
             "message": "System restore completed successfully",
             "restored": restored_items,
+            "paths_kept": paths_kept,
+            "credentials_restored": credentials_restored,
+            # Running code still holds state from the database it started with.
+            "restart_required": "database" in restored_items,
             "format": "comprehensive" if is_new_format else "legacy"
         }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"RESTORE ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
         log_event('ERROR', 'system', f'System restore failed: {e}', source='system_restore')
         raise HTTPException(status_code=500, detail=f"System restore failed: {str(e)}")
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 @app.post("/maintenance/fix-thumbnail-paths")
 def fix_thumbnail_paths(db: Session = Depends(get_db)):
