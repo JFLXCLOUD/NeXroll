@@ -11978,6 +11978,307 @@ def cleanup_preview(preview_id: str):
     
     return {"message": "Preview directory not found"}
 
+def _pattern_reference_names(pattern_data: dict):
+    """Category and preroll names a pattern refers to, used to give an older
+    bundle's loosened folder and file names back their original spelling."""
+    categories, prerolls = [], []
+    for block in (pattern_data or {}).get('blocks') or []:
+        if not isinstance(block, dict):
+            continue
+        for candidate in (block, block.get('otherwise')):
+            if isinstance(candidate, dict) and candidate.get('category_name'):
+                categories.append(str(candidate['category_name']))
+        refs = [block] + [ref for ref in (block.get('prerolls') or []) if isinstance(ref, dict)]
+        for ref in refs:
+            name = ref.get('preroll_name') or (ref.get('name') if ref is not block else None)
+            if name:
+                prerolls.append(str(name))
+            categories.extend(str(c) for c in (ref.get('category_names') or []) if c)
+        for info in block.get('available_prerolls') or []:
+            if isinstance(info, dict) and info.get('name'):
+                prerolls.append(str(info['name']))
+    return categories, prerolls
+
+
+def _pattern_preroll_details(pattern_data: dict) -> dict:
+    """Loose preroll name -> {'community_id', 'category'} from a pattern."""
+    details = {}
+
+    def note(name, community_id=None, category=None):
+        if not name:
+            return
+        entry = details.setdefault(_loose_name(name), {})
+        if community_id and not entry.get('community_id'):
+            entry['community_id'] = community_id
+        if category and not entry.get('category'):
+            entry['category'] = category
+
+    for block in (pattern_data or {}).get('blocks') or []:
+        if not isinstance(block, dict):
+            continue
+        for info in block.get('available_prerolls') or []:
+            if isinstance(info, dict):
+                note(info.get('name'), info.get('community_id'), block.get('category_name'))
+        refs = [{'name': block.get('preroll_name'), 'community_id': block.get('community_id'),
+                 'category_names': block.get('category_names'), 'preroll_data': block.get('preroll_data')}]
+        refs += [ref for ref in (block.get('prerolls') or []) if isinstance(ref, dict)]
+        for ref in refs:
+            data = ref.get('preroll_data') if isinstance(ref.get('preroll_data'), dict) else {}
+            category = (ref.get('category_names') or [None])[0] or data.get('category_name')
+            note(ref.get('name') or ref.get('preroll_name'), ref.get('community_id') or data.get('community_id'), category)
+            note(data.get('name'), data.get('community_id'), category)
+    return details
+
+
+def _read_bundle(extract_dir: str, pattern_data: dict) -> dict:
+    """The videos in an extracted full bundle, with the names they had on the
+    install that exported them."""
+    names = {}
+    manifest_path = os.path.join(extract_dir, 'MANIFEST.json')
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, 'r', encoding='utf-8') as fh:
+                names = json.load(fh).get('names') or {}
+        except (OSError, ValueError, AttributeError):
+            names = {}
+    if not isinstance(names, dict):
+        names = {}
+    category_refs, preroll_refs = _pattern_reference_names(pattern_data)
+    by_loose_category = {_loose_name(n): n for n in category_refs}
+    by_loose_preroll = {_loose_name(n): n for n in preroll_refs}
+
+    def restore(rel, raw, lookup):
+        if names.get(rel):
+            return str(names[rel])
+        # Bundles made before 2.2.1 carry no names; their folder and file
+        # names had every mark stripped, so match on letters and digits.
+        return lookup.get(_loose_name(raw))
+
+    def videos(folder_path, rel_folder):
+        found = []
+        for file_name in sorted(os.listdir(folder_path)):
+            file_path = os.path.join(folder_path, file_name)
+            if os.path.isfile(file_path) and file_name.lower().endswith(_BUNDLE_VIDEO_EXTS):
+                rel = f"{rel_folder}/{file_name}"
+                found.append({
+                    'file': file_name,
+                    'path': file_path,
+                    'rel': rel,
+                    'name': restore(rel, file_name, by_loose_preroll) or os.path.splitext(file_name)[0],
+                })
+        return found
+
+    categories = []
+    categories_root = os.path.join(extract_dir, 'categories')
+    if os.path.isdir(categories_root):
+        for folder in sorted(os.listdir(categories_root)):
+            folder_path = os.path.join(categories_root, folder)
+            if os.path.isdir(folder_path):
+                rel = f"categories/{folder}"
+                categories.append({
+                    'folder': folder,
+                    'name': restore(rel, folder, by_loose_category) or folder,
+                    'files': videos(folder_path, rel),
+                })
+    fixed_root = os.path.join(extract_dir, 'fixed')
+    fixed = videos(fixed_root, 'fixed') if os.path.isdir(fixed_root) else []
+    return {'categories': categories, 'fixed': fixed}
+
+
+def _bundle_preview(bundle: dict, pattern_data: dict, preview_id: str) -> dict:
+    """What the import dialog shows before anything is copied."""
+    details = _pattern_preroll_details(pattern_data)
+    preview = {'categories': [], 'fixed': [], 'sequence': [], 'preview_id': preview_id}
+    for category in bundle['categories']:
+        preview['categories'].append({
+            'name': category['name'],
+            'folder': category['folder'],
+            'preroll_count': len(category['files']),
+            'files': [os.path.splitext(f['name'])[0] if f['name'].lower().endswith(_BUNDLE_VIDEO_EXTS) else f['name']
+                      for f in category['files']],
+        })
+    for entry in bundle['fixed']:
+        item = {'name': entry['name'], 'filename': entry['file']}
+        original = details.get(_loose_name(entry['name']), {}).get('category')
+        if original:
+            item['original_category'] = original
+        preview['fixed'].append(item)
+
+    all_files = list(bundle['fixed']) + [f for c in bundle['categories'] for f in c['files']]
+    categories_by_loose = {_loose_name(c['name']): c for c in bundle['categories']}
+    for block in (pattern_data or {}).get('blocks') or []:
+        if not isinstance(block, dict):
+            continue
+        block_type = str(block.get('type', '')).lower()
+        if block_type == 'fixed':
+            refs = [r for r in (block.get('prerolls') or []) if isinstance(r, dict)] or [{'name': block.get('preroll_name')}]
+            for ref in refs:
+                wanted = _loose_name(ref.get('name') or ref.get('preroll_name'))
+                match = next((f for f in all_files if wanted and _loose_name(f['name']) == wanted), None)
+                if match:
+                    step = {'type': 'fixed', 'name': match['name'], 'path': match['rel']}
+                    if match['rel'].startswith('categories/'):
+                        step['category'] = match['rel'].split('/')[1]
+                    preview['sequence'].append(step)
+        elif block_type in ('random', 'sequential'):
+            category = categories_by_loose.get(_loose_name(block.get('category_name')))
+            if category:
+                preview['sequence'].append({
+                    'type': block_type,
+                    'category': category['name'],
+                    'count': block.get('count', 1),
+                    'available_files': [f['rel'] for f in category['files']],
+                })
+            else:
+                _file_log(f"[IMPORT] WARNING: No matching category folder for '{block.get('category_name')}'")
+    return preview
+
+
+def _bundle_target_category(db, target, fallback_name: str, created: list):
+    """The category a bundle mapping points at: an existing id or 'new:<name>'.
+
+    A new name must be usable as a folder here. One that is not (a name
+    written on Linux with a colon, say) falls back to the bundle's folder
+    name, which was made safe when the bundle was exported.
+    """
+    target = str(target)
+    if not target.startswith('new:'):
+        try:
+            category = db.query(models.Category).filter(models.Category.id == int(target)).first()
+        except (TypeError, ValueError):
+            category = None
+        if category:
+            return category
+        target = f"new:{fallback_name}"
+    name = target[4:].strip()
+    try:
+        name = validate_storage_component(name)
+    except ValueError:
+        _file_log(f"[IMPORT] '{name}' cannot be a folder here; using '{fallback_name}'")
+        name = validate_storage_component(fallback_name)
+    category = next((c for c in db.query(models.Category).all()
+                     if (c.name or '').strip().casefold() == name.casefold()), None)
+    if not category:
+        category = models.Category(name=name)
+        db.add(category)
+        db.commit()
+        db.refresh(category)
+        created.append(name)
+    return category
+
+
+def _register_bundle_video(db, entry: dict, category, community_id=None):
+    """Copy one bundle video into the category's folder and add it to the
+    library. Returns the new preroll, or None when the library already has it."""
+    import shutil
+    display = entry['name']
+    file_name = entry['file']
+    stem = os.path.splitext(display)[0]
+    in_category = or_(
+        models.Preroll.category_id == category.id,
+        models.Preroll.categories.any(models.Category.id == category.id),
+    )
+    existing = db.query(models.Preroll).filter(in_category, or_(
+        models.Preroll.display_name.ilike(display),
+        models.Preroll.display_name.ilike(stem),
+        models.Preroll.display_name.ilike(file_name),
+        models.Preroll.filename.ilike(file_name),
+    )).first()
+    if existing:
+        _file_log(f"[IMPORT] Skipping '{display}' - already in '{category.name}' as '{existing.display_name or existing.filename}'")
+        return None
+
+    dest_dir = os.path.join(PREROLLS_DIR, category.name)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, file_name)
+    if os.path.exists(dest):
+        registered = db.query(models.Preroll).filter(models.Preroll.path == dest).first()
+        if registered:
+            # Same file, already in the library under another name: add the category.
+            if category not in (registered.categories or []):
+                registered.categories.append(category)
+                db.commit()
+            return None
+        if os.path.getsize(dest) != os.path.getsize(entry['path']):
+            base, ext = os.path.splitext(file_name)
+            n = 2
+            while os.path.exists(dest):
+                dest = os.path.join(dest_dir, f"{base} ({n}){ext}")
+                n += 1
+            shutil.copy2(entry['path'], dest)
+        # Otherwise the file is there without a library row (an earlier
+        # import stopped part way): register the file that is there.
+    else:
+        shutil.copy2(entry['path'], dest)
+
+    preroll = models.Preroll(
+        filename=os.path.basename(dest),
+        display_name=display,
+        path=dest,
+        category_id=category.id,
+        file_size=os.path.getsize(dest),
+        tags=json.dumps([]),
+    )
+    if community_id:
+        preroll.community_preroll_id = community_id
+    preroll.categories = [category]
+    db.add(preroll)
+    db.commit()
+    db.refresh(preroll)
+    thumb_path = _generate_thumbnail_for_preroll(preroll, dest, category.name)
+    if thumb_path:
+        preroll.thumbnail = thumb_path
+        db.commit()
+    _file_log(f"[IMPORT] Added '{display}' to '{category.name}' (ID: {preroll.id})")
+    return preroll
+
+
+def _import_bundle_files(db, bundle: dict, pattern_data: dict, mappings: dict):
+    """Copy a bundle's videos to the categories the user chose."""
+    details = _pattern_preroll_details(pattern_data)
+    imported_prerolls, imported_categories = [], []
+    # A preroll in two categories travels once per category folder. The
+    # second copy joins the preroll the first one made instead of duplicating it.
+    added = {}  # (name, size) -> preroll added by this import
+
+    for category_entry in bundle['categories']:
+        target = mappings.get(f"category:{category_entry['name']}", f"new:{category_entry['name']}")
+        category = _bundle_target_category(db, target, category_entry['folder'], imported_categories)
+        _file_log(f"[IMPORT] Importing category '{category_entry['name']}' -> '{category.name}' (ID: {category.id})")
+        for entry in category_entry['files']:
+            key = (entry['name'].casefold(), os.path.getsize(entry['path']))
+            if key in added:
+                same = added[key]
+                if category not in (same.categories or []):
+                    same.categories.append(category)
+                    db.commit()
+                continue
+            community_id = details.get(_loose_name(entry['name']), {}).get('community_id')
+            preroll = _register_bundle_video(db, entry, category, community_id)
+            if preroll:
+                added[key] = preroll
+                imported_prerolls.append({'name': preroll.display_name, 'category': category.name,
+                                          'type': 'category', 'community_id': community_id})
+
+    for entry in bundle['fixed']:
+        stem = os.path.splitext(entry['name'])[0]
+        already = db.query(models.Preroll).filter(or_(
+            models.Preroll.display_name.ilike(entry['name']),
+            models.Preroll.display_name.ilike(stem),
+        )).first()
+        if already:
+            continue
+        target = mappings.get(f"fixed:{entry['name']}", 'new:Imported')
+        category = _bundle_target_category(db, target, 'Imported', imported_categories)
+        community_id = details.get(_loose_name(entry['name']), {}).get('community_id')
+        preroll = _register_bundle_video(db, entry, category, community_id)
+        if preroll:
+            imported_prerolls.append({'name': preroll.display_name, 'category': category.name,
+                                      'type': 'fixed', 'community_id': community_id})
+    db.commit()
+    return imported_prerolls, imported_categories
+
+
 @app.post("/sequences/import")
 async def import_sequence_pattern(
     file: UploadFile = File(...), 
@@ -12023,427 +12324,81 @@ async def import_sequence_pattern(
         bundle_preview = None
         
         # Check if it's a ZIP bundle or JSON file
-        if file.filename.endswith('.zip'):
+        if (file.filename or '').lower().endswith('.zip'):
             bundle_mode = True
-            # Handle ZIP bundle
             import tempfile
+            import shutil
             with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
                 tmp_file.write(contents)
                 tmp_path = tmp_file.name
-            
+
+            extract_dir = None
+            keep_extracted = False
             try:
+                # Extract to a temporary directory (zip-slip safe)
+                extract_dir = tempfile.mkdtemp()
                 with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-                    # Extract to temporary directory (zip-slip safe)
-                    extract_dir = tempfile.mkdtemp()
                     _safe_extractall(zip_ref, extract_dir)
-                    
-                    # Find the .nexseq file
-                    nexseq_file = None
-                    for root, dirs, files in os.walk(extract_dir):
-                        for file_name in files:
-                            if file_name.endswith('.nexseq'):
-                                nexseq_file = os.path.join(root, file_name)
-                                break
-                        if nexseq_file:
-                            break
-                    
-                    if not nexseq_file:
-                        raise HTTPException(status_code=400, detail="No .nexseq file found in ZIP bundle")
-                    
-                    # Read pattern data
-                    with open(nexseq_file, 'r') as f:
-                        pattern_data = json.load(f)
-                    
-                    # Paths for video content
-                    categories_path = os.path.join(extract_dir, 'categories')
-                    fixed_path = os.path.join(extract_dir, 'fixed')
-                    
-                    # If no folder_mappings provided, just return a preview of bundle contents
-                    if not mappings:
-                        _file_log(f"[IMPORT] ZIP bundle preview mode - scanning contents")
-                        bundle_preview = {
-                            'categories': [],
-                            'fixed': [],
-                            'sequence': [],  # Ordered list of prerolls as they appear in the sequence
-                            'preview_id': None  # ID for accessing preview videos
+
+                nexseq_file = None
+                for root, dirs, files in os.walk(extract_dir):
+                    nexseq_file = next((os.path.join(root, f) for f in files if f.lower().endswith('.nexseq')), None)
+                    if nexseq_file:
+                        break
+                if not nexseq_file:
+                    raise HTTPException(status_code=400, detail="No .nexseq file found in ZIP bundle")
+                with open(nexseq_file, 'r', encoding='utf-8') as f:
+                    pattern_data = json.load(f)
+
+                if not mappings:
+                    # First call: show what the bundle holds. The extracted files
+                    # stay for the preview player until the dialog closes.
+                    _file_log(f"[IMPORT] ZIP bundle preview mode - scanning contents")
+                    preview_id = uuid.uuid4().hex[:8]
+                    preview_dir = os.path.join(tempfile.gettempdir(), f"nexroll_preview_{preview_id}")
+                    shutil.move(extract_dir, preview_dir)
+                    extract_dir = preview_dir
+                    keep_extracted = True
+                    bundle_preview = _bundle_preview(_read_bundle(extract_dir, pattern_data), pattern_data, preview_id)
+                    _file_log(f"[IMPORT] Bundle preview: {len(bundle_preview['categories'])} categories, {len(bundle_preview['fixed'])} fixed prerolls, {len(bundle_preview['sequence'])} sequence blocks")
+                    return {
+                        'pattern_name': pattern_data.get('pattern_name', 'Imported Pattern'),
+                        'pattern_description': pattern_data.get('pattern_description', ''),
+                        'bundle_preview': bundle_preview,
+                        'blocks': [],
+                        'match_results': {
+                            'matched': 0,
+                            'unmatched': 0,
+                            'downloadable': 0,
+                            'total_blocks': len(pattern_data.get('blocks', [])),
+                            'missing_prerolls': [],
+                            'missing_categories': []
                         }
-                        
-                        # Generate a unique preview ID and keep extracted files
-                        import uuid as uuid_module
-                        preview_id = str(uuid_module.uuid4())[:8]
-                        preview_dir = os.path.join(tempfile.gettempdir(), f"nexroll_preview_{preview_id}")
-                        
-                        # Move extracted files to preview directory
-                        import shutil
-                        shutil.move(extract_dir, preview_dir)
-                        extract_dir = preview_dir  # Update reference
-                        categories_path = os.path.join(extract_dir, 'categories')
-                        fixed_path = os.path.join(extract_dir, 'fixed')
-                        
-                        bundle_preview['preview_id'] = preview_id
-                        _file_log(f"[IMPORT] Created preview directory: {preview_dir}")
-                        
-                        # Build category info with file list
-                        category_files = {}  # { category_name: [files] }
-                        if os.path.exists(categories_path):
-                            for category_folder in os.listdir(categories_path):
-                                category_folder_path = os.path.join(categories_path, category_folder)
-                                if os.path.isdir(category_folder_path):
-                                    files = [f for f in os.listdir(category_folder_path) 
-                                            if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov'))]
-                                    category_files[category_folder] = files
-                                    bundle_preview['categories'].append({
-                                        'name': category_folder,
-                                        'preroll_count': len(files),
-                                        'files': [os.path.splitext(f)[0] for f in files]
-                                    })
-                        
-                        # Build fixed prerolls info
-                        fixed_files = {}  # { name: filename }
-                        if os.path.exists(fixed_path):
-                            for video_file in os.listdir(fixed_path):
-                                if video_file.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
-                                    name = os.path.splitext(video_file)[0]
-                                    fixed_files[name] = video_file
-                                    bundle_preview['fixed'].append({
-                                        'name': name,
-                                        'filename': video_file
-                                    })
-                        
-                        # Build sequence order from pattern blocks
-                        for block in pattern_data.get('blocks', []):
-                            block_type = block.get('type', '')
-                            if block_type == 'fixed':
-                                preroll_name = block.get('preroll_name', '')
-                                if preroll_name:
-                                    # Find the file path
-                                    if preroll_name in fixed_files:
-                                        bundle_preview['sequence'].append({
-                                            'type': 'fixed',
-                                            'name': preroll_name,
-                                            'path': f"fixed/{fixed_files[preroll_name]}"
-                                        })
-                                    else:
-                                        # Check in categories
-                                        for cat_name, cat_files in category_files.items():
-                                            for f in cat_files:
-                                                if os.path.splitext(f)[0] == preroll_name:
-                                                    bundle_preview['sequence'].append({
-                                                        'type': 'fixed',
-                                                        'name': preroll_name,
-                                                        'path': f"categories/{cat_name}/{f}",
-                                                        'category': cat_name
-                                                    })
-                                                    break
-                            elif block_type == 'random':
-                                category_name = block.get('category_name', '')
-                                count = block.get('count', 1)
-                                # Find matching category with normalized comparison (handle apostrophes, case)
-                                def normalize_name(name):
-                                    return name.lower().replace("'", "").replace("'", "").replace("`", "")
-                                matched_cat = None
-                                for cat_key in category_files.keys():
-                                    if normalize_name(cat_key) == normalize_name(category_name):
-                                        matched_cat = cat_key
-                                        break
-                                if matched_cat:
-                                    _file_log(f"[IMPORT] Matched category '{category_name}' to folder '{matched_cat}'")
-                                    # Add placeholder for random block
-                                    bundle_preview['sequence'].append({
-                                        'type': 'random',
-                                        'category': category_name,
-                                        'count': count,
-                                        'available_files': [
-                                            f"categories/{matched_cat}/{f}" 
-                                            for f in category_files[matched_cat]
-                                        ]
-                                    })
-                                else:
-                                    _file_log(f"[IMPORT] WARNING: No matching category folder for '{category_name}'")
-                        
-                        _file_log(f"[IMPORT] Bundle preview: {len(bundle_preview['categories'])} categories, {len(bundle_preview['fixed'])} fixed prerolls, {len(bundle_preview['sequence'])} sequence blocks")
-                        
-                        # DON'T cleanup temp files - keep them for preview
-                        # They will be cleaned up when the import is confirmed or cancelled
-                        try:
-                            os.unlink(tmp_path)
-                        except Exception:
-                            pass
-                        
-                        # Return early with just the bundle preview for folder mapping UI
-                        return {
-                            'pattern_name': pattern_data.get('pattern_name', 'Imported Pattern'),
-                            'pattern_description': pattern_data.get('pattern_description', ''),
-                            'bundle_preview': bundle_preview,
-                            'blocks': [],
-                            'match_results': {
-                                'matched': 0,
-                                'unmatched': 0,
-                                'downloadable': 0,
-                                'total_blocks': len(pattern_data.get('blocks', [])),
-                                'missing_prerolls': [],
-                                'missing_categories': []
-                            }
-                        }
-                    else:
-                        # Folder mappings provided - do the actual import
-                        _file_log(f"[IMPORT] ZIP bundle import mode with mappings")
-                        plex_library_path = PREROLLS_DIR
-                        
-                        # Build a lookup map of preroll names to community IDs from pattern data
-                        # This allows us to set community_preroll_id when importing from bundle
-                        community_id_map = {}  # { preroll_name: community_id }
-                        for block in pattern_data.get('blocks', []):
-                            block_type = block.get('type', '')
-                            if block_type == 'random':
-                                # Random blocks may have available_prerolls list with community IDs
-                                for preroll_info in block.get('available_prerolls', []):
-                                    name = preroll_info.get('name', '')
-                                    cid = preroll_info.get('community_id')
-                                    if name and cid:
-                                        community_id_map[name] = cid
-                                        _file_log(f"[IMPORT] Mapped community ID for '{name}': {cid}")
-                            elif block_type == 'fixed':
-                                # Fixed blocks have preroll_name and community_id directly
-                                name = block.get('preroll_name', '')
-                                cid = block.get('community_id')
-                                if name and cid:
-                                    community_id_map[name] = cid
-                                    _file_log(f"[IMPORT] Mapped community ID for '{name}': {cid}")
-                                # Also check preroll_data if present
-                                preroll_data = block.get('preroll_data', {})
-                                if preroll_data:
-                                    name = preroll_data.get('name', '')
-                                    cid = preroll_data.get('community_id')
-                                    if name and cid:
-                                        community_id_map[name] = cid
-                        
-                        _file_log(f"[IMPORT] Built community ID map with {len(community_id_map)} entries")
-                        
-                        # Import category folders with user-specified destinations
-                        if os.path.exists(categories_path):
-                            for category_folder in os.listdir(categories_path):
-                                category_folder_path = os.path.join(categories_path, category_folder)
-                                if os.path.isdir(category_folder_path):
-                                    # Get user-specified target category
-                                    mapping_key = f"category:{category_folder}"
-                                    target = str(mappings.get(mapping_key, f"new:{category_folder}"))
-                                    
-                                    if target.startswith('new:'):
-                                        # Create new category with specified name
-                                        new_cat_name = target[4:]  # Remove 'new:' prefix
-                                        category = db.query(models.Category).filter(
-                                            models.Category.name.ilike(new_cat_name)
-                                        ).first()
-                                        if not category:
-                                            category = models.Category(name=new_cat_name)
-                                            db.add(category)
-                                            db.commit()
-                                            db.refresh(category)
-                                            imported_categories.append(new_cat_name)
-                                    else:
-                                        # Use existing category by ID
-                                        try:
-                                            category = db.query(models.Category).filter(
-                                                models.Category.id == int(target)
-                                            ).first()
-                                        except (ValueError, TypeError):
-                                            category = None
-                                        
-                                        if not category:
-                                            # Fallback to creating new category
-                                            category = models.Category(name=category_folder)
-                                            db.add(category)
-                                            db.commit()
-                                            db.refresh(category)
-                                            imported_categories.append(category_folder)
-                                    
-                                    _file_log(f"[IMPORT] Importing category '{category_folder}' -> '{category.name}' (ID: {category.id})")
-                                    
-                                    # Import prerolls from this category
-                                    for video_file in os.listdir(category_folder_path):
-                                        video_path = os.path.join(category_folder_path, video_file)
-                                        if os.path.isfile(video_path) and video_file.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
-                                            preroll_display_name = os.path.splitext(video_file)[0]
-                                            _file_log(f"[IMPORT] Processing category preroll: {preroll_display_name}")
-                                            
-                                            # Check if preroll already exists (by name in target category)
-                                            # Check both with and without extension, case-insensitive
-                                            existing = db.query(models.Preroll).filter(
-                                                models.Preroll.category_id == category.id,
-                                                (
-                                                    models.Preroll.display_name.ilike(preroll_display_name) |
-                                                    models.Preroll.display_name.ilike(video_file) |
-                                                    models.Preroll.filename.ilike(video_file)
-                                                )
-                                            ).first()
-                                            
-                                            if existing:
-                                                _file_log(f"[IMPORT] Skipping '{preroll_display_name}' - already exists in category '{category.name}' as '{existing.display_name}'")
-                                                continue
-                                            
-                                            # Copy file to Plex library under category folder
-                                            dest_category_path = os.path.join(plex_library_path, category.name)
-                                            os.makedirs(dest_category_path, exist_ok=True)
-                                            dest_file = os.path.join(dest_category_path, video_file)
-                                            
-                                            # Copy file if it doesn't exist on disk
-                                            if not os.path.exists(dest_file):
-                                                import shutil
-                                                shutil.copy2(video_path, dest_file)
-                                                _file_log(f"[IMPORT] Copied file to: {dest_file}")
-                                            else:
-                                                _file_log(f"[IMPORT] File already exists on disk: {dest_file}")
-                                            
-                                            # Look up community ID from pattern data
-                                            community_id = community_id_map.get(preroll_display_name)
-                                            
-                                            # Create preroll record with community_preroll_id if available
-                                            preroll_kwargs = {
-                                                'filename': video_file,
-                                                'display_name': preroll_display_name,
-                                                'path': dest_file,
-                                                'category_id': category.id,
-                                                'file_size': os.path.getsize(dest_file),
-                                                'tags': json.dumps([])
-                                            }
-                                            if community_id:
-                                                preroll_kwargs['community_preroll_id'] = community_id
-                                                _file_log(f"[IMPORT] Setting community_preroll_id for '{preroll_display_name}': {community_id}")
-                                            
-                                            new_preroll = models.Preroll(**preroll_kwargs)
-                                            db.add(new_preroll)
-                                            db.commit()
-                                            db.refresh(new_preroll)
-                                            _file_log(f"[IMPORT] Created preroll record: {new_preroll.display_name} (ID: {new_preroll.id})")
-                                            
-                                            # Generate thumbnail
-                                            thumb_path = _generate_thumbnail_for_preroll(new_preroll, dest_file, category.name)
-                                            if thumb_path:
-                                                new_preroll.thumbnail = thumb_path
-                                                db.commit()
-                                            
-                                            imported_prerolls.append({
-                                                'name': new_preroll.display_name,
-                                                'category': category.name,
-                                                'type': 'category',
-                                                'community_id': community_id
-                                            })
-                    
-                        # Import fixed prerolls with user-specified destinations
-                        if os.path.exists(fixed_path):
-                            for video_file in os.listdir(fixed_path):
-                                video_path = os.path.join(fixed_path, video_file)
-                                if os.path.isfile(video_path) and video_file.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
-                                    preroll_name = os.path.splitext(video_file)[0]
-                                    
-                                    # Check if preroll already exists (by name in any category)
-                                    existing = db.query(models.Preroll).filter(
-                                        models.Preroll.display_name == preroll_name
-                                    ).first()
-                                    
-                                    if not existing:
-                                        # Get user-specified target category
-                                        mapping_key = f"fixed:{preroll_name}"
-                                        target = str(mappings.get(mapping_key, 'new:Imported'))
-                                        
-                                        if target.startswith('new:'):
-                                            # Create new category with specified name
-                                            new_cat_name = target[4:]  # Remove 'new:' prefix
-                                            target_category = db.query(models.Category).filter(
-                                                models.Category.name.ilike(new_cat_name)
-                                            ).first()
-                                            if not target_category:
-                                                target_category = models.Category(name=new_cat_name)
-                                                db.add(target_category)
-                                                db.commit()
-                                                db.refresh(target_category)
-                                        else:
-                                            # Use existing category by ID
-                                            try:
-                                                target_category = db.query(models.Category).filter(
-                                                    models.Category.id == int(target)
-                                                ).first()
-                                            except (ValueError, TypeError):
-                                                target_category = None
-                                            
-                                            if not target_category:
-                                                # Fallback to creating 'Imported' category
-                                                target_category = db.query(models.Category).filter(
-                                                    models.Category.name == 'Imported'
-                                                ).first()
-                                                if not target_category:
-                                                    target_category = models.Category(name='Imported')
-                                                    db.add(target_category)
-                                                    db.commit()
-                                                    db.refresh(target_category)
-                                        
-                                        _file_log(f"[IMPORT] Importing fixed preroll '{preroll_name}' -> '{target_category.name}' (ID: {target_category.id})")
-                                        
-                                        # Copy file to target category folder
-                                        dest_folder = os.path.join(plex_library_path, target_category.name)
-                                        os.makedirs(dest_folder, exist_ok=True)
-                                        dest_file = os.path.join(dest_folder, video_file)
-                                        
-                                        if not os.path.exists(dest_file):
-                                            import shutil
-                                            shutil.copy2(video_path, dest_file)
-                                            
-                                            # Look up community ID from pattern data
-                                            community_id = community_id_map.get(preroll_name)
-                                            
-                                            # Create preroll record with community_preroll_id if available
-                                            preroll_kwargs = {
-                                                'filename': video_file,
-                                                'display_name': preroll_name,
-                                                'path': dest_file,
-                                                'category_id': target_category.id,
-                                                'file_size': os.path.getsize(dest_file),
-                                                'tags': json.dumps([])
-                                            }
-                                            if community_id:
-                                                preroll_kwargs['community_preroll_id'] = community_id
-                                                _file_log(f"[IMPORT] Setting community_preroll_id for '{preroll_name}': {community_id}")
-                                            
-                                            new_preroll = models.Preroll(**preroll_kwargs)
-                                            db.add(new_preroll)
-                                            db.commit()
-                                            db.refresh(new_preroll)
-                                            
-                                            # Generate thumbnail
-                                            thumb_path = _generate_thumbnail_for_preroll(new_preroll, dest_file, target_category.name)
-                                            if thumb_path:
-                                                new_preroll.thumbnail = thumb_path
-                                                db.commit()
-                                            
-                                            imported_prerolls.append({
-                                                'name': new_preroll.display_name,
-                                                'category': target_category.name,
-                                                'type': 'fixed',
-                                                'community_id': community_id
-                                            })
-                    
-                    db.commit()
-                
-                # Cleanup (outside the zipfile context manager)
-                import shutil
-                try:
-                    shutil.rmtree(extract_dir)
-                except Exception as cleanup_error:
-                    _file_log(f"Cleanup warning (extract_dir): {cleanup_error}")
-                
+                    }
+
+                # Second call: copy the videos where the user chose, then match
+                # the pattern's blocks against the library as it now stands.
+                _file_log(f"[IMPORT] ZIP bundle import mode with mappings")
+                imported_prerolls, imported_categories = _import_bundle_files(
+                    db, _read_bundle(extract_dir, pattern_data), pattern_data, mappings)
+            except HTTPException:
+                raise
             except Exception as e:
                 _file_log(f"Failed to process ZIP bundle: {e}")
                 import traceback
                 _file_log(f"Traceback: {traceback.format_exc()}")
                 raise HTTPException(status_code=400, detail=f"Failed to process ZIP bundle: {str(e)}")
             finally:
-                # Always cleanup temp file
-                try:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                except Exception as cleanup_error:
-                    _file_log(f"Cleanup warning (tmp_path): {cleanup_error}")
+                for path, is_dir in ((tmp_path, False), (extract_dir, True)):
+                    if not path or (is_dir and keep_extracted):
+                        continue
+                    try:
+                        if is_dir:
+                            shutil.rmtree(path, ignore_errors=True)
+                        elif os.path.exists(path):
+                            os.unlink(path)
+                    except Exception as cleanup_error:
+                        _file_log(f"Cleanup warning ({path}): {cleanup_error}")
         else:
             # Handle regular .nexseq or .nexbundle JSON file
             pattern_data = json.loads(contents.decode('utf-8'))
@@ -12531,11 +12486,16 @@ async def import_sequence_pattern(
                                 pname = pinfo.get('name')
                                 pcommunity_id = pinfo.get('community_id')
                                 
-                                # Try to find local preroll by ID first
+                                # A database id only means the same preroll on the
+                                # install that wrote the file; elsewhere it names
+                                # whatever happens to have that id. Trust it only
+                                # when the name agrees too.
                                 local_preroll = None
                                 if pid:
                                     local_preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                                
+                                    if local_preroll and pname and _loose_name(pname) != _loose_name(local_preroll.display_name or local_preroll.filename):
+                                        local_preroll = None
+
                                 if local_preroll:
                                     matched_preroll_ids.append(pid)
                                 else:
@@ -12570,6 +12530,9 @@ async def import_sequence_pattern(
                         elif preroll_ids_in_block:
                             for pid in preroll_ids_in_block:
                                 local_preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                if (local_preroll and preroll_name and len(preroll_ids_in_block) == 1
+                                        and _loose_name(preroll_name) != _loose_name(local_preroll.display_name or local_preroll.filename)):
+                                    local_preroll = None
                                 if local_preroll:
                                     matched_preroll_ids.append(pid)
                                 else:
@@ -12660,6 +12623,7 @@ async def import_sequence_pattern(
                     
                     elif block_type == 'sequential':
                         category_name = block_data.get('category_name', '').strip().lower()
+                        matched_block['count'] = block_data.get('count', 1)
                         if category_name and category_name in all_categories:
                             matched_block['category_id'] = all_categories[category_name].id
                             matched_block['category_name'] = all_categories[category_name].name
@@ -12764,7 +12728,10 @@ async def import_sequence_pattern(
             filename_no_ext = os.path.splitext(p.filename)[0].strip().lower()
             if filename_no_ext != display_name:
                 prerolls_by_name[filename_no_ext] = p
-        
+        prerolls_by_loose = {}
+        for p in all_prerolls:
+            prerolls_by_loose.setdefault(_loose_name(p.display_name or p.filename), []).append(p)
+
         # Process each block in the pattern
         for block_data in pattern_data.get('blocks', []):
             block_type = block_data.get('type', '')
@@ -12777,10 +12744,10 @@ async def import_sequence_pattern(
             
             if block_type in ('random', 'sequential'):
                 # Match a category block by category name (case-insensitive, trim whitespace)
-                category_name = block_data.get('category_name', '').strip().lower()
-                if category_name and category_name in all_categories:
-                    matched_block['category_id'] = all_categories[category_name].id
-                    matched_block['category_name'] = all_categories[category_name].name
+                local_category = _match_category_by_name(block_data.get('category_name'), all_categories.values())
+                if local_category:
+                    matched_block['category_id'] = local_category.id
+                    matched_block['category_name'] = local_category.name
                     matched_block['count'] = block_data.get('count', 1)
                     
                     # Check for available prerolls in exported data
@@ -12805,14 +12772,20 @@ async def import_sequence_pattern(
                 preroll_refs = []
                 
                 # Check different field names for compatibility
-                if 'prerolls' in block_data:
-                    # Array format (future-proofing for multi-preroll fixed blocks)
-                    preroll_refs = block_data['prerolls']
+                if isinstance(block_data.get('prerolls'), list) and block_data['prerolls']:
+                    # Every preroll of a multi-preroll fixed block (2.2.1 and later)
+                    preroll_refs = [{
+                        'name': ref.get('name') or ref.get('preroll_name'),
+                        'community_id': ref.get('community_id'),
+                        'category_names': ref.get('category_names'),
+                        'preroll_data': ref.get('preroll_data'),
+                    } for ref in block_data['prerolls'] if isinstance(ref, dict)]
                 elif 'preroll_name' in block_data or 'community_id' in block_data or 'preroll_data' in block_data:
-                    # Single preroll format (current standard)
+                    # Single preroll format
                     preroll_refs = [{
                         'name': block_data.get('preroll_name'),  # Export uses 'preroll_name'
                         'community_id': block_data.get('community_id'),
+                        'category_names': block_data.get('category_names'),
                         'preroll_data': block_data.get('preroll_data')
                     }]
                 elif 'preroll_ids' in block_data:
@@ -12882,7 +12855,13 @@ async def import_sequence_pattern(
                                 name_no_ext = os.path.splitext(name_lower)[0]
                                 if name_no_ext in prerolls_by_name:
                                     matched_preroll = prerolls_by_name[name_no_ext]
-                    
+                                else:
+                                    # Punctuation lost on the way (an older bundle
+                                    # stripped it): accept a single close match.
+                                    close = prerolls_by_loose.get(_loose_name(name_lower), [])
+                                    if len(close) == 1:
+                                        matched_preroll = close[0]
+
                     # If still not matched, check if we can download from community (only if valid community_id)
                     if not matched_preroll and is_valid_community_id:
                         can_download = True
@@ -13326,6 +13305,106 @@ _PORTABLE_BLOCK_FIELDS = {
     "separator": ("duration",),
 }
 
+# Video files a full bundle carries, and the only ones its import reads back.
+_BUNDLE_VIDEO_EXTS = (".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm")
+_BUNDLE_UNSAFE_CHARS = '<>:"/\\|?*'
+_WINDOWS_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
+def _bundle_safe_name(name, fallback: str = "item") -> str:
+    """A file or folder name that extracts on Windows, macOS and Linux.
+
+    Only characters no filesystem accepts are replaced, so apostrophes,
+    accents and ampersands survive. Bundles used to keep letters, digits and
+    a few marks only, which renamed "Kids' Night" to "Kids Night" and left
+    the imported sequence pointing at a category that did not exist.
+    """
+    cleaned = "".join("_" if (c in _BUNDLE_UNSAFE_CHARS or ord(c) < 32) else c for c in str(name or ""))
+    cleaned = cleaned.strip().rstrip(". ")[:150].strip()
+    if not cleaned or cleaned in (".", ".."):
+        cleaned = fallback
+    if cleaned.split(".")[0].upper() in _WINDOWS_RESERVED_NAMES:
+        cleaned = "_" + cleaned
+    return cleaned
+
+
+def _attachment_header(filename: str) -> str:
+    """Content-Disposition for a download whose name may hold any character.
+
+    A bare filename= header must be Latin-1, so a sequence named with an
+    em dash or in Japanese failed the whole export with a 500.
+    """
+    from urllib.parse import quote
+    name = _bundle_safe_name(filename, "download").replace(" ", "_")
+    ascii_name = name.encode("ascii", "ignore").decode("ascii").strip("_") or "download"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
+
+
+def _loose_name(name) -> str:
+    """Name reduced to lower-case letters and digits, extension removed, for
+    matching a bundle's file and folder names against the pattern's names."""
+    stem = str(name or "")
+    root, ext = os.path.splitext(stem)
+    if ext.lower() in _BUNDLE_VIDEO_EXTS:
+        stem = root
+    return "".join(c for c in stem.casefold() if c.isalnum())
+
+
+def _match_category_by_name(name, categories):
+    """The local category a pattern names: exact (ignoring case) first, then
+    by letters and digits when exactly one category fits, so "Kids Night"
+    from an older bundle still finds "Kids' Night"."""
+    wanted = str(name or "").strip().casefold()
+    if not wanted:
+        return None
+    exact = next((c for c in categories if (c.name or "").strip().casefold() == wanted), None)
+    if exact:
+        return exact
+    loose = _loose_name(wanted)
+    close = [c for c in categories if loose and _loose_name(c.name) == loose]
+    return close[0] if len(close) == 1 else None
+
+
+def _safe_tag_list(raw) -> list:
+    """Tags as a list whether stored as JSON or as the older comma string."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return [t.strip() for t in str(raw).split(",") if t.strip()]
+    if isinstance(data, list):
+        return data
+    return [] if data in (None, "") else [data]
+
+
+def _fixed_block_preroll_ids(block: dict) -> list:
+    """Every preroll a fixed block plays, in order. A fixed block can hold
+    several prerolls; exports used to keep only the first."""
+    ids = block.get("preroll_ids") or block.get("prerollIds") or []
+    if not isinstance(ids, list):
+        ids = [ids]
+    single = block.get("preroll_id") or block.get("prerollId")
+    if single and not ids:
+        ids = [single]
+    out = []
+    for pid in ids:
+        if pid not in (None, "") and pid not in out:
+            out.append(pid)
+    return out
+
+
+def _block_category_ids(block: dict) -> list:
+    """Categories a block draws from, its conditional alternative included."""
+    ids = []
+    otherwise = block.get("otherwise") if isinstance(block.get("otherwise"), dict) else None
+    for candidate in (block, otherwise):
+        if isinstance(candidate, dict) and str(candidate.get("type", "")).lower() in ("random", "sequential"):
+            cid = candidate.get("category_id") or candidate.get("categoryId")
+            if cid and cid not in ids:
+                ids.append(cid)
+    return ids
+
 
 def _export_otherwise_block(otherwise, db) -> Optional[dict]:
     """A conditional block's alternative in portable form, or None.
@@ -13361,13 +13440,7 @@ def _import_otherwise_block(otherwise, db) -> Optional[dict]:
         return None
     otype = str(otherwise.get("type", "")).lower()
     if otype in ("random", "sequential"):
-        wanted = str(otherwise.get("category_name", "")).strip().lower()
-        if not wanted:
-            return None
-        category = next(
-            (c for c in db.query(models.Category).all() if (c.name or "").strip().lower() == wanted),
-            None,
-        )
+        category = _match_category_by_name(otherwise.get("category_name"), db.query(models.Category).all())
         if not category:
             return None
         out = {k: v for k, v in otherwise.items() if k != "category_name"}
@@ -13385,6 +13458,49 @@ def _carry_block_condition(block_data: dict, matched_block: dict, db) -> None:
         otherwise = _import_otherwise_block(block_data.get("otherwise"), db)
         if otherwise:
             matched_block["otherwise"] = otherwise
+
+
+def _export_community_id(preroll) -> Optional[str]:
+    """The preroll's Community ID in a form another install can download,
+    repairing IDs mangled by older releases where possible."""
+    preroll_name = preroll.display_name or preroll.filename
+    stored = str(preroll.community_preroll_id) if preroll.community_preroll_id else ""
+    if stored and not (stored.startswith('_') or '\\' in stored):
+        return stored
+    if stored:
+        _file_log(f"[EXPORT] Detected mangled community_preroll_id: {stored}")
+    # Name lookup is more reliable than the heuristic unmangle, so try it first.
+    resolved = _find_community_id_by_name(preroll_name)
+    if not resolved and stored:
+        resolved = _unmangle_community_id(stored)
+        if resolved:
+            _file_log(f"[EXPORT] Using heuristically unmangled ID (may be incorrect): {resolved}")
+    return resolved or None
+
+
+def _export_preroll_ref(preroll, export_mode: str) -> dict:
+    """How one fixed preroll travels in a .nexseq: by name, Community ID and
+    categories, never by this install's database id."""
+    ref = {'name': preroll.display_name or preroll.filename}
+    community_id = _export_community_id(preroll)
+    if community_id:
+        ref['community_id'] = community_id
+    category_names = [cat.name for cat in (preroll.categories or []) if cat and cat.name]
+    if not category_names and preroll.category:
+        category_names = [preroll.category.name]
+    if category_names:
+        ref['category_names'] = category_names
+    if export_mode in ('with_preroll_data', 'full_bundle'):
+        ref['preroll_data'] = {
+            'name': ref['name'],
+            'community_id': preroll.community_preroll_id,
+            'tags': _safe_tag_list(preroll.tags),
+            'duration': preroll.duration,
+            'file_size': preroll.file_size,
+            'description': preroll.description,
+            'category_name': preroll.category.name if preroll.category else (category_names[0] if category_names else None),
+        }
+    return ref
 
 
 def _build_sequence_export(sequence_name, sequence_description, blocks, export_mode, db):
@@ -13435,7 +13551,7 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
                                 {
                                     'name': p.display_name or p.filename,
                                     'community_id': p.community_preroll_id,
-                                    'tags': json.loads(p.tags) if p.tags else [],
+                                    'tags': _safe_tag_list(p.tags),
                                     'duration': p.duration,
                                     'file_size': p.file_size
                                 } for p in category_prerolls
@@ -13445,77 +13561,24 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
                 pattern_block['count'] = block.get('count', 1)
             
             elif block_type == 'fixed':
-                # Include preroll information
-                preroll_id = block.get('preroll_id') or block.get('prerollId')
-                preroll_ids = block.get('preroll_ids') or block.get('prerollIds')
-                
-                # Handle both single preroll_id and array preroll_ids
-                if not preroll_id and preroll_ids and len(preroll_ids) > 0:
-                    preroll_id = preroll_ids[0]  # Use first preroll for now
-                
-                if preroll_id:
+                # Every preroll in the block travels in `prerolls`. The first is
+                # also written to the single-preroll fields older releases read,
+                # so an older NeXroll still imports the block, with one preroll.
+                refs = []
+                for preroll_id in _fixed_block_preroll_ids(block):
                     preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
-                    if preroll:
-                        # Always include preroll name for matching
-                        preroll_name = preroll.display_name or preroll.filename
-                        pattern_block['preroll_name'] = preroll_name
-                        
-                        # Include community ID for all modes (helps with matching even in pattern_only)
-                        # Community IDs can be URL paths (e.g., "/Holidays/Christmas/file.mp4")
-                        _file_log(f"[EXPORT] Checking preroll '{preroll_name}' - community_preroll_id: '{getattr(preroll, 'community_preroll_id', 'ATTRIBUTE_MISSING')}'")
-                        
-                        resolved_community_id = None
-                        
-                        if preroll.community_preroll_id:
-                            community_id = str(preroll.community_preroll_id)
-                            # Check if this is a mangled ID - prioritize name lookup since heuristic unmangling is unreliable
-                            if community_id.startswith('_') or '\\' in community_id:
-                                _file_log(f"[EXPORT] Detected mangled community_preroll_id: {community_id}")
-                                # First try name lookup - more reliable than heuristic unmangling
-                                resolved_community_id = _find_community_id_by_name(preroll_name)
-                                if resolved_community_id:
-                                    _file_log(f"[EXPORT] Found correct ID by name lookup: {resolved_community_id}")
-                                else:
-                                    # Only try unmangle as last resort
-                                    unmangled = _unmangle_community_id(community_id)
-                                    if unmangled:
-                                        resolved_community_id = unmangled
-                                        _file_log(f"[EXPORT] Using heuristically unmangled ID (may be incorrect): {unmangled}")
-                                    else:
-                                        _file_log(f"[EXPORT] Could not resolve mangled ID")
-                            else:
-                                resolved_community_id = community_id
-                        else:
-                            # No community_preroll_id stored - try to find by name
-                            _file_log(f"[EXPORT] No community_preroll_id - trying name lookup for '{preroll_name}'")
-                            resolved_community_id = _find_community_id_by_name(preroll_name)
-                        
-                        if resolved_community_id:
-                            pattern_block['community_id'] = resolved_community_id
-                            _file_log(f"[EXPORT] Including community_id in export: {resolved_community_id}")
-                        else:
-                            _file_log(f"[EXPORT] No community_id found - preroll will not be re-downloadable after import")
-                        
-                        # Include category names so imports can match/download into the same categories
-                        if preroll.categories:
-                            category_names = [cat.name for cat in preroll.categories]
-                            if category_names:
-                                pattern_block['category_names'] = category_names
-                                _file_log(f"[EXPORT] Including categories for '{preroll.display_name or preroll.filename}': {category_names}")
-                        
-                        # Include full metadata only for detailed modes
-                        if export_mode in ['with_preroll_data', 'full_bundle']:
-                            pattern_block['preroll_data'] = {
-                                'name': preroll.display_name or preroll.filename,
-                                'community_id': preroll.community_preroll_id,
-                                'tags': json.loads(preroll.tags) if preroll.tags else [],
-                                'duration': preroll.duration,
-                                'file_size': preroll.file_size,
-                                'description': preroll.description,
-                                'category_name': preroll.category.name if preroll.category else None
-                            }
-                        
-                        all_preroll_ids.append(preroll.id)
+                    if not preroll:
+                        continue
+                    refs.append(_export_preroll_ref(preroll, export_mode))
+                    all_preroll_ids.append(preroll.id)
+                if refs:
+                    first = refs[0]
+                    pattern_block['preroll_name'] = first['name']
+                    for field in ('community_id', 'category_names', 'preroll_data'):
+                        if field in first:
+                            pattern_block[field] = first[field]
+                    if len(refs) > 1:
+                        pattern_block['prerolls'] = refs
             
             elif block_type == 'sequential':
                 # Same portable shape as a random block: the category travels by name.
@@ -13537,8 +13600,9 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
                 pattern_block['layout'] = block.get('layout', 'grid')
             
             elif block_type == 'dynamic_preroll':
-                pattern_block['template'] = block.get('template', '')
-                pattern_block['theme'] = block.get('theme', '')
+                for field in ('template', 'theme'):
+                    if block.get(field):
+                        pattern_block[field] = block[field]
                 if block.get('filename'):
                     pattern_block['filename'] = os.path.basename(str(block['filename']))
 
@@ -13576,124 +13640,96 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     # Add pattern JSON
                     zip_file.writestr(
-                        f"{sequence_name.replace(' ', '_')}.nexseq",
+                        f"{_bundle_safe_name(sequence_name, 'sequence')}.nexseq",
                         json.dumps(pattern_data, indent=2)
                     )
-                    
-                    # Track what we're adding to avoid duplicates
-                    added_files = set()
+
                     categories_exported = {}
                     fixed_prerolls_exported = []
-                    
-                    # Process blocks to organize files by type
+                    # zip path -> the name it had here. Import restores these, so
+                    # a name a filesystem would not accept still comes back intact.
+                    names = {}
+                    taken = {}  # zip path -> preroll id
+
+                    def _add_video(preroll, folder):
+                        """Add a preroll's file under folder/, once per preroll."""
+                        if not (preroll.path and os.path.exists(preroll.path)):
+                            _file_log(f"[FULL_BUNDLE] Skipping '{preroll.display_name or preroll.filename}' - file not found")
+                            return None
+                        display = preroll.display_name or preroll.filename or f"preroll-{preroll.id}"
+                        _, ext = os.path.splitext(preroll.path)
+                        base = display if os.path.splitext(display)[1].lower() == ext.lower() else display + ext
+                        stem, ext = os.path.splitext(_bundle_safe_name(base, f"preroll-{preroll.id}{ext}"))
+                        candidate, n = f"{folder}/{stem}{ext}", 2
+                        while candidate in taken and taken[candidate] != preroll.id:
+                            candidate, n = f"{folder}/{stem} ({n}){ext}", n + 1
+                        if candidate not in taken:
+                            zip_file.write(preroll.path, candidate)
+                            taken[candidate] = preroll.id
+                            names[candidate] = display
+                        return candidate
+
                     for block in blocks:
-                        block_type = block.get('type', '')
-                        
-                        if block_type == 'random':
-                            # For random blocks, export entire category folder. Include m2m
-                            # members so secondary-tagged prerolls travel with the bundle.
-                            category_id = block.get('category_id') or block.get('categoryId')
-                            if category_id and category_id not in categories_exported:
-                                category = db.query(models.Category).filter(models.Category.id == category_id).first()
-                                if category:
-                                    category_prerolls = db.query(models.Preroll).filter(
-                                        or_(
-                                            models.Preroll.category_id == category_id,
-                                            models.Preroll.categories.any(models.Category.id == category_id),
-                                        )
-                                    ).distinct().all()
-                                    
-                                    # Create category folder in ZIP
-                                    category_folder = "".join(c for c in category.name if c.isalnum() or c in (' ', '_', '-'))
-                                    
-                                    for preroll in category_prerolls:
-                                        if preroll.path and os.path.exists(preroll.path):
-                                            file_name = preroll.display_name or preroll.filename
-                                            # Ensure filename has extension
-                                            if not any(file_name.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm']):
-                                                # Get extension from original path
-                                                _, ext = os.path.splitext(preroll.path)
-                                                file_name = file_name + ext
-                                            # Sanitize filename
-                                            file_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '.', '_', '-'))
-                                            zip_path = f"categories/{category_folder}/{file_name}"
-                                            
-                                            if zip_path not in added_files:
-                                                zip_file.write(preroll.path, zip_path)
-                                                added_files.add(zip_path)
-                                    
-                                    categories_exported[category_id] = {
-                                        'name': category.name,
-                                        'preroll_count': len(category_prerolls)
-                                    }
-                        
-                        elif block_type == 'fixed':
-                            # For fixed blocks, export individual preroll to "fixed" folder
-                            # Handle both single preroll_id and array preroll_ids formats
-                            preroll_id = block.get('preroll_id') or block.get('prerollId')
-                            preroll_ids = block.get('preroll_ids') or block.get('prerollIds') or []
-                            
-                            # If no single preroll_id but we have an array, use the first one
-                            if not preroll_id and preroll_ids:
-                                preroll_id = preroll_ids[0] if len(preroll_ids) > 0 else None
-                            
-                            _file_log(f"[FULL_BUNDLE] Fixed block - preroll_id: {preroll_id}, preroll_ids: {preroll_ids}")
-                            
-                            if preroll_id:
+                        # Every category the block draws from, its alternative
+                        # included, travels whole: random and in-order blocks alike.
+                        for category_id in _block_category_ids(block):
+                            if category_id in categories_exported:
+                                continue
+                            category = db.query(models.Category).filter(models.Category.id == category_id).first()
+                            if not category:
+                                continue
+                            category_prerolls = db.query(models.Preroll).filter(
+                                or_(
+                                    models.Preroll.category_id == category_id,
+                                    models.Preroll.categories.any(models.Category.id == category_id),
+                                )
+                            ).distinct().all()
+                            folder = f"categories/{_bundle_safe_name(category.name, f'category-{category.id}')}"
+                            names[folder] = category.name
+                            added = [p for p in category_prerolls if _add_video(p, folder)]
+                            categories_exported[category_id] = {
+                                'name': category.name,
+                                'preroll_count': len(added)
+                            }
+
+                        if str(block.get('type', '')).lower() == 'fixed':
+                            for preroll_id in _fixed_block_preroll_ids(block):
                                 preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
-                                _file_log(f"[FULL_BUNDLE] Found preroll: {preroll.display_name if preroll else 'None'}, path: {preroll.path if preroll else 'N/A'}, exists: {os.path.exists(preroll.path) if preroll and preroll.path else False}")
-                                if preroll and preroll.path and os.path.exists(preroll.path):
-                                    file_name = preroll.display_name or preroll.filename
-                                    # Ensure filename has extension
-                                    if not any(file_name.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm']):
-                                        # Get extension from original path
-                                        _, ext = os.path.splitext(preroll.path)
-                                        file_name = file_name + ext
-                                    # Sanitize filename
-                                    file_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '.', '_', '-'))
-                                    zip_path = f"fixed/{file_name}"
-                                    
-                                    if zip_path not in added_files:
-                                        _file_log(f"[FULL_BUNDLE] Adding to ZIP: {preroll.path} -> {zip_path}")
-                                        zip_file.write(preroll.path, zip_path)
-                                        added_files.add(zip_path)
-                                        fixed_prerolls_exported.append({
-                                            'name': preroll.display_name or preroll.filename,
-                                            'category': preroll.category.name if preroll.category else 'Uncategorized'
-                                        })
-                                else:
-                                    _file_log(f"[FULL_BUNDLE] Skipping preroll - not found or path doesn't exist")
-                    
-                    _file_log(f"[FULL_BUNDLE] Export complete - {len(added_files)} files added to ZIP")
-                    
+                                if preroll and _add_video(preroll, "fixed"):
+                                    fixed_prerolls_exported.append({
+                                        'name': preroll.display_name or preroll.filename,
+                                        'category': preroll.category.name if preroll.category else 'Uncategorized'
+                                    })
+
+                    _file_log(f"[FULL_BUNDLE] Export complete - {len(taken)} files added to ZIP")
+
                     # Add a manifest file with export details
                     manifest = {
                         'sequence_name': sequence_name,
                         'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
                         'nexroll_version': app_version,
-                        'total_files': len(added_files),
+                        'total_files': len(taken),
                         'categories_exported': categories_exported,
                         'fixed_prerolls_exported': fixed_prerolls_exported,
+                        'names': names,
                         'instructions': {
                             'import': 'Use NeXroll\'s Import feature to restore this sequence',
                             'structure': {
-                                'categories/': 'Entire category folders for random blocks',
+                                'categories/': 'Entire category folders for category blocks',
                                 'fixed/': 'Individual prerolls for fixed blocks',
                                 '*.nexseq': 'Sequence pattern file'
                             }
                         }
                     }
                     zip_file.writestr('MANIFEST.json', json.dumps(manifest, indent=2))
-                
+
                 zip_buffer.seek(0)
-                _file_log(f"Exported full bundle: {sequence_name} - {len(categories_exported)} categories, {len(fixed_prerolls_exported)} fixed prerolls, {len(added_files)} total files")
+                _file_log(f"Exported full bundle: {sequence_name} - {len(categories_exported)} categories, {len(fixed_prerolls_exported)} fixed prerolls, {len(taken)} total files")
 
                 return StreamingResponse(
                     zip_buffer,
                     media_type="application/zip",
-                    headers={
-                        "Content-Disposition": f"attachment; filename={sequence_name.replace(' ', '_')}_bundle.zip"
-                    }
+                    headers={"Content-Disposition": _attachment_header(f"{sequence_name}_bundle.zip")}
                 )
             except Exception as e:
                 _file_log(f"Failed to create full bundle: {e}")

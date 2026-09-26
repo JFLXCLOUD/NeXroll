@@ -162,21 +162,21 @@ Go to **Schedules → Saved Sequences** to:
 
 ### Export a Sequence
 
-1. Open a sequence in the builder (or select from library)
-2. Click **Export**
-3. Save as a `.nexseq` file
+1. Go to **Schedules → Saved Sequences**
+2. Click the export button on the sequence's row and choose a mode
+3. Save the `.nexseq` file (or `.zip` for a full bundle)
 
 The file contains:
 - Sequence name and description
-- All block configurations
+- All block configurations, with categories and prerolls by name
 - Version and export metadata
 
 ### Import a Sequence
 
-1. Click **Import** in the builder or library
-2. Select a `.nexseq` or `.json` file
-3. The blocks are loaded into the builder
-4. Review and save to your library
+1. Click **Import** in the builder or the Saved Sequences library
+2. Select a `.nexseq`, `.json`, `.zip` or `.nexbundle` file and preview it
+3. From the library, a sequence whose categories and prerolls are all on this server is saved straight away. Otherwise it opens in the builder with those blocks empty, for you to fill in and save.
+4. From the builder, the sequence is loaded into the builder for you to review and save
 
 ### Export All Sequences
 

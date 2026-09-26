@@ -151,10 +151,12 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
         // Map fixed prerolls (each goes to a category)
         if (data.bundle_preview.fixed) {
           data.bundle_preview.fixed.forEach(preroll => {
-            // Default to 'Imported' category or first available
-            const importedCat = availableCategories.find(c => c.name === 'Imported');
-            const defaultCat = availableCategories.find(c => c.name === 'Default');
-            defaultMappings[`fixed:${preroll.name}`] = importedCat?.id || defaultCat?.id || (availableCategories[0]?.id || 'new:Imported');
+            // Its own category when this server has one by that name, else
+            // "Imported". Falling back to whichever category was listed first
+            // put the preroll into an unrelated category's rotation.
+            const named = name => availableCategories.find(c => c.name.toLowerCase() === String(name || '').toLowerCase());
+            const home = preroll.original_category ? named(preroll.original_category) : null;
+            defaultMappings[`fixed:${preroll.name}`] = home?.id || named('Imported')?.id || 'new:Imported';
           });
         }
         
@@ -197,14 +199,15 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
           type: 'fixed',
           category: item.category || null
         });
-      } else if (item.type === 'random' && item.available_files && item.available_files.length > 0) {
-        // Random block - pick 'count' random files to simulate actual playback
+      } else if ((item.type === 'random' || item.type === 'sequential') && item.available_files && item.available_files.length > 0) {
+        // Random block - pick 'count' random files to simulate actual playback.
+        // An in-order block plays the category from the start.
         const count = item.count || 1;
         const availableFiles = [...item.available_files]; // Copy array
-        const selectedFiles = [];
-        
+        const selectedFiles = item.type === 'sequential' ? availableFiles.slice(0, count) : [];
+
         // Randomly select 'count' files (or all if count > available)
-        for (let i = 0; i < Math.min(count, availableFiles.length); i++) {
+        for (let i = 0; item.type === 'random' && i < Math.min(count, availableFiles.length); i++) {
           const randomIndex = Math.floor(Math.random() * availableFiles.length);
           selectedFiles.push(availableFiles[randomIndex]);
           availableFiles.splice(randomIndex, 1); // Remove to avoid duplicates
@@ -369,14 +372,17 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
       });
 
       try {
-        // Download from community prerolls
+        // Download into the category it came from when this server has it;
+        // otherwise the backend finds or creates one.
+        const wanted = [...(preroll.category_names || []), preroll.category].filter(Boolean).map(name => String(name).toLowerCase());
+        const home = availableCategories.find(c => wanted.includes(String(c.name).toLowerCase()));
         const response = await fetch('/community-prerolls/download', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             preroll_id: preroll.community_id,
             title: preroll.name,
-            category_id: null, // Let backend find/create appropriate category
+            category_id: home ? home.id : null,
             add_to_category: true
           })
         });
@@ -1485,7 +1491,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
 
                 <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.8rem', color: '#9ca3af', display: 'flex', alignItems: 'flex-start', gap: '0.35rem' }}>
                   <Lightbulb size={14} style={{ marginTop: '0.1rem', flexShrink: 0 }} />
-                  <span>These items don't have Community IDs. You may need to manually add similar prerolls or create new categories.</span>
+                  <span>The blocks that use these open in the builder after import, where you choose a category or preroll from this server before saving.</span>
                 </p>
               </div>
             )}

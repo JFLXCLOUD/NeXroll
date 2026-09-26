@@ -28,8 +28,8 @@ When exporting a sequence, choose the export format:
 - Good for documentation
 
 ### Full Bundle (ZIP) - 100MB-5GB
-- Pattern + all actual video files
-- Ready to import immediately
+- Pattern + the video files it plays: every category the sequence draws from (random and in-order blocks, and the alternatives of conditional blocks) and every preroll in its fixed blocks
+- Ready to import immediately, even on a server that has none of the prerolls
 - Perfect for archiving or offline sharing
 - Large file size warning
 
@@ -70,17 +70,19 @@ To export your entire sequence library:
    - Block configuration
    - Required prerolls
    - Missing prerolls (highlighted)
-5. Click **Import**
+5. Click **Import Pattern**
+
+Categories and prerolls are matched by name (ignoring case), and prerolls also by Community ID. When everything matches, the sequence is saved to your library. When a category or preroll is not on this server, the sequence opens in the **Sequence Builder** instead, with those blocks empty: choose a category or preroll for each, then save. Importing from the Sequence Builder's own **Import** button always loads the sequence into the builder.
 
 ### Handling Missing Prerolls
 
 If the imported sequence references prerolls you don't have:
 
-**Community Prerolls**: If the export included Community IDs, NeXroll can automatically download missing prerolls from the Community Prerolls service.
+**Community Prerolls**: If the export included Community IDs, NeXroll can download missing prerolls from the Community Prerolls service. They go into the category they came from when you have a category with that name.
 
 **Local Prerolls**: You'll need to:
-- Upload matching prerolls to your library
-- Or edit the sequence after import to use different prerolls
+- Upload matching prerolls to your library, then import again
+- Or choose different prerolls for those blocks in the builder
 
 ### ZIP Bundle Import
 
@@ -89,52 +91,53 @@ When importing a `.zip` bundle:
 1. NeXroll extracts and shows the contents
 2. Map imported folders to categories:
    - Create new categories
-   - Or map to existing categories
+   - Or map to existing categories (a category with the same name is picked for you)
 3. Preview the video files included
-4. Click **Import** to extract videos and create the sequence
+4. Click **Import with Mappings** to copy the videos, then **Import Pattern** to create the sequence
+
+Category and preroll names come back exactly as they were exported. A preroll that is already in the chosen category is skipped, and a preroll that was in several categories is imported once and added to each. A category name this server cannot use as a folder (for example one with a colon, from Linux or macOS) is created with the bundle's folder name instead.
 
 ## File Format
 
 ### .nexseq Format
 
-The `.nexseq` file is JSON with this structure:
+The `.nexseq` file is JSON. Categories and prerolls are named rather than referred to by this server's database ids, so the file means the same thing on any server:
 
 ```json
 {
-  "type": "nexseq",
-  "version": "1.0",
-  "metadata": {
-    "name": "Holiday Mix",
-    "description": "Christmas preroll sequence",
-    "author": "NeXroll",
-    "created": "2024-12-23T10:00:00Z",
-    "exported": "2024-12-23T10:30:00Z",
-    "blockCount": 3
-  },
+  "pattern_name": "Holiday Mix",
+  "pattern_description": "Christmas preroll sequence",
+  "created_by": "NeXroll",
+  "export_mode": "with_community_ids",
+  "nexroll_version": "2.2.1",
+  "exported_at": "2026-12-01T10:30:00Z",
   "blocks": [
     {
       "type": "fixed",
-      "preroll_ids": [12, 45]
+      "preroll_name": "Welcome.mp4",
+      "category_names": ["Christmas"],
+      "prerolls": [
+        { "name": "Welcome.mp4", "category_names": ["Christmas"] },
+        { "name": "Snow Globe.mp4", "community_id": "/Holidays/Christmas/Snow Globe.mp4" }
+      ]
     },
     {
       "type": "random",
-      "category_id": 5,
+      "category_name": "Christmas",
       "count": 2
     }
-  ],
-  "compatibility": {
-    "minVersion": "1.0",
-    "features": []
-  }
+  ]
 }
 ```
+
+A fixed block with several prerolls lists them all under `prerolls` (2.2.1 and later). The first is also written as `preroll_name`, which is what earlier releases read, so they still import the block with its first preroll.
 
 ### What's Included
 
 - **Sequence name and description**
-- **Block configurations** (types, settings)
-- **Category references** (by ID or name)
-- **Preroll references** (IDs, or Community IDs if exported with that mode)
+- **Block configurations** (types, settings, conditions and their alternatives)
+- **Category references** (by name)
+- **Preroll references** (by name, and Community ID when there is one)
 - **Export metadata** (date, version)
 
 ### What's NOT Included (Pattern Only)
@@ -181,8 +184,8 @@ When moving to a new server:
 - Ensure adequate disk space
 - Very large bundles may timeout - try smaller exports
 
-### Imported Sequence Doesn't Work
+### Imported Sequence Opens in the Builder
 
-- Check that all prerolls are properly mapped
-- Verify category references are valid
-- Edit the sequence to fix any broken references
+- Some of its categories or prerolls are not on this server
+- Pick a category or preroll for each empty block, then **Save sequence**
+- Or add the missing category or prerolls first and import again

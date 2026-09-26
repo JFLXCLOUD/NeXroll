@@ -19959,27 +19959,7 @@ const DashboardTiles = {
       <PatternImport
         isOpen={showSequenceImportModal}
         onClose={() => setShowSequenceImportModal(false)}
-        onImport={async (importedBlocks, metadata) => {
-          if (importedBlocks?.bundle_import && importedBlocks?.success) {
-            showAlert(`Successfully imported ${importedBlocks.imported_count} sequences from bundle!`, 'success');
-            loadSavedSequences();
-            setShowSequenceImportModal(false);
-            return;
-          }
-          try {
-            const response = await fetch(apiUrl('sequences'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: metadata?.name || 'Imported Sequence', description: metadata?.description || '', blocks: importedBlocks })
-            });
-            if (!response.ok) throw new Error('The imported sequence could not be saved.');
-            showAlert(`Successfully imported "${metadata?.name || 'Imported Sequence'}"!`, 'success');
-            loadSavedSequences();
-          } catch (error) {
-            showAlert(`Error saving sequence: ${error.message}`, 'error');
-          }
-          setShowSequenceImportModal(false);
-        }}
+        onImport={handleImportedSequence}
         existingFiles={prerolls.map(preroll => preroll.full_path)}
         showCommunityDownload={true}
       />
@@ -34629,6 +34609,69 @@ const DashboardTiles = {
     }
   };
 
+  // PatternImport hands back one object: the matched blocks with the file's
+  // name and description, or the result of a .nexbundle import the server has
+  // already saved. It was read as (blocks, metadata), so the whole object went
+  // out as `blocks` and every Library import was refused.
+  const handleImportedSequence = async (data) => {
+    if (data?.bundle_import && data?.success) {
+      showAlert(`Imported ${data.imported_count} ${data.imported_count === 1 ? 'sequence' : 'sequences'} from the bundle.`, 'success');
+      loadSavedSequences();
+      setShowSequenceImportModal(false);
+      return;
+    }
+    const imported = Array.isArray(data?.blocks) ? data.blocks : [];
+    const blocks = sanitizeSequence(imported);
+    const name = String(data?.name || '').trim() || 'Imported Sequence';
+    const description = data?.description || '';
+    setShowSequenceImportModal(false);
+    if (!blocks.length) {
+      showAlert('This file has no blocks NeXroll can use.', 'error');
+      return;
+    }
+    // A block whose category or preroll is not on this server stays in the
+    // sequence, empty, to be filled in the builder. Saved as it was, it would
+    // quietly play the schedule's own category in its place.
+    const incomplete = imported.filter(block => block?._unmatched).length;
+    if (activeTab === 'schedules/builder' || incomplete > 0) {
+      if (sequenceBuilderIsDirty() && sequenceBlocks.length > 0) {
+        const confirmed = await showConfirm(
+          `Replace the sequence in the builder with "${name}"? Its unsaved changes will be lost.`,
+          { title: 'Replace sequence', type: 'warning', confirmText: 'Replace' }
+        );
+        if (!confirmed) return;
+      }
+      setSequenceBlocks(cloneSequenceWithIds(blocks));
+      setEditingSequenceId(null);
+      setEditingSequenceName(name);
+      setEditingSequenceDescription(description);
+      setScheduleBuilderSelectedIndex(0);
+      setActiveTab('schedules/builder');
+      showAlert(incomplete > 0
+        ? `"${name}" is open in the builder. ${incomplete} ${incomplete === 1 ? 'block needs' : 'blocks need'} a category or preroll from this server. Choose ${incomplete === 1 ? 'it' : 'them'}, then save.`
+        : `"${name}" is open in the builder. Save it to add it to your library.`,
+        incomplete > 0 ? 'warning' : 'success');
+      return;
+    }
+    try {
+      const response = await fetch(apiUrl('sequences'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, blocks })
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(typeof error.detail === 'string'
+          ? error.detail
+          : Array.isArray(error.detail) ? error.detail.map(item => item.msg || String(item)).join('; ') : 'The imported sequence could not be saved.');
+      }
+      showAlert(`Imported "${name}" to your library.`, 'success');
+      loadSavedSequences();
+    } catch (error) {
+      showAlert(`Error saving sequence: ${error.message}`, 'error');
+    }
+  };
+
   const loadSequenceIntoBuilder = (sequence) => {
     setSequenceBlocks(cloneSequenceWithIds(sequence.blocks || []));
     setEditingSequenceId(sequence.id); // Track which sequence we're editing
@@ -35191,49 +35234,7 @@ const DashboardTiles = {
       <PatternImport
         isOpen={showSequenceImportModal}
         onClose={() => setShowSequenceImportModal(false)}
-        onImport={async (importedBlocks, metadata) => {
-          // Check if this was a bundle import (already saved in backend)
-          if (importedBlocks && importedBlocks.bundle_import && importedBlocks.success) {
-            // Bundle sequences already saved by backend - just refresh the list
-            showAlert(`Successfully imported ${importedBlocks.imported_count} sequences from bundle!`, 'success');
-            loadSavedSequences();
-            setShowSequenceImportModal(false);
-            return;
-          }
-          
-          // Save the imported sequence to database
-          try {
-            const response = await fetch(apiUrl('sequences'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: metadata?.name || 'Imported Sequence',
-                description: metadata?.description || '',
-                blocks: importedBlocks
-              })
-            });
-            
-            if (response.ok) {
-              showAlert(`Successfully imported "${metadata?.name || 'Imported Sequence'}"!`, 'success');
-              loadSavedSequences();
-            } else {
-              const error = await response.json();
-              // Handle various error detail formats
-              let errorMsg = 'Unknown error';
-              if (typeof error.detail === 'string') {
-                errorMsg = error.detail;
-              } else if (Array.isArray(error.detail)) {
-                errorMsg = error.detail.map(err => err.msg || String(err)).join('; ');
-              } else if (error.detail) {
-                errorMsg = JSON.stringify(error.detail);
-              }
-              showAlert(`Failed to save sequence: ${errorMsg}`, 'error');
-            }
-          } catch (error) {
-            showAlert(`Error saving sequence: ${error.message}`, 'error');
-          }
-          setShowSequenceImportModal(false);
-        }}
+        onImport={handleImportedSequence}
         existingFiles={prerolls.map(p => p.full_path)}
         showCommunityDownload={true}
       />
