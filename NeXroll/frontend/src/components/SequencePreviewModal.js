@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Film, Inbox, X } from 'lucide-react';
 import { lockBodyScroll } from '../utils/modalBehavior';
-import { blocksHaveConditions, describeCondition, genresInSequence, needsPlaybackInfo } from '../utils/sequenceConditions';
+import { SERVER_CHOICES, blocksHaveConditions, describeCondition, genresInSequence, needsPlaybackInfo, serverLabel } from '../utils/sequenceConditions';
 import { AUDIO_FORMATS } from '../utils/audioFormats';
 // eslint-disable-next-line no-unused-vars
 import SequenceTimeline from './SequenceTimeline';
@@ -57,6 +57,10 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   const [previewGenre, setPreviewGenre] = useState('');
   const [previewAudio, setPreviewAudio] = useState('');
   const hasAudioRules = blocks.some(block => block.condition?.rules?.some(rule => rule.kind === 'audio_format'));
+  // Which server to preview a "Media server" rule as. Only offered when the
+  // sequence has one; Plex is the default, like the rest of the preview.
+  const [previewServer, setPreviewServer] = useState('plex');
+  const hasServerRules = blocks.some(block => block.condition?.rules?.some(rule => rule.kind === 'server'));
   const sequenceGenres = genresInSequence(blocks);
   const videoRef = React.useRef(null);
   const overlayRef = React.useRef(null);
@@ -277,6 +281,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     const params = new URLSearchParams();
     if (previewGenre) params.set('genres', previewGenre);
     if (previewAudio) params.set('audio_format', previewAudio);
+    if (hasServerRules) params.set('server', previewServer);
     const genreQuery = params.size ? `?${params}` : '';
     fetch(`/sequences/evaluate-conditions${genreQuery}`, {
       method: 'POST',
@@ -327,7 +332,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       controller.abort();
       if (innerCleanup) innerCleanup();
     };
-  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre, previewAudio]);
+  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre, previewAudio, previewServer, hasServerRules]);
 
   // Start playback
   const startPlayback = () => {
@@ -613,6 +618,12 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               </select>
             </label>
           )}
+          {hasServerRules && <label style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            Preview for
+            <select aria-label="Preview media server" value={previewServer} onChange={event => setPreviewServer(event.target.value)}>
+              {SERVER_CHOICES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>}
           {hasAudioRules && <label style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             Simulate stored audio
             <select aria-label="Preview audio format" value={previewAudio} onChange={event => setPreviewAudio(event.target.value)}>
@@ -632,7 +643,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               }}
             >
               <strong>
-                Conditions, checked as if {previewGenre ? `a ${previewGenre} movie` : 'a movie'} were starting now
+                Conditions, checked as if {previewGenre ? `a ${previewGenre} movie` : 'a movie'} were starting now{hasServerRules ? ` on ${serverLabel(previewServer)}` : ''}
                 {sequenceGenres.length > 0 && !previewGenre && !previewAudio ? ' with unknown genre, as on Plex' : ''}:
               </strong>
               {conditionNotes.map(note => (

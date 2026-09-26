@@ -65,6 +65,7 @@ If NeXroll can't answer a rule, the rule counts as **not met** and the **Otherwi
 | **Stored audio format** | The default/only track or any stored track has a selected format | Jellyfin, Emby |
 | **Genre** | What is about to play has any of the chosen genres | Jellyfin, Emby |
 | **Movie or episode** | What is about to play is a movie, or a TV episode | Jellyfin, Emby (on Plex it is always a movie) |
+| **Media server** | The prerolls are for one of the chosen servers | Plex, Jellyfin, Emby |
 
 ### Trailers available
 
@@ -119,6 +120,14 @@ The capability boundary follows the [Jellyfin intro interface](https://raw.githu
 
 Plays a block only before movies, or only before TV episodes. Plex only runs prerolls before movies, so on Plex this rule always sees a movie.
 
+### Media server
+
+> **New in 2.2.1.**
+
+Plays a block only on the servers you tick: **Plex**, **Jellyfin**, **Emby**, or any mix. Use it when you run more than one server and want different prerolls on each: put each server's prerolls in their own category, add the category block with **when Media server is Jellyfin**, and set its **Otherwise** to the category for everything else.
+
+NeXroll knows Plex from applying the schedule to it, and the Jellyfin and Emby plugins say which server they are with every request. A plugin too old to say counts as not matching, so it gets the **Otherwise**, even with **unless**.
+
 ---
 
 ## What each server can check
@@ -132,6 +141,7 @@ In Advanced mode, the builder shows a **What each server can check** panel. Here
 - **Trailers available** and **Time of day** work. NeXroll re-checks them every 10 minutes and updates Plex when the answer changes.
 - **Genre** and **Stored audio format** are unknown on Plex, so the block plays its **Otherwise**, even for **unless**.
 - **Movie or episode** always sees a movie.
+- **Media server** always knows it is Plex.
 
 Blocks that use a Jellyfin & Emby rule are labelled **Jellyfin & Emby** in the list, on the block's settings, and on Flow view's IF nodes.
 
@@ -144,6 +154,8 @@ If you share a sequence that uses genre rules, give each genre block an **Otherw
 ### If you run Plex and Jellyfin or Emby together
 
 One sequence serves all of them. Jellyfin and Emby viewers get the genre-matched blocks, and Plex viewers get each block's Otherwise. You don't need a separate sequence for Plex.
+
+To give each server its own prerolls, use the **Media server** rule; see the recipe [Different prerolls on Plex and Jellyfin](#different-prerolls-on-plex-and-jellyfin).
 
 ---
 
@@ -181,6 +193,7 @@ Click **Preview** to play the sequence as a viewer would see it right now.
 - Conditions are checked as if a movie were starting at this moment.
 - A panel lists each conditional block and whether it **plays**, **plays its alternative** or **is skipped**, and why.
 - For a sequence with genre rules, **Preview as** switches between **Plex (genre unknown)** and each genre the sequence uses. For example, **A Horror movie on Jellyfin or Emby**. Use it to check what both kinds of viewer will get.
+- For a sequence with **Media server** rules, **Preview for** picks the server: Plex, Jellyfin or Emby.
 
 ---
 
@@ -215,6 +228,15 @@ The two sections work independently. If the upcoming pool is empty but the libra
 3. Set **Otherwise** to **Play prerolls from a category**: your usual intros
 
 Horror on Jellyfin and Emby opens with a Halloween preroll. Everything else, and every movie on Plex, gets your usual intro.
+
+### Different prerolls on Plex and Jellyfin
+
+1. Put your Jellyfin prerolls in one category (for example **Halloween Jellyfin**) and the rest in another (**Halloween Plex**)
+2. Add a **Category** block for **Halloween Jellyfin**
+3. Add the condition **when Media server is Jellyfin**
+4. Set **Otherwise** to **Play prerolls from a category**: **Halloween Plex**
+
+Jellyfin plays its own Halloween prerolls, and Plex (and Emby, unless you tick it too) plays the other category. Blocks without the condition play on every server, so the rest of the sequence stays shared.
 
 ### Trailers for movies like the one about to play (Jellyfin & Emby)
 

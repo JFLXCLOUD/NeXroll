@@ -48,7 +48,17 @@ import datetime
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
-RULE_KINDS = ("trailers_available", "media_type", "time_window", "genre", "audio_format")
+RULE_KINDS = ("trailers_available", "media_type", "time_window", "genre", "audio_format", "server")
+
+# The media servers a "server" rule can name. Plex is known from its apply
+# paths, Jellyfin and Emby from the X-Plugin-Server-Type header their plugins send.
+SERVER_TYPES = ("plex", "jellyfin", "emby")
+
+
+def normalize_server(value) -> Optional[str]:
+    """"plex", "jellyfin" or "emby", or None when unknown."""
+    name = str(value or "").strip().lower()
+    return name if name in SERVER_TYPES else None
 
 # Rules that need to know what is about to play. Only the Jellyfin/Emby plugin
 # can tell NeXroll that; Plex applies one list to every movie.
@@ -74,6 +84,8 @@ class PlaybackContext:
 
     now: datetime.datetime
     media_type: Optional[str] = None
+    # Which media server is asking: "plex", "jellyfin", "emby", or None.
+    server: Optional[str] = None
     trailer_count: Optional[Callable[[str], int]] = None
     trailer_pool_count: Optional[Callable[[dict], Optional[int]]] = None
     availability_block: Optional[dict] = None
@@ -213,6 +225,11 @@ def evaluate_rule(rule: dict, ctx: PlaybackContext) -> Optional[bool]:
         wanted = {str(v).strip().lower() for v in (rule.get("values") or []) if str(v).strip()}
         have = ctx.genres() if wanted else None
         result = None if have is None else bool(wanted.intersection(have))
+    elif kind == "server":
+        # An unknown server (a plugin too old to say) is not met either way,
+        # so it falls to the Otherwise along with whatever it was not chosen for.
+        wanted = {normalize_server(v) for v in (rule.get("values") or [])} - {None}
+        result = None if not wanted or not ctx.server else ctx.server in wanted
     else:
         result = None
 
@@ -310,6 +327,10 @@ def describe_condition(condition) -> str:
         elif kind == "genre":
             values = [str(v) for v in (rule.get("values") or [])]
             text = ("genre is " + " or ".join(values)) if values else "genre is (none chosen)"
+        elif kind == "server":
+            names = {"plex": "Plex", "jellyfin": "Jellyfin", "emby": "Emby"}
+            values = [names.get(normalize_server(v) or "", str(v)) for v in (rule.get("values") or [])]
+            text = ("playing on " + " or ".join(values)) if values else "playing on (no server chosen)"
         else:
             text = f"unknown rule '{kind}'"
         parts.append(("not " + text) if rule.get("negate") else text)

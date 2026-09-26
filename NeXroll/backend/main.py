@@ -11806,7 +11806,7 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         blocks,
         db,
         ("manual", "sequence", saved_seq.id),
-        context=playback_context(db, media_type="movie"),
+        context=playback_context(db, media_type="movie", server_type="plex"),
         log_prefix="Apply",
     )
 
@@ -14639,7 +14639,7 @@ def _preview_payload_from_intent(setting, db) -> Optional[dict]:
             # hold is replaced by its alternative, or left out.
             if isinstance(block, dict) and isinstance(block.get("condition"), dict):
                 if preview_ctx is None:
-                    preview_ctx = playback_context(db, media_type="movie")
+                    preview_ctx = playback_context(db, media_type="movie", server_type="plex")
                 block = sequence_block_to_play(seq, block_index, preview_ctx)
                 if block is None:
                     continue
@@ -25555,6 +25555,7 @@ def evaluate_sequence_conditions(
     genres: Optional[str] = Query(None, description="Comma-separated genres to evaluate as; omit for unknown, as on Plex"),
     db: Session = Depends(get_db),
     audio_format: Optional[str] = Query(None, description="Simulated stored audio codec for preview only"),
+    server: Optional[str] = Query(None, description="Media server to evaluate as (plex, jellyfin, emby); omit for unknown"),
 ):
     """Say, for each block, what would play in its slot right now.
 
@@ -25566,9 +25567,12 @@ def evaluate_sequence_conditions(
     from backend.media_audio import FORMATS
     if audio_format is not None and audio_format not in FORMATS:
         raise HTTPException(status_code=422, detail="Unknown preview audio format")
+    if server is not None and server.strip().lower() not in ("plex", "jellyfin", "emby"):
+        raise HTTPException(status_code=422, detail="Unknown preview media server")
     ctx = playback_context(
         db,
         media_type=media_type,
+        server_type=server,
         genres=[g.strip() for g in genres.split(",") if g.strip()] if genres else None,
         audio_format=audio_format,
     )

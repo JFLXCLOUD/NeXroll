@@ -10,6 +10,7 @@
 - **Find it for me.** Searches the folders your Plex server can see for every folder NeXroll hands Plex files from (your prerolls, NeX-Up trailers stored outside the preroll folder, and the movie folders Library Trailers read trailer files from), confirms each by finding your files there, and adds the mappings in one click.
 - **Browse Plex.** Pick a mapping's Plex folder from Plex's own view of its disk instead of typing it.
 - **Test Translation checks with Plex** as well as showing the translated path.
+- **Different prerolls on each media server.** A new **Media server** condition (Advanced mode) plays a block only on the servers you choose, with its Otherwise everywhere else, so Plex and Jellyfin or Emby can each have their own category in one sequence. The preview can check the sequence for each server.
 - **The first-run wizard sets up the mapping too.** Its Paths step now appears whenever Plex is connected, not only on Docker (a Plex on another computer needs a mapping just as much), and is skipped when only Jellyfin or Emby is connected. Find it for me works on a brand-new install with no prerolls yet, using a small test file it removes afterwards.
 
 ### Fixed

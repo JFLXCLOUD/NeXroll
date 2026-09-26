@@ -14,6 +14,7 @@ import {
 } from '../utils/sequenceConditions';
 import GenrePicker from './GenrePicker';
 import AudioFormatRule from './AudioFormatRule';
+import ServerRule from './ServerRule';
 
 /**
  * BlockConditionEditor - the IF/THEN section of the block editor.
@@ -225,6 +226,7 @@ const RuleRow = ({ rule, index, onChange, onRemove, canRemove }) => {
       )}
 
       {rule.kind === 'audio_format' && <AudioFormatRule rule={rule} onChange={set} />}
+      {rule.kind === 'server' && <ServerRule rule={rule} onChange={set} />}
       {rule.kind === 'media_type' && (
         <small style={hintStyle}>
           Jellyfin and Emby tell NeXroll what is about to play. Plex only runs prerolls before movies,

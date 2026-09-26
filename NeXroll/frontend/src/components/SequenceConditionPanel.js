@@ -14,6 +14,7 @@ import {
 import GenrePicker from './GenrePicker';
 import TrailerRatingFilter from './TrailerRatingFilter';
 import AudioFormatRule from './AudioFormatRule';
+import ServerRule from './ServerRule';
 
 /**
  * SequenceConditionPanel - IF/THEN settings in the Sequence Builder's
@@ -98,6 +99,7 @@ const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [
             </>}
 
             {rule.kind === 'audio_format' && <AudioFormatRule rule={rule} onChange={patch => updateRule(i, patch)} />}
+            {rule.kind === 'server' && <ServerRule rule={rule} onChange={patch => updateRule(i, patch)} />}
             {rule.kind === 'genre' && <>
               <div className="nx-draft-field"><span>{rule.negate ? 'Not any of these genres' : 'Any of these genres'}</span>
                 <GenrePicker values={rule.values || []} onChange={values => updateRule(i, { values })} />

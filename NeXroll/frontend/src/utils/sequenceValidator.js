@@ -202,6 +202,9 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
       if (!Array.isArray(rule.values) || !rule.values.length || rule.values.some(v => !AUDIO_FORMATS.some(([key]) => key === v))) errors.push('Choose valid audio formats');
       if (rule.track !== undefined && !['default', 'any'].includes(rule.track)) errors.push('Choose a valid audio track scope');
     });
+    block.condition.rules.filter(rule => rule?.kind === 'server').forEach(rule => {
+      if (!Array.isArray(rule.values) || !rule.values.length || rule.values.some(v => !['plex', 'jellyfin', 'emby'].includes(v))) errors.push('Choose at least one media server');
+    });
   }
   return errors;
 };

@@ -20,7 +20,19 @@ export const RULE_KINDS = [
   { value: 'genre', label: 'Genre of what is playing (Jellyfin & Emby)', short: 'Genre (Jellyfin & Emby)', playback: true },
   { value: 'audio_format', label: 'Stored audio format (Jellyfin & Emby)', short: 'Audio format (Jellyfin & Emby)', playback: true },
   { value: 'media_type', label: 'Movie or episode (Jellyfin & Emby)', short: 'Media type (Jellyfin & Emby)', playback: true },
+  { value: 'server', label: 'Media server', short: 'Media server', playback: false },
 ];
+
+// The servers a "Media server" rule can name. Plex is known when NeXroll
+// applies a schedule to it; Jellyfin and Emby say who they are with every
+// request. A plugin too old to say counts as not matching.
+export const SERVER_CHOICES = [
+  { value: 'plex', label: 'Plex' },
+  { value: 'jellyfin', label: 'Jellyfin' },
+  { value: 'emby', label: 'Emby' },
+];
+
+export const serverLabel = value => (SERVER_CHOICES.find(s => s.value === value) || {}).label || value;
 
 export const isPlaybackRule = (kind) => !!(RULE_KINDS.find(k => k.value === kind) || {}).playback;
 
@@ -43,6 +55,7 @@ const SOURCE_WORDS = { both: 'movie or TV', movies: 'movie', tv: 'TV' };
 export const defaultRule = (kind = 'trailers_available') => {
   if (kind === 'media_type') return { kind, value: 'movie' };
   if (kind === 'genre') return { kind, values: [] };
+  if (kind === 'server') return { kind, values: ['jellyfin'] };
   if (kind === 'audio_format') return { kind, track: 'default', values: [] };
   if (kind === 'time_window') return { kind, start: '18:00', end: '23:00', days: [] };
   return { kind: 'trailers_available', source: 'both', min: 1 };
@@ -81,6 +94,11 @@ export const describeRule = (rule) => {
       const values = Array.isArray(rule.values) ? rule.values : [];
       if (!values.length) return 'a genre is chosen';
       return `the genre is ${not ? 'not ' : ''}${values.join(' or ')}`;
+    }
+    case 'server': {
+      const values = Array.isArray(rule.values) ? rule.values : [];
+      if (!values.length) return 'a media server is chosen';
+      return `${not ? 'not ' : ''}playing on ${values.map(serverLabel).join(' or ')}`;
     }
     case 'time_window': {
       const days = Array.isArray(rule.days) && rule.days.length

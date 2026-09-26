@@ -1,4 +1,4 @@
-from backend.sequence_conditions import sequence_block_to_play
+from backend.sequence_conditions import normalize_server, sequence_block_to_play
 import datetime
 import json
 import random
@@ -338,6 +338,7 @@ def playback_context(db, media_type: Optional[str] = None,
     context = PlaybackContext(
         now=now or _localized_now(db),
         media_type=(str(media_type).lower() if media_type else None),
+        server=normalize_server(server_type),
         trailer_count=lambda source: len(eligible_nexup_trailers(db, source)),
         genre_lookup=genre_lookup,
         tmdb_lookup=lambda: (details() or {}).get("tmdb"),
@@ -3147,7 +3148,7 @@ class Scheduler:
             db,
             ("plex", "schedule", schedule.id),
             fallback_category_id=schedule.category_id,
-            context=playback_context(db, media_type="movie"),
+            context=playback_context(db, media_type="movie", server_type="plex"),
         )
 
         if not paths and not has_trailer_policy(seq):
@@ -3298,7 +3299,7 @@ class Scheduler:
                             db,
                             ("plex", "blend", schedule.id),
                             fallback_category_id=schedule.category_id,
-                            context=playback_context(db, media_type="movie"),
+                            context=playback_context(db, media_type="movie", server_type="plex"),
                             log_prefix="BLEND",
                         ))
                 except Exception as e:
@@ -3417,7 +3418,7 @@ class Scheduler:
                 blocks,
                 db,
                 ("plex", "filler-sequence", sequence_id),
-                context=playback_context(db, media_type="movie"),
+                context=playback_context(db, media_type="movie", server_type="plex"),
                 log_prefix="FILLER",
             )
 
