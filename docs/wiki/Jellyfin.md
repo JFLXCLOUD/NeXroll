@@ -94,7 +94,7 @@ The easiest way is to use NeXroll's built-in plugin configuration:
    - Generate and assign an API key for the plugin
    - Configure path mappings if needed
 
-   You can also set the plugin's **Playback options** right here — **Max Intros** (`0` = play the whole active sequence), **Enable for Movies / Episodes**, and the request timeout — then click **Update Plugin Configuration** to push them to Jellyfin.
+   You can also set the plugin's **Playback options** right here (**Enable for Movies / Episodes** and the request timeout), then click **Update Plugin Configuration** to push them to Jellyfin. **Prerolls from a random category** on the same page sets how many prerolls a random category plays (one by default, like Plex); sequences always play in full.
 
 ### Via Jellyfin Dashboard
 
@@ -107,7 +107,7 @@ You can also configure the plugin directly in Jellyfin:
 5. Configure **Path Mapping** if NeXroll and Jellyfin see preroll files at different paths:
    - **NeXroll Path Prefix**: The path as NeXroll sees it (e.g., `/data/prerolls`)
    - **Jellyfin Path Prefix**: The path as Jellyfin sees it (e.g., `/mnt/media/prerolls`)
-6. Set **Max Intros** (default: `0` = unlimited — plays the whole active sequence; set a number only if you want to cap how many play)
+6. Leave **Max Intros** at `0`. From plugin 1.14.1 (Jellyfin 10.11) and 1.15.1 (Jellyfin 12) with NeXroll 2.2.1, NeXroll decides how many prerolls play: one from a random category, or the number set on NeXroll's Connect page, and every block of a sequence. Older plugins cut what NeXroll sends to Max Intros, so a value above 0 cuts sequences short.
 7. Toggle **Enable for Movies** / **Enable for Episodes**
 8. Click **Save**
 
@@ -210,7 +210,8 @@ If NeXroll's event log says it is returning the full sequence, including trailer
 | "Could not reach NeXroll" in logs | Check the NeXroll URL in plugin settings. Verify port 9393 is accessible from Jellyfin |
 | Files not found | Set up path mapping (shared mount) **or** rely on streaming — make sure the plugin's NeXroll URL is reachable and you're on v1.14.0+ |
 | `Access to the path '/NeXroll' is denied` (Docker/Unraid) | Update the plugin to **v1.14.0+** — older versions cached prerolls to an unwritable path |
-| Only the first preroll plays / sequence items skipped | Set **Max Intros** to `0` (unlimited). Compare the Jellyfin log's `Injecting N intro(s)` line to your sequence length |
+| Only the first preroll plays / sequence items skipped | Update the plugin to 1.14.1 (Jellyfin 10.11) or 1.15.1 (Jellyfin 12); a plugin installed from the NeXroll repository updates itself. On an older plugin, set **Max Intros** to `0`. Compare the Jellyfin log's `Injecting N intro(s)` line to your sequence length |
+| Every preroll in a random category plays before each movie | Update NeXroll to 2.2.1, which picks one (or the number set as **Prerolls from a random category** on the Connect page) |
 | Normal prerolls play, but NeX-Up trailers do not | Mount the NeX-Up storage directory into Jellyfin at `/data/nexup_trailers` (read-only is sufficient), or map `/data/nexup_trailers` to Jellyfin's actual trailer path. Restart Jellyfin and check its log for `NeXroll` or `Failed to download intro` |
 | Plugin detected but 0 intros | Make sure you have an active category or filler set in NeXroll |
 | Prerolls play for movies but not episodes | Check that "Enable for Episodes" is turned on in the plugin config |
@@ -226,7 +227,7 @@ If NeXroll's event log says it is returning the full sequence, including trailer
 | Path Prefix To | *(empty)* | Path prefix as Jellyfin sees it |
 | Enable for Movies | `true` | Play intros before movies |
 | Enable for Episodes | `true` | Play intros before TV episodes |
-| Max Intros | `0` | Maximum number of prerolls per playback session (`0` = unlimited — plays the whole active sequence) |
+| Max Intros | `0` | Only used with NeXroll 2.2.0 and older: cuts what NeXroll sends to this many prerolls (`0` = no limit). From plugin 1.14.1 / 1.15.1 with NeXroll 2.2.1, NeXroll decides |
 | Timeout Seconds | `5` | Network timeout when contacting NeXroll server |
 
 ## Stored audio-format intros

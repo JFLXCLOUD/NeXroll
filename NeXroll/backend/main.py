@@ -558,6 +558,10 @@ def ensure_schema() -> None:
             # DB leaves it 0 so the wizard shows.
             if not _sqlite_has_column("settings", "onboarding_restart_requested"):
                 _sqlite_add_column("settings", "onboarding_restart_requested BOOLEAN DEFAULT 0")
+            # 2.2.1: how many prerolls a random category plays on Jellyfin and
+            # Emby. NULL means the default of 1.
+            if not _sqlite_has_column("settings", "plugin_random_count"):
+                _sqlite_add_column("settings", "plugin_random_count INTEGER")
             if not _sqlite_has_column("settings", "onboarding_complete"):
                 _sqlite_add_column("settings", "onboarding_complete BOOLEAN DEFAULT 0")
                 try:
@@ -789,6 +793,8 @@ def ensure_settings_schema_now() -> None:
                 # v2 onboarding wizard completion flag
                 "onboarding_complete": "BOOLEAN",
                 "onboarding_restart_requested": "BOOLEAN",
+                # Jellyfin/Emby: prerolls a random category plays per item
+                "plugin_random_count": "INTEGER",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -29864,6 +29870,30 @@ def get_latest_community_prerolls(
         log_event('ERROR', 'system', f'Latest prerolls fetch failed: {e}', source='latest_community_prerolls')
         raise HTTPException(status_code=500, detail=f"Latest prerolls fetch failed: {str(e)}")
 
+class PluginPlaybackSettings(BaseModel):
+    random_count: int
+
+
+@app.get("/settings/plugin-playback")
+def get_plugin_playback_settings(db: Session = Depends(get_db)):
+    """Jellyfin/Emby playback choices NeXroll makes on the plugin's behalf."""
+    setting = db.query(models.Setting).first()
+    return {"random_count": _plugin_random_count(setting), "max": PLUGIN_RANDOM_COUNT_MAX}
+
+
+@app.put("/settings/plugin-playback")
+def put_plugin_playback_settings(req: PluginPlaybackSettings, db: Session = Depends(get_db)):
+    if not 1 <= int(req.random_count) <= PLUGIN_RANDOM_COUNT_MAX:
+        raise HTTPException(status_code=422, detail=f"Choose between 1 and {PLUGIN_RANDOM_COUNT_MAX}.")
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting()
+        db.add(setting)
+    setting.plugin_random_count = int(req.random_count)
+    db.commit()
+    return {"random_count": setting.plugin_random_count, "max": PLUGIN_RANDOM_COUNT_MAX}
+
+
 # IMPORTANT: Generic /settings/{key} endpoints MUST come after specific /settings/* endpoints
 # to avoid FastAPI route matching the generic pattern first
 @app.get("/settings/{key}")
@@ -29906,6 +29936,32 @@ def update_setting(key: str, value: dict | list | str, db: Session = Depends(get
 PLUGIN_CLIENTS: dict[str, dict] = {}  # keyed by api_key_name
 
 
+PLUGIN_RANDOM_COUNT_MAX = 20
+
+
+def _plugin_random_count(setting) -> int:
+    """Prerolls a random category plays per item on Jellyfin/Emby (default 1)."""
+    try:
+        value = int(getattr(setting, "plugin_random_count", None) or 1)
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, min(value, PLUGIN_RANDOM_COUNT_MAX))
+
+
+def _plugin_play_list(setting, paths: list, mode: str) -> list:
+    """The prerolls a plugin should play, in order.
+
+    A random ("shuffle") list is a pool to pick from: NeXroll picks the
+    configured number with the no-repeat rotation random sequence blocks use,
+    so the whole category is heard before anything repeats. Everything else
+    (sequences, in-order categories, single filler videos) plays in full.
+    """
+    if mode != "shuffle" or not paths:
+        return list(paths)
+    pool = list(dict.fromkeys(paths))
+    return shuffle_bag_sample(("plugin", "random-category"), pool, _plugin_random_count(setting))
+
+
 @app.get("/plugin/intros")
 def plugin_get_intros(
     request: Request,
@@ -29913,10 +29969,16 @@ def plugin_get_intros(
     media_type: Optional[str] = Query(None, description="Media type (Movie, Episode, etc.)"),
     item_id: Optional[str] = Query(None, description="Media item ID, used to look up its genres"),
     genres: Optional[str] = Query(None, description="Comma-separated genres, if the plugin already knows them"),
+    whole: Optional[str] = Query(None, alias="all", description="1 = every preroll that could play (for the plugin's file cache)"),
 ):
     """
     Called by the NeXroll Jellyfin / Emby plugin to get the currently-active
     preroll paths.  Returns a Jellyfin-compatible intro list.
+
+    The Emby plugin also asks, with ``item_id=0``, for everything that could
+    play, so it can cache and register the files with Emby ahead of time (Emby
+    only plays intros that are library items). That request gets the whole
+    pool rather than this playback's pick; newer plugins say so with ``all=1``.
 
     Accepts optional API key authentication via X-Api-Key header.
     If provided and valid, the plugin client is tracked as connected.
@@ -29950,6 +30012,15 @@ def plugin_get_intros(
         )
         paths = result.get("paths", [])
         mode = result.get("mode", "shuffle")
+        # NeXroll decides how many play, as it does for Plex: a random category
+        # plays one preroll (or the configured count), a sequence or an
+        # in-order category plays every item. This used to send the whole
+        # category and leave the count to the plugin's Max Intros, one setting
+        # asked to mean "how many from a random category" and "cap on
+        # everything", so a Max Intros of 1 cut every sequence to its first block.
+        whole_pool = (whole or "").strip().lower() in ("1", "true", "yes") or (item_id or "").strip() == "0"
+        if not whole_pool:
+            paths = _plugin_play_list(db.query(models.Setting).first(), paths, mode)
 
         base_url = str(request.base_url).rstrip("/")
         items = []
@@ -29974,6 +30045,10 @@ def plugin_get_intros(
             "Items": items,
             "TotalRecordCount": len(items),
             "Mode": mode,
+            # Plugins from 1.14.1 / 1.15.1 play exactly these items, in this
+            # order, and no longer apply Max Intros. Older plugins ignore it.
+            # A whole-pool answer is for caching, not a play list.
+            "Exact": not whole_pool,
         }
     except Exception as e:
         log_event("ERROR", "plugin", f"Plugin intros error: {e}", source="plugin_get_intros", db=db)

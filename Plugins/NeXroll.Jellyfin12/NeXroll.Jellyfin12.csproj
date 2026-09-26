@@ -3,9 +3,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>NeXroll.Jellyfin</RootNamespace>
     <AssemblyName>NeXroll.Jellyfin</AssemblyName>
-    <Version>1.15.0.0</Version>
-    <AssemblyVersion>1.15.0.0</AssemblyVersion>
-    <FileVersion>1.15.0.0</FileVersion>
+    <Version>1.15.1.0</Version>
+    <AssemblyVersion>1.15.1.0</AssemblyVersion>
+    <FileVersion>1.15.1.0</FileVersion>
     <Title>NeXroll Intros</Title>
     <Description>NeXroll preroll intros for Jellyfin 12.</Description>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>

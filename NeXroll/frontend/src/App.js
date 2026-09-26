@@ -24,6 +24,7 @@ import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import NexUpApprovedPages from './components/NexUpApprovedPages';
 import { PlexPathCheck, FindPlexFolder, PlexFolderPicker, StatusIcon, statusText } from './components/PlexPathTools';
+import PluginPlayback from './components/PluginPlayback';
 import { captureDynamicPrerollFrame, drawThemeBackdropFrame, fontStackFor, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
 import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount, sequenceHasUnsavedChanges } from './utils/sequenceValidator';
 import {
@@ -33710,6 +33711,9 @@ const DashboardTiles = {
               )}
             </div>
 
+            <PluginPlayback apiUrl={apiUrl} server="jellyfin"
+              pluginVersion={jellyfinPluginInfo.plugin?.version} maxIntros={jellyfinPluginInfo.config?.MaxIntros} />
+
             {/* Configure form */}
             <div style={{ marginBottom: '1rem' }}>
               <div style={{ marginBottom: '0.75rem' }}>
@@ -33765,7 +33769,7 @@ const DashboardTiles = {
                 </summary>
                 <div style={{ padding: '0.75rem 0 0', display: 'grid', gap: '0.6rem' }}>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>Max intros per playback</label>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>Max intros per playback (older plugins only)</label>
                     <input
                       type="number"
                       min="0"
@@ -33774,8 +33778,9 @@ const DashboardTiles = {
                       style={{ width: '120px', padding: '0.5rem' }}
                     />
                     <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
-                      How many prerolls play before each item. <strong>0 = unlimited</strong> — plays the whole active
-                      sequence. Set to 0 (or at least your sequence length) so sequence items aren't skipped.
+                      Only used by plugin versions before 1.14.1 (Jellyfin 10.11) and 1.15.1 (Jellyfin 12), which cut
+                      what NeXroll sends to this many prerolls. Leave at <strong>0</strong>: NeXroll now decides how many
+                      play, with the setting above.
                     </small>
                   </div>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
@@ -34067,6 +34072,9 @@ const DashboardTiles = {
                 </div>
               )}
             </div>
+
+            <PluginPlayback apiUrl={apiUrl} server="emby"
+              pluginVersion={embyPluginInfo.plugin?.version} maxIntros={embyPluginInfo.config?.MaxIntros} />
 
             {/* Configure form */}
             <div style={{ marginBottom: '1rem' }}>

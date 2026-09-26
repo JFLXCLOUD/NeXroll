@@ -162,13 +162,24 @@ public class NexrollIntroProvider : IIntroProvider
             }
 
             var intros = new List<IntroInfo>();
-            var maxCount = config.MaxIntros > 0 ? config.MaxIntros : response.Items.Count;
-
-            // If mode is "shuffle", randomise the order; otherwise keep sequential
             var items = response.Items;
-            if (string.Equals(response.Mode, "shuffle", StringComparison.OrdinalIgnoreCase))
+            int maxCount;
+            if (response.Exact)
             {
-                items = items.OrderBy(_ => Random.Shared.Next()).ToList();
+                // NeXroll 2.2.1 and later has already chosen what plays and in
+                // what order: one preroll from a random category, every block of
+                // a sequence. Max Intros used to be the only way to get one
+                // preroll from a random category, and it cut sequences short.
+                maxCount = items.Count;
+            }
+            else
+            {
+                // Older NeXroll sends a whole category and leaves the count here.
+                maxCount = config.MaxIntros > 0 ? config.MaxIntros : items.Count;
+                if (string.Equals(response.Mode, "shuffle", StringComparison.OrdinalIgnoreCase))
+                {
+                    items = items.OrderBy(_ => Random.Shared.Next()).ToList();
+                }
             }
 
             foreach (var intro in items.Take(maxCount))
@@ -371,6 +382,9 @@ public class NexrollIntroProvider : IIntroProvider
         public List<NexrollIntroItem> Items { get; set; } = new();
         public int TotalRecordCount { get; set; }
         public string Mode { get; set; } = "shuffle";
+
+        /// <summary>True when NeXroll has picked exactly what to play (2.2.1+).</summary>
+        public bool Exact { get; set; }
     }
 
     private sealed class NexrollIntroItem

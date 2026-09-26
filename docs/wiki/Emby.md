@@ -97,7 +97,7 @@ You can also configure the plugin directly in Emby:
 4. Configure **Path Mapping** if NeXroll and Emby see preroll files at different paths:
    - **NeXroll Path Prefix**: The path as NeXroll sees it (e.g., `\\server\prerolls`)
    - **Emby Path Prefix**: The path as Emby sees it (e.g., `/mnt/prerolls`)
-5. Set **Max Intros** (default: `0` = unlimited — plays the whole active sequence; set a number only if you want to cap how many play)
+5. Leave **Max Intros** at `0`. From plugin 1.14.1 with NeXroll 2.2.1, NeXroll decides how many prerolls play: one from a random category, or the number set on NeXroll's Connect page, and every block of a sequence. Older Emby plugins play only the first Max Intros prerolls NeXroll sends, and treat `0` as `1`, so sequences are cut short until you update.
 6. Toggle **Enable for Movies** / **Enable for Episodes**
 7. Click **Save**
 
@@ -140,7 +140,7 @@ The NeXroll Emby plugin uses Emby's `IIntroProvider` interface:
 
 1. **Cache Sync**: The plugin periodically fetches all available prerolls from NeXroll's `/plugin/intros` endpoint and downloads them to a local cache directory
 2. **File Registration**: `GetAllIntroFiles()` returns all cached file paths so Emby can register them as library items during the "Refresh Custom Intros" task
-3. **Playback Selection**: When a user starts a movie/episode, `GetIntros()` is called — the plugin fetches the current active prerolls from NeXroll, selects up to `MaxIntros` from the cache, and returns them for playback
+3. **Playback Selection**: When a user starts a movie/episode, `GetIntros()` is called: the plugin asks NeXroll what to play for this item and plays exactly that list from its cache (one preroll from a random category, every block of a sequence). Plugins older than 1.14.1 apply `MaxIntros` instead
 4. **Cache Location**: Emby's own plugin data folder (under the server config dir), falling back to the system temp directory. Older plugin builds cached to `%LocalAppData%\NeXroll\intro_cache` / `~/.local/share/NeXroll`, which **failed on Docker/Unraid** — the service has no `HOME`, so the path collapsed to `/NeXroll` at the container root and threw `Access to the path '/NeXroll' is denied`. Re-download the latest `NeXroll.Emby.dll` if you hit that error.
 
 The cache syncs every 10 minutes to pick up schedule changes in NeXroll.
@@ -183,7 +183,7 @@ In the plugin config, set up path mapping:
 | Intros not updating | Run "Refresh Custom Intros" from Scheduled Tasks. The cache syncs every 10 minutes |
 | Files not found after schedule change | Wait for the next cache sync (10 min) or restart Emby to force a fresh sync |
 | `Access to the path '/NeXroll' is denied` (Docker/Unraid) | Re-download the latest `NeXroll.Emby.dll` — older builds cached prerolls to an unwritable path |
-| Only the first preroll plays / sequence items skipped | Set **Max Intros** to `0` (unlimited). Compare the Emby log's `Injecting N intro(s)` line to your sequence length |
+| Only the first preroll plays / sequence items skipped | Update the plugin to 1.14.1: download it from NeXroll's Connect page, replace it in Emby's plugins folder and restart Emby. Older Emby plugins play only the first Max Intros prerolls, and treat `0` as `1`. Compare the Emby log's `Injecting N intro(s)` line to your sequence length |
 | Plugin detected but 0 intros returned | Make sure you have an active category or filler set in NeXroll |
 | Prerolls play for movies but not episodes | Check that "Enable for Episodes" is turned on in both Cinema Mode and the plugin config |
 
@@ -197,7 +197,7 @@ In the plugin config, set up path mapping:
 | Path Prefix To | *(empty)* | Path prefix as Emby sees it |
 | Enable for Movies | `true` | Play intros before movies |
 | Enable for Episodes | `true` | Play intros before TV episodes |
-| Max Intros | `0` | Maximum number of prerolls per playback session (`0` = unlimited — plays the whole active sequence) |
+| Max Intros | `0` | Only used with NeXroll 2.2.0 and older, where the plugin plays this many prerolls (`0` means `1`). From plugin 1.14.1 with NeXroll 2.2.1, NeXroll decides |
 | Timeout Seconds | `5` | Network timeout when contacting NeXroll server |
 
 ## Stored audio-format intros

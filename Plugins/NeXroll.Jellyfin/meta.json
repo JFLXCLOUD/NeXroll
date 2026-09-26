@@ -5,7 +5,7 @@
     "overview": "Preroll intros from NeXroll for Jellyfin Cinema Mode.",
     "owner": "JFLXCLOUD",
     "category": "General",
-    "version": "1.14.0.0",
+    "version": "1.14.1.0",
     "targetAbi": "10.11.0.0",
     "framework": "net9.0",
     "imagePath": "thumb.png",

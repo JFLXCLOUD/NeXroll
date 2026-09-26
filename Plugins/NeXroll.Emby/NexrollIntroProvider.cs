@@ -144,13 +144,25 @@ public class NexrollIntroProvider : IIntroProvider
                 return Enumerable.Empty<IntroInfo>();
             }
 
-            // Default to 1 intro when MaxIntros is 0 (unset)
-            var maxCount = config.MaxIntros > 0 ? config.MaxIntros : 1;
-
             var items = response.Items;
-            if (string.Equals(response.Mode, "shuffle", StringComparison.OrdinalIgnoreCase))
+            int maxCount;
+            if (response.Exact)
             {
-                items = items.OrderBy(_ => Random.Shared.Next()).ToList();
+                // NeXroll 2.2.1 and later has already chosen what plays and in
+                // what order: one preroll from a random category, every block of
+                // a sequence. Max Intros (and its old default of 1) used to cut
+                // sequences to their first block.
+                maxCount = items.Count;
+            }
+            else
+            {
+                // Older NeXroll sends a whole category and leaves the count here.
+                // Default to 1 intro when MaxIntros is 0 (unset).
+                maxCount = config.MaxIntros > 0 ? config.MaxIntros : 1;
+                if (string.Equals(response.Mode, "shuffle", StringComparison.OrdinalIgnoreCase))
+                {
+                    items = items.OrderBy(_ => Random.Shared.Next()).ToList();
+                }
             }
 
             var intros = new List<IntroInfo>();
@@ -236,7 +248,9 @@ public class NexrollIntroProvider : IIntroProvider
                 return;
 
             var baseUrl = config.NexrollUrl.TrimEnd('/');
-            var url = $"{baseUrl}/plugin/intros?media_type=Movie&item_id=0";
+            // all=1: every preroll that could play, not this playback's pick,
+            // so any later pick is already cached (item_id=0 for older NeXroll).
+            var url = $"{baseUrl}/plugin/intros?media_type=Movie&item_id=0&all=1";
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             using var request = BuildRequest(HttpMethod.Get, url, config);
@@ -348,6 +362,9 @@ public class NexrollIntroProvider : IIntroProvider
         public List<NexrollIntroItem> Items { get; set; } = new();
         public int TotalRecordCount { get; set; }
         public string Mode { get; set; } = "shuffle";
+
+        /// <summary>True when NeXroll has picked exactly what to play (2.2.1+).</summary>
+        public bool Exact { get; set; }
     }
 
     private sealed class NexrollIntroItem

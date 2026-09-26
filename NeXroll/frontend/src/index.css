@@ -11400,3 +11400,16 @@ body.light .nx-draft-cal-event { color: #157a55; }
 .nx-plexpath-folder-result > code { display: block; margin-bottom: 0.3rem; font-size: 0.8rem; }
 .nx-plexpath-folder-result p { margin: 0.2rem 0 0; }
 .nx-plexpath-find .nx-plexpath-result:not(.nx-plexpath-tone-ok):not(.nx-plexpath-tone-bad) { padding: 0; }
+/* Connect page: NeXroll-side playback count for the Jellyfin/Emby plugin. */
+.nx-plugin-playback { display: grid; gap: 0.35rem; margin: 0 0 1rem; padding: 0.8rem 0.9rem; border-radius: 8px;
+  border: 1px solid var(--border-color); background: var(--card-bg); }
+.nx-plugin-playback > label { font-weight: 600; }
+.nx-plugin-playback-row { display: flex; gap: 0.5rem; align-items: center; }
+.nx-plugin-playback-row input[type="number"] { flex: 0 0 96px; width: 96px; max-width: 96px; padding: 0.45rem 0.5rem; }
+.nx-plugin-playback-row .button { display: inline-flex; align-items: center; gap: 0.3rem; min-height: 36px; }
+.nx-plugin-playback small { color: var(--text-secondary); line-height: 1.5; }
+.nx-plugin-playback small.nx-plugin-playback-ok { color: var(--success-color); }
+.nx-plugin-playback small.nx-plugin-playback-bad { color: var(--error-color); }
+.nx-plugin-playback-warning { display: flex; gap: 0.5rem; align-items: flex-start; margin-top: 0.35rem; padding: 0.6rem 0.7rem;
+  border-radius: 6px; background: var(--warning-soft); border: 1px solid var(--warning-color); font-size: 0.85rem; line-height: 1.5; }
+.nx-plugin-playback-warning svg { color: var(--warning-color); flex-shrink: 0; margin-top: 0.15rem; }

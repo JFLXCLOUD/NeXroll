@@ -341,6 +341,10 @@ class Setting(Base):
     nexup_radarr_url = Column(String, nullable=True)  # Radarr server URL
     nexup_radarr_api_key = Column(String, nullable=True)  # Radarr API key
     nexup_storage_path = Column(String, nullable=True)  # Path for temporary trailer storage
+    # How many prerolls a random category plays before each item on Jellyfin
+    # and Emby (NeXroll picks them; the plugin plays exactly what it is sent).
+    # NULL means the default of 1, matching Plex's random mode.
+    plugin_random_count = Column(Integer, nullable=True)
     nexup_quality = Column(String, default='1080')  # Trailer quality: '720', '1080', '4k', 'best'
     nexup_days_ahead = Column(Integer, default=90)  # How many days ahead to look for upcoming movies
     nexup_max_trailers = Column(Integer, default=10)  # Maximum number of trailers to keep
