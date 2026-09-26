@@ -38,8 +38,9 @@ yt-dlp>=2026.8.19
 psutil>=7.0.0
 # YouTube PO-token provider plugin (defeats "Sign in to confirm you're not a bot").
 # This is the yt-dlp side; the token-generating server (Node) is provided
-# separately (baked into Docker, one-click install on Windows).
-bgutil-ytdlp-pot-provider>=1.3.0
+# separately (baked into Docker, one-click install on Windows). 2.0.0 matches the
+# server's security release; keep in step with BGUTIL_VERSION in the Dockerfile.
+bgutil-ytdlp-pot-provider>=2.0.0
 
 # QR code generation for the NeX-Up "QR share" preroll template.
 # Pure Python with no dependencies of its own; the matrix it renders is

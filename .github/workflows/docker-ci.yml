@@ -65,6 +65,31 @@ jobs:
           docker rm -f nexroll-ci
           exit 1
 
+      # The provider's dev dependencies are pruned after it is compiled; this
+      # catches a prune that took something the server needs at runtime (the
+      # native canvas module included). 2.0.0 must answer on loopback only.
+      - name: PO-token provider starts
+        run: |
+          docker run --rm nexroll:ci sh -c '
+            node /opt/bgutil-provider/server/build/main.js --port 4416 > /tmp/pot.log 2>&1 &
+            for i in $(seq 1 60); do
+              if curl -fsS http://127.0.0.1:4416/ping; then echo; exit 0; fi
+              sleep 1
+            done
+            cat /tmp/pot.log; exit 1'
+
+      # These carried every "fixable" finding on the 2.2.0 image: pip's vendored
+      # setuptools/msgpack, and the provider's build tools (eslint, typescript
+      # and their dependencies). Keep them out.
+      - name: No pip or provider build tools in the image
+        run: |
+          docker run --rm nexroll:ci sh -c '
+            if python -c "import pip" 2>/dev/null; then echo "::error::pip is installed"; exit 1; fi
+            for pkg in typescript eslint prettier; do
+              if [ -d /opt/bgutil-provider/server/node_modules/$pkg ]; then echo "::error::$pkg shipped"; exit 1; fi
+            done
+            echo "pip and provider build tools absent"'
+
       # A COPY of the build-only wheel directory cannot be undone by a later
       # `rm -rf`: the layer is already committed, so the bytes ship in every
       # pull. Bind-mount them into the RUN instead.

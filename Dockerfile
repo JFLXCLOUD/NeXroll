@@ -23,9 +23,11 @@ RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 # because the provider's jsdom stack pulls an ESM-only @exodus/bytes that is
 # loaded via require(); on Node <22.12 that crashes the server at startup with
 # ERR_REQUIRE_ESM. Keep BGUTIL_VERSION in sync with the bgutil-ytdlp-pot-provider
-# pin in requirements.txt.
+# pin in requirements.txt and PROVIDER_VERSION in backend/nexup_potoken.py.
+# 2.0.0 fixes a remote code execution hole (GHSA-qpv9-8xfj-xx9m) in servers
+# listening on every interface, which 1.x did by default.
 FROM node:22-bookworm-slim AS potoken
-ARG BGUTIL_VERSION=1.3.1
+ARG BGUTIL_VERSION=2.0.0
 # ca-certificates is required for the HTTPS git clone below (the slim node image
 # ships without it, so the clone fails with "server certificate verification
 # failed"). git pulls the provider; the rest are a fallback toolchain in case
@@ -34,11 +36,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git python3 build-essential pkg-config \
         libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev && \
     rm -rf /var/lib/apt/lists/*
+# Install from the provider's lockfile, build, then keep only what runs: the
+# compiler, linters and their dependencies are build tools, and shipping them
+# put packages such as js-yaml, brace-expansion and flatted in the image's
+# vulnerability report. `npm audit fix` applies patched releases of runtime
+# dependencies that fit the provider's version ranges; it never changes a
+# major version, and a registry outage does not fail the build.
 RUN git clone --depth 1 --branch ${BGUTIL_VERSION} \
         https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil-provider && \
     cd /opt/bgutil-provider/server && \
-    npm install --no-audit --no-fund && \
-    npx tsc
+    npm ci --no-audit --no-fund && \
+    npx tsc && \
+    (npm audit fix --omit=dev --no-fund || true) && \
+    npm prune --omit=dev --no-audit --no-fund && \
+    test -f build/main.js
 
 # --- Jellyfin plugin build stage ---
 # Builds the NeXroll Intros (Jellyfin) plugin zip so the running container can
@@ -102,7 +113,7 @@ RUN curl -fsSL https://deno.land/install.sh | sh && \
 # dependency links against. The backend (backend/nexup_potoken.py) launches
 # `node build/main.js` from NEXROLL_BGUTIL_DIR so yt-dlp can mint PO tokens.
 COPY --from=potoken /usr/local/bin/node /usr/local/bin/node
-COPY --from=potoken /opt/bgutil-provider /opt/bgutil-provider
+COPY --from=potoken /opt/bgutil-provider/server /opt/bgutil-provider/server
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo \
         libgif7 librsvg2-2 libpixman-1-0 libfontconfig1 && \
@@ -118,9 +129,17 @@ WORKDIR /app/NeXroll
 # cannot be removed by a later one, so the wheels shipped in every pull. A bind
 # mount is never committed to a layer, so there is nothing left to remove.
 COPY requirements.txt /app/NeXroll/requirements.txt
+#
+# pip is removed afterwards. It is only needed to install, and it carries its
+# own copies of setuptools and msgpack (listed in pip/_vendor/vendor.txt), which
+# image scanners report as installed packages; even the newest pip vendors a
+# setuptools with open advisories. Nothing at runtime uses it: the in-app
+# yt-dlp upgrade refuses to run in Docker. ensurepip's bundled pip wheel goes
+# with it for the same reason.
 RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
-    pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt
+    pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt && \
+    python -m pip uninstall -y pip && \
+    rm -rf /usr/local/lib/python3.12/ensurepip/_bundled /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12
 
 # Fail the build if a broken/partial yt-dlp wheel is ever resolved — this is
 # the exact failure shape that caused a day-long outage in the field

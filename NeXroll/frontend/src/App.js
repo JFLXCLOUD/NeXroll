@@ -27645,10 +27645,12 @@ const DashboardTiles = {
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
-                  {potoken.loading ? 'Checking…' : potoken.status?.usable ? 'YouTube downloads active' : 'Setup needed'}
+                  {potoken.loading ? 'Checking…' : potoken.status?.outdated ? 'Update needed' : potoken.status?.usable ? 'YouTube downloads active' : 'Setup needed'}
                 </div>
                 <div style={{ fontSize: '0.85rem', color: '#888' }}>
-                  {potoken.status?.usable
+                  {potoken.status?.outdated
+                    ? `The installed token provider (${potoken.status.installed_version}) has a security flaw fixed in ${potoken.status.required_version}, so NeXroll no longer starts it. Update it to keep YouTube downloads working.`
+                    : potoken.status?.usable
                     ? `Cookieless downloads enabled${potoken.status?.version ? ' · bgutil ' + potoken.status.version : ''}.`
                     : (potoken.status?.provider_present
                         ? 'The token provider is installed but not running — Start it below.'
@@ -27681,13 +27683,15 @@ const DashboardTiles = {
                 )}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'stretch' }}>
-                {!potoken.status?.provider_present && (
+                {(!potoken.status?.provider_present || potoken.status?.outdated) && (
                   <button onClick={handleInstallPotokenFromNexup} className="button" disabled={installingDep === 'potoken'}
                     style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center' }}>
-                    {installingDep === 'potoken' ? <><Loader2 size={16} className="spin" /> Installing…</> : <><Download size={16} /> Install</>}
+                    {installingDep === 'potoken'
+                      ? <><Loader2 size={16} className="spin" /> {potoken.status?.outdated ? 'Updating…' : 'Installing…'}</>
+                      : <><Download size={16} /> {potoken.status?.outdated ? 'Update' : 'Install'}</>}
                   </button>
                 )}
-                {potoken.status?.provider_present && !potoken.status?.healthy && (
+                {potoken.status?.provider_present && !potoken.status?.outdated && !potoken.status?.healthy && (
                   <button onClick={handleStartPotoken} className="button" disabled={potoken.loading}
                     style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center' }}>
                     <Rocket size={16} /> Start
@@ -32753,7 +32757,9 @@ const DashboardTiles = {
                   {systemDependencies?.dependencies?.potoken?.available
                     ? `Active${systemDependencies.dependencies.potoken.version ? ' (bgutil ' + systemDependencies.dependencies.potoken.version + ')' : ''} — cookieless YouTube downloads enabled`
                     : (systemDependencies
-                        ? (systemDependencies.dependencies?.potoken?.detail?.provider_present
+                        ? (systemDependencies.dependencies?.potoken?.detail?.outdated
+                            ? `Version ${systemDependencies.dependencies.potoken.detail.installed_version} has a security flaw fixed in ${systemDependencies.dependencies.potoken.detail.required_version}; update it to use it again`
+                            : systemDependencies.dependencies?.potoken?.detail?.provider_present
                             ? 'Installed but not running — restart NeXroll or re-install'
                             : 'Not installed (defeats YouTube’s bot wall on trailer downloads)')
                         : 'Detecting...')}
@@ -32778,8 +32784,8 @@ const DashboardTiles = {
                   style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
                 >
                   {installingDep === 'potoken'
-                    ? <><Loader2 size={14} className="spin" /> Installing…</>
-                    : <><Download size={14} /> Install Provider</>}
+                    ? <><Loader2 size={14} className="spin" /> {systemDependencies?.dependencies?.potoken?.detail?.outdated ? 'Updating…' : 'Installing…'}</>
+                    : <><Download size={14} /> {systemDependencies?.dependencies?.potoken?.detail?.outdated ? 'Update Provider' : 'Install Provider'}</>}
                 </button>
               )}
             </div>

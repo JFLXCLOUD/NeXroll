@@ -3419,8 +3419,9 @@ def install_ytdlp():
 # an older Node are handled at launch via --experimental-require-module
 # (see nexup_potoken._needs_require_module_flag).
 _NODE_VERSION = "22.12.0"
-# Keep in sync with the bgutil-ytdlp-pot-provider pin in requirements.txt.
-_BGUTIL_VERSION = "1.3.1"
+# The provider release is set in nexup_potoken.PROVIDER_VERSION (2.0.0 fixed a
+# remote code execution hole), which also keeps an older install from starting.
+from backend.nexup_potoken import PROVIDER_VERSION as _BGUTIL_VERSION
 
 
 def _nexroll_node_dir() -> str:
@@ -3520,9 +3521,13 @@ def install_potoken():
             shutil.rmtree(server_dir, ignore_errors=True)
             os.replace(staging, server_dir)
 
-        if os.path.isfile(os.path.join(server_dir, "build", "main.js")):
+        if (os.path.isfile(os.path.join(server_dir, "build", "main.js"))
+                and not nexup_potoken.provider_is_outdated(server_dir)):
             steps.append("Provider already built.")
         else:
+            if os.path.isfile(os.path.join(server_dir, "build", "main.js")):
+                steps.append(f"Updating provider {nexup_potoken.installed_provider_version(server_dir)} "
+                             f"to {_BGUTIL_VERSION} (security fix)...")
             steps.append("Downloading PO-token provider...")
             url = f"https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{_BGUTIL_VERSION}.zip"
             tmpzip = os.path.join(tempfile.gettempdir(), f"bgutil-{_BGUTIL_VERSION}.zip")
@@ -3596,6 +3601,13 @@ def install_potoken():
                 _file_log(f"PO-token tsc build failed: {(r2.stderr or '')[-800:]}")
                 return {"success": False, "steps": steps,
                         "message": f"Build failed: {(r2.stderr or r2.stdout or '')[-300:]}"}
+            # The compiler, linters and their dependencies are only needed to
+            # build; leaving them installed only adds packages with advisories.
+            try:
+                _run_subprocess([npm, "prune", "--omit=dev", "--no-audit", "--no-fund"],
+                                cwd=server_dir, env=env, capture_output=True, text=True, timeout=300)
+            except Exception as prune_err:
+                _file_log(f"PO-token: npm prune skipped: {prune_err}")
             steps.append("Provider built.")
 
         # --- 3. Start ---
