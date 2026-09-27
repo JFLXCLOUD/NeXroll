@@ -81,6 +81,9 @@
             the configured prefix replacement.
             </summary>
         </member>
+        <member name="P:NeXroll.Jellyfin.NexrollIntroProvider.NexrollIntroResponse.Exact">
+            <summary>True when NeXroll has picked exactly what to play (2.2.1+).</summary>
+        </member>
         <member name="T:NeXroll.Jellyfin.Plugin">
             <summary>
             Main plugin class for NeXroll Intros.
