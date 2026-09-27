@@ -1,8 +1,18 @@
 ﻿# Changelog
 
-## [2.2.1] - unreleased
+## [2.2.1] - 09-27-2026
 
-> Path mappings, the setting new Plex users most often get stuck on, now check themselves with Plex and can set themselves up.
+> A security update for the YouTube PO-token provider, Plex path mappings that check and set themselves up, per-server prerolls, and fixes for Jellyfin and Emby sequences, sequence sharing and backups.
+
+### Upgrading
+
+- **Windows:** after updating, open NeX-Up and click **Update** on the YouTube downloads card. The old PO-token provider is no longer started (see Security). Docker images already include the fixed one.
+- **Jellyfin and Emby:** update the NeXroll Intros plugin (Jellyfin 10.11 1.14.1.0, Jellyfin 12 1.15.1.0, Emby 1.14.1.0). A plugin installed from the NeXroll repository updates itself; the Emby DLL is replaced by hand from the Connect page. Until then, set Max Intros to 0 on Jellyfin so sequences play in full.
+
+### Security
+
+- **The YouTube PO-token provider could be reached from the whole network.** NeXroll ran bgutil 1.3.1, which listened on every network interface and had a remote code execution flaw reachable that way (GHSA-qpv9-8xfj-xx9m). It now runs 2.0.0, which answers only this machine.
+- **The Docker image reported fixable vulnerabilities.** They came from the PO-token provider's build tools and outdated dependencies, and from the copies of setuptools and msgpack bundled inside pip. The image now ships only what the provider runs, on patched versions, and no pip.
 
 ### Added
 
@@ -10,28 +20,26 @@
 - **Find it for me.** Searches the folders your Plex server can see for every folder NeXroll hands Plex files from (your prerolls, NeX-Up trailers stored outside the preroll folder, and the movie folders Library Trailers read trailer files from), confirms each by finding your files there, and adds the mappings in one click.
 - **Browse Plex.** Pick a mapping's Plex folder from Plex's own view of its disk instead of typing it.
 - **Test Translation checks with Plex** as well as showing the translated path.
-- **Different prerolls on each media server.** A new **Media server** condition (Advanced mode) plays a block only on the servers you choose, with its Otherwise everywhere else, so Plex and Jellyfin or Emby can each have their own category in one sequence. The preview can check the sequence for each server.
-- **The first-run wizard sets up the mapping too.** Its Paths step now appears whenever Plex is connected, not only on Docker (a Plex on another computer needs a mapping just as much), and is skipped when only Jellyfin or Emby is connected. Find it for me works on a brand-new install with no prerolls yet, using a small test file it removes afterwards.
+- **The first-run wizard sets up the mapping too.** Its Paths step now appears whenever Plex is connected, not only on Docker, and is skipped when only Jellyfin or Emby is connected.
+- **Different prerolls on each media server.** A new **Media server** condition (Advanced mode) plays a block only on the servers you choose, with its Otherwise everywhere else, so Plex and Jellyfin or Emby can each have their own category in one sequence.
 
 ### Fixed
 
-- **On Jellyfin and Emby, Max Intros cut sequences short.** NeXroll sent the whole category and left the plugin's Max Intros to decide how many played, so the setting that made a random category play one preroll also stopped every sequence after its first block, and on Emby, where the plugin treats 0 as 1, sequences were cut short out of the box. NeXroll now decides, as it does for Plex: a random category plays one preroll (or the number set as **Prerolls from a random category** on the Connect page), working through the whole category before repeating, and sequences and in-order categories play in full. The updated plugins (Jellyfin 10.11 1.14.1.0, Jellyfin 12 1.15.1.0, Emby 1.14.1.0) play exactly what NeXroll sends; the Connect page says when an older plugin would still cut a sequence. With an older Jellyfin plugin, set Max Intros to 0. Anyone who left Max Intros at 0 on Jellyfin, and so heard every preroll in a random category before each movie, now hears one.
-- **Importing a sequence into Saved Sequences never saved it.** Since 1.12.0 every import ended with "The imported sequence could not be saved." It now saves; a sequence whose categories or prerolls aren't on this server opens in the builder to finish instead, and the builder's own Import loads into the builder.
-- **Exports left part of the sequence behind.** A fixed block with several prerolls exported only the first, and a full bundle left out the videos of in-order categories and of conditional blocks' alternatives.
-- **Full bundles came back under different names.** Apostrophes and other marks were stripped from bundled folder and file names, so the imported sequence pointed at categories and prerolls that didn't exist. .m4v and .webm videos were bundled but never imported, and a sequence named with a character such as an em dash couldn't be bundled at all.
-- **Prerolls Plex could not open were applied anyway.** A path that matched no mapping went to Plex unchanged, so a Docker-only path such as `/data/prerolls/...` reached Plex and nothing played, with no warning anywhere. NeXroll now checks each file with Plex before applying: files Plex can't see are left out, and if it can see none of them Plex keeps its current prerolls. System health shows the result. When the check can't run, prerolls are applied exactly as before, and `NEXROLL_PLEX_PATH_CHECK=0` turns it off.
-- **Applying a saved sequence skipped Plex on most installs while reporting success.** It required the Plex token in a settings column that connecting has cleared since beta.10.
+- **On Jellyfin and Emby, Max Intros cut sequences short.** The setting that made a random category play one preroll also stopped every sequence after its first block, and on Emby it did so out of the box. NeXroll now decides how many play, as it does for Plex: one preroll from a random category (or the number set on the Connect page), working through the whole category before repeating, while sequences and in-order categories play in full. If you left Max Intros at 0 on Jellyfin and heard a whole random category before each movie, you now hear one.
+- **Prerolls Plex could not open were applied anyway.** A path that matched no mapping went to Plex unchanged and nothing played, with no warning. NeXroll now checks each file with Plex before applying and leaves out what Plex can't see; if it can see none of them, Plex keeps its current prerolls. `NEXROLL_PLEX_PATH_CHECK=0` turns the check off.
+- **Applying a saved sequence skipped Plex on most installs while reporting success.**
 - **The External API's category apply reported success even when Plex refused the change.**
-- **A mapping for `/data/pre` also caught `/data/prerolls2`.** Mappings now match whole folder names, in one shared implementation instead of ten copies.
-- **The Path Mappings header showed invented numbers.** "Verified" was always 0 and "Last tested" said "Today" whenever a mapping existed. It now shows how many prerolls Plex can open and what Plex runs on.
-- **Security: the YouTube PO-token provider could be reached from the whole network.** NeXroll ran bgutil 1.3.1, which listened on every network interface and had a remote code execution flaw reachable that way (GHSA-qpv9-8xfj-xx9m). It now runs 2.0.0, which answers only this machine. On Windows the NeX-Up page shows **Update needed** until you update it, and the old version is no longer started.
-- **The Docker image reported fixable vulnerabilities.** They came from the PO-token provider's build tools and outdated dependencies, and from the copies of setuptools and msgpack bundled inside pip. The image now ships only what the provider runs, on patched versions, and no pip.
-- **Backups left out your media server logins.** The Plex token and Jellyfin and Emby API keys were in neither backup, so restoring on another machine meant reconnecting by hand. Both backups now carry them, and a restore puts them back.
-- **A System Backup could miss your latest changes.** Its database copy left out anything SQLite had not yet moved from its write-ahead log, often the last few minutes of edits. It now takes a consistent copy.
-- **Restoring a Database Backup could hide a schedule conflict.** Ignored conflicts kept the old schedule ids and pointed at different schedules after the restore. They now follow their schedules, and sidebar favorites are backed up too.
-- **A System Restore on another machine kept the old machine's folders.** New NeX-Up downloads went to a folder that only existed there, and uploaded Generator logos, soundtracks and backdrops were not found. The restore now uses this install's folders and relinks those files, no longer needs the whole backup to fit in memory, and says to restart when it's done.
-- **Choosing a theme in Settings pushed its name to the edge of the button.** The check mark took the name's place; it now sits at the right without moving anything.
-- **Path Mappings was cramped on phones.** The page is one column, each mapping stacks, and long paths wrap.
+- **A mapping for `/data/pre` also caught `/data/prerolls2`.** Mappings now match whole folder names.
+- **Importing a sequence into Saved Sequences never saved it.** It now saves; a sequence whose categories or prerolls aren't on this server opens in the builder to finish instead.
+- **Exports left part of the sequence behind.** A fixed block with several prerolls exported only the first, and a full bundle left out the videos of in-order categories and of conditional blocks' alternatives.
+- **Full bundles came back under different names.** Apostrophes and other marks were stripped from bundled names, so the imported sequence pointed at categories and prerolls that didn't exist. .m4v and .webm videos were never imported, and a sequence named with a character such as an em dash couldn't be bundled at all.
+- **Backups left out your media server logins.** The Plex token and Jellyfin and Emby API keys were in neither backup. Both backups now carry them, and a restore puts them back.
+- **A System Backup could miss your latest changes.** Its database copy left out the last few minutes of edits. It now takes a consistent copy.
+- **Restoring a Database Backup could hide a schedule conflict.** Ignored conflicts pointed at different schedules after the restore. They now follow their schedules, and sidebar favorites are backed up too.
+- **A System Restore on another machine kept the old machine's folders.** New NeX-Up downloads went to a folder that only existed there, and uploaded Generator logos, soundtracks and backdrops were not found. The restore now uses this install's folders and relinks those files, and no longer needs the whole backup to fit in memory.
+- **The Path Mappings header showed invented numbers.** It now shows how many prerolls Plex can open and what Plex runs on.
+- **Choosing a theme in Settings pushed its name to the edge of the button.**
+- **Path Mappings was cramped on phones.**
 
 ## [2.2.0] - 09-25-2026
 
