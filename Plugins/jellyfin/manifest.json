@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.15.1.0",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/JFLXCLOUD/NeXroll/releases/download/v2.2.1/NeXroll.Jellyfin12-1.15.1.0-repository.zip",
+        "checksum": "304da85d6b240c5faa50f2154c67620d",
+        "timestamp": "2026-09-27T05:46:19Z",
+        "changelog": "NeXroll Intros 1.15.1.0. Repository package enables automatic plugin updates."
+      },
+      {
         "version": "1.15.0.0",
         "targetAbi": "12.0.0.0",
         "sourceUrl": "https://github.com/JFLXCLOUD/NeXroll/releases/download/v2.0.5/NeXroll.Jellyfin12-1.15.0.0-repository.zip",
