@@ -1,5 +1,38 @@
 ﻿# Changelog
 
+## [2.2.2] - 10-02-2026
+
+> Else if chains so only the first matching block plays, NeX-Up trailers that match the film's genre, a prerolls-only setup for Plex's new Apple TV and iOS app, categories you can create where you need them, and fixes for deleted prerolls, category counts and the Upcoming list.
+
+### Upgrading
+
+- **NeX-Up trailers learn their genres on the next sync.** Trailers downloaded before 2.2.2 have none until then, so they don't match a genre yet. No plugin update is needed.
+
+### Added
+
+- **Else if: first match wins.** In Advanced mode, tick **Else if** on a block to check it only when the block above it didn't play. Chain several, for example one genre preroll per movie in your order of priority, and end with a block that has no condition to play when none match.
+- **NeX-Up trailers can match the genre of the film starting** on Jellyfin and Emby, like Library trailers. **When no trailer shares its genre** chooses between trailers of any genre and none.
+- **Turn off Plex trailers.** The Cinema Trailers card on the Connect page turns off Plex's own trailer sources in one click, so "Play 1 before movie" in Plex's new Apple TV and iOS app plays only your prerolls. That app's "Play Pre-roll Only" option is broken on Plex's side.
+- **Create a category on the spot.** Wherever you put prerolls into a category (uploading, editing, Import Folder, the Library's bulk bar, Community downloads), you can create a new one without leaving the page.
+- **Remove a server NeXroll can't reach.** A saved Plex, Jellyfin or Emby server that doesn't answer now shows **Can't connect** with a **Remove** button. Before, it could only be disconnected while it was working.
+
+### Fixed
+
+- **Deleted prerolls were never cleaned up.** Deleting more than a quarter of the library on disk looked like an offline share, so the entries stayed and the dashboard said not to remove them. Files deleted from folders that are still there are now removed on the next scan, and when NeXroll can't tell, the dashboard offers to remove them.
+- **Refresh Library only reloaded the page.** It now scans the storage folder for added and deleted files, then reloads.
+- **Upcoming schedules hid Yearly and Holiday schedules** saved with an earlier year's dates, such as a New Year holiday created last year. They ran on time; the dashboard list now shows them.
+- **Categorized prerolls counted as uncategorized.** A preroll whose first category was deleted kept its other categories but showed as uncategorized in the Library's "Needs category", the edit dialog, the schedule editor's preroll picker and sequence duration estimates.
+- **Removing a category in the edit dialog didn't stick.** Removing a preroll's first category left it in that category (which still played it), and removing its last category did nothing.
+- **Trailers longer than Max Trailer Duration were reported as a YouTube bot block.** They are now reported as skipped for length, and the setting no longer shows "3 minutes" when set to No limit.
+- **The holiday country list was in code order.** It is now alphabetical.
+
+### Issues resolved
+
+- [#41](https://github.com/JFLXCLOUD/NeXroll/issues/41): Prerolls didn't play in Plex's new Apple TV app. Plex's "Play Pre-roll Only" is broken there; use **Turn off Plex trailers** with "Play 1 before movie".
+- [#43](https://github.com/JFLXCLOUD/NeXroll/issues/43): NeX-Up trailers can now match the playing movie's genre.
+- [#44](https://github.com/JFLXCLOUD/NeXroll/issues/44): One genre preroll per movie with a default for the rest, using Else if chains.
+- [#45](https://github.com/JFLXCLOUD/NeXroll/issues/45): "Needs category" counted categorized prerolls. Fixed, along with the other places that showed them as uncategorized.
+
 ## [2.2.1] - 09-27-2026
 
 > A security update for the YouTube PO-token provider, Plex path mappings that check and set themselves up, per-server prerolls, and fixes for Jellyfin and Emby sequences, sequence sharing and backups.
