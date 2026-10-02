@@ -93,10 +93,11 @@ def test_preview_and_alternative_use_the_same_rules(db):
     assert sequence_block_to_play(blocks, 0, ctx) is blocks[0]
     ctx = scheduler.playback_context(db)
     assert sequence_block_to_play(blocks, 0, ctx) is blocks[0]['otherwise']
-    from backend.sequence_conditions import describe_condition
+    from backend.sequence_conditions import chain_choice, describe_condition, in_chain, needs_evaluation
     from fastapi import HTTPException
     evaluate = route('evaluate_sequence_conditions', sequence_block_to_play=sequence_block_to_play,
-                     describe_condition=describe_condition, HTTPException=HTTPException)
+                     describe_condition=describe_condition, HTTPException=HTTPException,
+                     needs_evaluation=needs_evaluation, in_chain=in_chain, chain_choice=chain_choice)
     assert evaluate(blocks, 'movie', None, db, 'dts')['blocks'][0]['outcome'] == 'plays'
     assert evaluate(blocks, 'movie', None, db, None)['blocks'][0]['outcome'] == 'otherwise'
     with pytest.raises(HTTPException): evaluate(blocks, 'movie', None, db, 'Atmos')

@@ -90,6 +90,15 @@ describe('estimateSequence', () => {
     expect(result.variations).toBe(1);
   });
 
+  test('prerolls in a category only through the categories list count', () => {
+    // A preroll whose primary category was deleted keeps its other categories
+    // there, and playback picks it for them (issue #45).
+    const withSecondary = [...prerolls, { id: 5, category_id: null, categories: [{ id: 10 }], duration: 7 }];
+    const result = estimateSequence([{ type: 'sequential', category_id: 10 }], withSecondary);
+    expect(result.seconds).toBe(30);
+    expect(estimateSequence([{ type: 'random', category_id: 10, count: 1 }], withSecondary).variations).toBe(3);
+  });
+
   test('an empty category cannot be estimated exactly', () => {
     const result = estimateSequence(
       [{ type: 'sequential', category_id: 999 }], prerolls);

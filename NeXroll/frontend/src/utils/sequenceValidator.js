@@ -234,6 +234,8 @@ export const sanitizeSequence = (sequence) => {
         sanitized.otherwise = otherwise;
       }
     }
+    // Else if: plays only when no block above it in its chain played
+    if (block.else_if === true) sanitized.else_if = true;
     return sanitized;
   });
 };
@@ -272,6 +274,8 @@ const sanitizeBlockFields = (block) => {
   if (['nexup_trailers', 'library_trailers'].includes(block.type)) {
     if (block.ratings !== undefined) sanitized.ratings = block.ratings;
     if (block.restrict_ratings !== undefined) sanitized.restrict_ratings = block.restrict_ratings;
+    if (block.match_playing !== undefined) sanitized.match_playing = Boolean(block.match_playing);
+    if (block.match_playing_only !== undefined) sanitized.match_playing_only = Boolean(block.match_playing_only);
   }
   return sanitized;
 };

@@ -14,7 +14,8 @@ import {
   normalizeScheduleDateForStorage,
   priorityToBeatExclusive,
   timeRangesOverlap,
-  yearlyOrHolidayDateRangesOverlap
+  yearlyOrHolidayDateRangesOverlap,
+  isUpcomingSchedule
 } from './scheduleUtils';
 
 describe('schedule upgrade and editor compatibility', () => {
@@ -297,5 +298,47 @@ describe('yearlyOrHolidayDateRangesOverlap', () => {
     const yearRound = { type: 'yearly', start_date: '2000-06-01T00:00', end_date: null };
     const halloween = { type: 'holiday', start_date: '2000-10-31T00:00', end_date: null };
     expect(yearlyOrHolidayDateRangesOverlap(yearRound, halloween)).toBe(true);
+  });
+});
+
+describe('isUpcomingSchedule (dashboard Upcoming list)', () => {
+  const now = new Date(2026, 9, 1, 12, 0);
+
+  test('a Holiday saved with dates from an earlier year is listed by its next run', () => {
+    // Reported: New Year, December 27 to January 4, created in 2025.
+    const newYear = {
+      is_active: true,
+      type: 'holiday',
+      start_date: '2025-12-27T00:00:00',
+      end_date: '2026-01-04T23:59:59',
+      next_run: '2026-12-27T00:00:00',
+    };
+    expect(isUpcomingSchedule(newYear, false, now)).toBe(true);
+  });
+
+  test('a Yearly range stored in the year-2000 placeholder is listed', () => {
+    const yearly = { is_active: true, type: 'yearly', start_date: '2000-01-05T00:00:00',
+      end_date: '2000-03-19T23:59:00', next_run: '2027-01-05T00:00:00' };
+    expect(isUpcomingSchedule(yearly, false, now)).toBe(true);
+  });
+
+  test('a finished schedule, with no next run, is not listed', () => {
+    const daily = { is_active: true, type: 'daily', start_date: '2026-09-01T00:00:00',
+      end_date: '2026-09-20T23:59:00', next_run: null };
+    expect(isUpcomingSchedule(daily, false, now)).toBe(false);
+  });
+
+  test('a running schedule is listed whatever its metadata says', () => {
+    expect(isUpcomingSchedule({ is_active: true, type: 'weekly', next_run: null }, true, now)).toBe(true);
+  });
+
+  test('a paused schedule is never listed', () => {
+    expect(isUpcomingSchedule({ is_active: false, type: 'holiday', next_run: '2026-12-27T00:00:00' }, true, now)).toBe(false);
+  });
+
+  test('a next run earlier today still counts, yesterday does not', () => {
+    const base = { is_active: true, type: 'monthly' };
+    expect(isUpcomingSchedule({ ...base, next_run: '2026-10-01T08:00:00' }, false, now)).toBe(true);
+    expect(isUpcomingSchedule({ ...base, next_run: '2026-09-30T23:00:00' }, false, now)).toBe(false);
   });
 });

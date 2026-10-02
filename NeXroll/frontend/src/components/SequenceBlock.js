@@ -1,9 +1,9 @@
-import { ratingSummary } from '../utils/trailerRatings';
+import { genreMatchSummary, ratingSummary } from '../utils/trailerRatings';
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Edit, Copy, Trash2, ChevronUp, ChevronDown, Shuffle, ListOrdered, Film, Pin, Tag, Link, LayoutGrid, Sparkles, GitBranch } from 'lucide-react';
-import { hasCondition, describeBlockCondition, needsPlaybackInfo } from '../utils/sequenceConditions';
+import { hasCondition, describeBlockCondition, needsPlaybackInfo, chainLabel } from '../utils/sequenceConditions';
 
 /**
  * SequenceBlock - Individual block in the sequence (random or fixed)
@@ -22,6 +22,7 @@ const SequenceBlock = ({
   isFirst,
   isLast,
   advanced = false,
+  chain = {},
 }) => {
   const {
     attributes,
@@ -315,7 +316,7 @@ const SequenceBlock = ({
             </div>
             <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
               {block.count || 2} trailer{(block.count || 2) === 1 ? '' : 's'} for movies you own / {genres}
-              {block.match_playing ? ' / same genre as the movie (Jellyfin & Emby)' : ''}
+              {genreMatchSummary(block) ? ` / ${genreMatchSummary(block)} (Jellyfin & Emby)` : ''}
               {ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}
             </div>
           </div>
@@ -379,6 +380,7 @@ const SequenceBlock = ({
               marginBottom: '5px'
             }}>
               <strong style={{ color: 'var(--text-color)' }}>Source:</strong> {sourceLabel}
+              {genreMatchSummary(block) ? ` / ${genreMatchSummary(block)} (Jellyfin & Emby)` : ''}
               {ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}
             </div>
             <div style={{
@@ -621,7 +623,7 @@ const SequenceBlock = ({
         {renderBlockContent()}
       </div>
 
-      {hasCondition(block) && (
+      {(hasCondition(block) || chain.elseIf) && (
         <div style={{
           display: 'flex',
           alignItems: 'flex-start',
@@ -636,9 +638,14 @@ const SequenceBlock = ({
         }}>
           <GitBranch size={14} style={{ flexShrink: 0, marginTop: '2px', color: 'var(--accent-color)' }} />
           {advanced ? (
-            <span>{describeBlockCondition(block.condition, block.otherwise, getCategoryName)}</span>
+            <span>
+              {describeBlockCondition(block.condition, block.otherwise, getCategoryName, chain)}
+              {chain.neverPlays && <strong> This block never plays: a block above it in the chain has no condition.</strong>}
+            </span>
           ) : (
-            <span style={{ fontWeight: 600 }}>{needsPlaybackInfo(block.condition) ? 'Conditional (Jellyfin & Emby)' : 'Conditional'}</span>
+            <span style={{ fontWeight: 600 }}>
+              {chain.elseIf ? chainLabel(block) : 'Conditional'}{needsPlaybackInfo(block.condition) ? ' (Jellyfin & Emby)' : ''}
+            </span>
           )}
         </div>
       )}

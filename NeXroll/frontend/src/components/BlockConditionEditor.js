@@ -23,6 +23,8 @@ import ServerRule from './ServerRule';
  * `condition` (when it plays) and `otherwise` (what plays in its place when
  * it doesn't). Controlled: every change is reported through onChange as
  * { condition, otherwise }, with condition null meaning "always plays".
+ * The Else if choice is reported through onElseIfChange; `chain` comes from
+ * chainInfo and says where the block sits in an Else if chain.
  */
 
 const inputStyle = {
@@ -237,7 +239,7 @@ const RuleRow = ({ rule, index, onChange, onRemove, canRemove }) => {
   );
 };
 
-const BlockConditionEditor = ({ condition, otherwise, onChange, categories = [] }) => {
+const BlockConditionEditor = ({ condition, otherwise, onChange, categories = [], chain = {}, onElseIfChange }) => {
   const rules = (condition && Array.isArray(condition.rules)) ? condition.rules : [];
   const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
   const getCategoryName = (id) => (categories.find(c => c.id === id) || {}).name || 'a category';
@@ -267,10 +269,35 @@ const BlockConditionEditor = ({ condition, otherwise, onChange, categories = [] 
         Decide when this block plays, and what plays in its place when it doesn't.
       </small>
 
+      {onElseIfChange && (chain.elseIf || chain.canChain) && (
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: 'var(--text-color)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={Boolean(chain.elseIf)} onChange={(e) => onElseIfChange(e.target.checked)} />
+            Else if: only when the block above didn't play
+          </label>
+          <small style={hintStyle}>
+            Chain blocks this way and only the first one whose condition holds plays. Leave the last block
+            without a condition to play when none of the others do.
+          </small>
+          {chain.neverPlays && (
+            <small style={{ ...hintStyle, color: 'var(--warning-color, #b45309)', fontWeight: 600 }}>
+              This block never plays: a block above it in the chain has no condition, so that block always plays first.
+            </small>
+          )}
+        </div>
+      )}
+
       {rules.length === 0 ? (
-        <button type="button" style={smallButton} onClick={() => emit(defaultCondition(), otherwise || null)}>
-          <Plus size={14} /> Add a condition
-        </button>
+        <>
+          {chain.elseIf && (
+            <small style={{ ...hintStyle, marginTop: 0, marginBottom: '8px' }}>
+              {describeBlockCondition(condition, otherwise, getCategoryName, chain)}
+            </small>
+          )}
+          <button type="button" style={smallButton} onClick={() => emit(defaultCondition(), otherwise || null)}>
+            <Plus size={14} /> Add a condition
+          </button>
+        </>
       ) : (
         <>
           <label style={labelStyle}>Play this block</label>
@@ -307,8 +334,14 @@ const BlockConditionEditor = ({ condition, otherwise, onChange, categories = [] 
             <Plus size={14} /> Add another rule
           </button>
 
+          {chain.continues ? (
+            <small style={{ ...hintStyle, marginTop: '16px' }}>
+              Otherwise, the Else if block below is checked. Set what plays when nothing in the chain
+              matches on the chain's last block.
+            </small>
+          ) : (
           <div style={{ marginTop: '16px' }}>
-            <label style={labelStyle} htmlFor="otherwise-choice">Otherwise</label>
+            <label style={labelStyle} htmlFor="otherwise-choice">{chain.elseIf ? 'If no block in the chain plays' : 'Otherwise'}</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
               <select
                 id="otherwise-choice"
@@ -382,6 +415,7 @@ const BlockConditionEditor = ({ condition, otherwise, onChange, categories = [] 
               )}
             </div>
           </div>
+          )}
 
           <div style={{
             marginTop: '14px',
@@ -393,7 +427,7 @@ const BlockConditionEditor = ({ condition, otherwise, onChange, categories = [] 
             color: 'var(--text-color)',
             lineHeight: 1.5,
           }}>
-            {describeBlockCondition(condition, otherwise, getCategoryName)}
+            {describeBlockCondition(condition, otherwise, getCategoryName, chain)}
           </div>
 
           <button

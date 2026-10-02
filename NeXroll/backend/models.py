@@ -172,7 +172,18 @@ class CommunityTemplate(Base):
     is_public = Column(Boolean, default=True)
 
 
-class ComingSoonTrailer(Base):
+class TrailerGenres:
+    """genre_list() for trailer rows that store genres as a JSON list."""
+
+    def genre_list(self):
+        try:
+            value = json.loads(self.genres) if self.genres else []
+            return [str(g) for g in value] if isinstance(value, list) else []
+        except Exception:
+            return []
+
+
+class ComingSoonTrailer(TrailerGenres, Base):
     """NeX-Up: Tracks trailers for upcoming movies from Radarr"""
     __tablename__ = "coming_soon_trailers"
 
@@ -181,6 +192,7 @@ class ComingSoonTrailer(Base):
     tmdb_id = Column(Integer, index=True)  # TMDB ID for cross-referencing
     imdb_id = Column(String, nullable=True)  # IMDB ID
     certification = Column(String, nullable=True)  # Film/show age rating; unknown until metadata sync
+    genres = Column(Text, nullable=True)  # JSON list of the movie's genres; NULL until a sync supplies them
     title = Column(String, index=True)  # Movie title
     year = Column(Integer, nullable=True)  # Release year
     overview = Column(Text, nullable=True)  # Movie description
@@ -205,7 +217,7 @@ class ComingSoonTrailer(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
-class ComingSoonTVTrailer(Base):
+class ComingSoonTVTrailer(TrailerGenres, Base):
     """NeX-Up: Tracks trailers for upcoming TV shows/seasons from Sonarr"""
     __tablename__ = "coming_soon_tv_trailers"
 
@@ -215,6 +227,7 @@ class ComingSoonTVTrailer(Base):
     tmdb_id = Column(Integer, nullable=True)  # TMDB ID
     imdb_id = Column(String, nullable=True)  # IMDB ID
     certification = Column(String, nullable=True)  # Film/show age rating; unknown until metadata sync
+    genres = Column(Text, nullable=True)  # JSON list of the show's genres; NULL until a sync supplies them
     title = Column(String, index=True)  # Show title
     year = Column(Integer, nullable=True)  # Show start year
     season_number = Column(Integer, nullable=True)  # Season number (1 for new shows)
@@ -241,7 +254,7 @@ class ComingSoonTVTrailer(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
-class LibraryTrailer(Base):
+class LibraryTrailer(TrailerGenres, Base):
     """NeX-Up Library Trailers: a trailer for a movie already in the library.
 
     Kept apart from ComingSoonTrailer on purpose. Coming Soon trailers are
@@ -277,13 +290,6 @@ class LibraryTrailer(Base):
     last_attempt_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-
-    def genre_list(self):
-        try:
-            value = json.loads(self.genres) if self.genres else []
-            return [str(g) for g in value] if isinstance(value, list) else []
-        except Exception:
-            return []
 
 
 class Setting(Base):

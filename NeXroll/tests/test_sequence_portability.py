@@ -120,7 +120,8 @@ def installs(tmp_path):
         {'type': 'random', 'category_id': cats["Kids' Night"].id, 'count': 1,
          'condition': {'match': 'all', 'rules': [{'kind': 'time_window', 'start': '17:00', 'end': '21:00'}]},
          'otherwise': {'type': 'sequential', 'category_id': cats['Holiday Mix'].id, 'count': 1}},
-        {'type': 'random', 'category_id': cats['Noël'].id, 'count': 1},
+        # Else if: plays only when the Kids' Night condition above does not hold.
+        {'type': 'random', 'category_id': cats['Noël'].id, 'count': 1, 'else_if': True},
     ]
     db.commit()
     target = session(tmp_path / 'dst.db')

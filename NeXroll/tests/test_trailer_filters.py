@@ -125,7 +125,8 @@ def test_sqlite_upgrade_preserves_old_rows_and_is_repeatable():
         migrate_trailer_ratings(connection)
         migrate_trailer_ratings(connection)
         for table in ('coming_soon_trailers', 'coming_soon_tv_trailers', 'library_trailers'):
-            assert connection.exec_driver_sql(f'SELECT * FROM {table}').one() == (7, 'Keep me', '/media/keep.mp4', None)
+            # certification, then genres (2.2.2), both unknown until a sync.
+            assert connection.exec_driver_sql(f'SELECT * FROM {table}').one() == (7, 'Keep me', '/media/keep.mp4', None, None)
     engine.dispose()
 
 
@@ -216,11 +217,14 @@ def test_export_preserves_main_and_alternative_ratings(db):
                    app_version='test', HTTPException=HTTPException, _file_log=Mock(), log_event=Mock())
     for kind in ('library_trailers', 'nexup_trailers'):
         block = {'type': kind, 'count': 2, 'ratings': ['PG'], 'restrict_ratings': True,
+                 'match_playing': True, 'match_playing_only': True,
                  'condition': {'rules': [{'kind': 'trailers_available', 'pool': 'block'}]},
-                 'otherwise': {'type': kind, 'ratings': ['G'], 'restrict_ratings': True}}
+                 'otherwise': {'type': kind, 'ratings': ['G'], 'restrict_ratings': True, 'match_playing': True}}
         exported = export('Ratings', '', [block], 'pattern_only', db)['blocks'][0]
         assert exported['ratings'] == ['PG'] and exported['restrict_ratings'] is True
+        assert exported['match_playing'] is True and exported['match_playing_only'] is True
         assert exported['otherwise']['ratings'] == ['G']
+        assert exported['otherwise']['match_playing'] is True
         assert exported['condition'] == block['condition']
 
 

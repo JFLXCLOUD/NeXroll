@@ -10,7 +10,7 @@ import SequenceStats from './SequenceStats';
 import SequencePreviewModal from './SequencePreviewModal';
 import PatternExport from './PatternExport';
 import PatternImport from './PatternImport';
-import { blocksHaveConditions, useBuilderMode } from '../utils/sequenceConditions';
+import { blocksHaveConditions, chainInfo, useBuilderMode } from '../utils/sequenceConditions';
 
 /**
  * SequenceBuilder - Visual preroll sequence builder for NeXroll
@@ -722,6 +722,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
                     isFirst={index === 0}
                     isLast={index === blocks.length - 1}
                     advanced={advanced}
+                    chain={chainInfo(blocks, index)}
                   />
                 ))}
               </div>
@@ -884,6 +885,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
           onSave={handleSaveBlock}
           onCancel={handleCancelEdit}
           advanced={advanced}
+          chain={editingIndex === null ? chainInfo([...blocks, editingBlock], blocks.length) : chainInfo(blocks, editingIndex)}
         />
       )}
 

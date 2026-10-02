@@ -22,9 +22,10 @@ import ServerRule from './ServerRule';
  *
  * The same editing as BlockConditionEditor (the schedule form's block
  * editor), laid out for the narrow inspector with the builder's own
- * nx-draft controls. Reports every change as { condition, otherwise }.
+ * nx-draft controls. Reports every change as { condition, otherwise }, and
+ * the Else if choice through onElseIfChange. `chain` comes from chainInfo.
  */
-const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [] }) => {
+const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [], chain = {}, onElseIfChange }) => {
   const rules = (condition && Array.isArray(condition.rules)) ? condition.rules : [];
   const getCategoryName = id => categories.find(c => String(c.id) === String(id))?.name || 'a category';
   const setRules = next => onChange(withRules(condition, otherwise, next));
@@ -36,11 +37,21 @@ const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [
       <div className="nx-draft-condition-head"><GitBranch size={12} /> Conditions</div>
       <p className="nx-draft-field-hint">When this block plays, and what plays in its place when it doesn't.</p>
 
-      {rules.length === 0 ? (
+      {onElseIfChange && (chain.elseIf || chain.canChain) && <>
+        <label className="nx-draft-check">
+          <input type="checkbox" checked={Boolean(chain.elseIf)} onChange={event => onElseIfChange(event.target.checked)} />
+          <span>Else if: only when the block above didn't play</span>
+        </label>
+        <p className="nx-draft-field-hint">Chain blocks this way and only the first one whose condition holds plays. Leave the last block without a condition to play when none of the others do.</p>
+        {chain.neverPlays && <p className="nx-server-note"><strong>This block never plays.</strong> A block above it in the chain has no condition, so that block always plays first.</p>}
+      </>}
+
+      {rules.length === 0 ? <>
+        {chain.elseIf && <p className="nx-draft-condition-summary">{describeBlockCondition(condition, otherwise, getCategoryName, chain)}</p>}
         <button type="button" className="nx-draft-btn small" onClick={() => onChange({ condition: defaultCondition(), otherwise: otherwise || null })}>
           <Plus size={12} /> Add a condition
         </button>
-      ) : <>
+      </> : <>
         {rules.length > 1 && (
           <label className="nx-draft-field"><span>Play this block</span>
             <select value={condition.match === 'any' ? 'any' : 'all'} onChange={event => onChange({ condition: { ...condition, match: event.target.value }, otherwise })}>
@@ -150,11 +161,16 @@ const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [
           <Plus size={12} /> Add another rule
         </button>
 
-        <label className="nx-draft-field nx-draft-condition-otherwise"><span>Otherwise</span>
+        {chain.continues ? (
+          <p className="nx-draft-field-hint">Otherwise, the Else if block below is checked. Set what plays when nothing in the chain matches on the chain's last block.</p>
+        ) : (
+        <label className="nx-draft-field nx-draft-condition-otherwise"><span>{chain.elseIf ? 'If no block in the chain plays' : 'Otherwise'}</span>
           <select value={otherwiseChoiceOf(otherwise)} onChange={event => setOtherwise(otherwiseForChoice(event.target.value, categories))}>
             {OTHERWISE_CHOICES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
         </label>
+        )}
+        {!chain.continues && <>
         {otherwiseChoiceOf(otherwise) === 'random' && (
           <div className="nx-draft-condition-pair">
             <label className="nx-draft-field"><span>Category</span>
@@ -188,8 +204,9 @@ const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [
         )}
 
         {['nexup_trailers', 'library_trailers'].includes(otherwise?.type) && <TrailerRatingFilter value={otherwise} includeTV={otherwise.type === 'nexup_trailers' && otherwise.source !== 'movies'} onChange={patch => setOtherwise({ ...otherwise, ...patch })} />}
+        </>}
 
-        <p className="nx-draft-condition-summary">{describeBlockCondition(condition, otherwise, getCategoryName)}</p>
+        <p className="nx-draft-condition-summary">{describeBlockCondition(condition, otherwise, getCategoryName, chain)}</p>
         <button type="button" className="nx-draft-btn small ghost" onClick={() => onChange({ condition: null, otherwise: null })}>
           <Trash2 size={11} /> Remove all conditions
         </button>

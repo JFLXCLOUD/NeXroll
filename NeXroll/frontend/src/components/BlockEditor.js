@@ -1,16 +1,18 @@
 import TrailerRatingFilter from './TrailerRatingFilter';
+import TrailerGenreMatch from './TrailerGenreMatch';
 import React, { useState, useEffect, useRef } from 'react';
 import { Shuffle, Pin, X, ChevronUp, ChevronDown, Search, Tag, Check, Film, LayoutGrid, Sparkles } from 'lucide-react';
 import { lockBodyScroll } from '../utils/modalBehavior';
 import BlockConditionEditor from './BlockConditionEditor';
 import GenrePicker from './GenrePicker';
+import { displayCategoryId, prerollInCategory } from '../utils/prerollCategories';
 
 /**
  * BlockEditor - Modal for configuring sequence blocks
  * Supports both random and fixed block types. In the builder's Advanced mode
  * it also edits the block's IF/THEN conditions.
  */
-const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, advanced = false }) => {
+const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, advanced = false, chain = {} }) => {
   const overlayRef = useRef(null);
   const [ratingFilter, setRatingFilter] = useState({ ratings: block.ratings || [], restrict_ratings: Boolean(block.restrict_ratings) });
   const [blockType, setBlockType] = useState(block.type || 'random');
@@ -27,7 +29,8 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
   const [nexupMode, setNexupMode] = useState(block.mode || 'random');
   // Library trailers
   const [libGenres, setLibGenres] = useState(block.genres || []);
-  const [libMatchPlaying, setLibMatchPlaying] = useState(Boolean(block.match_playing));
+  // "Same genre as the movie that's starting", shared by both trailer types
+  const [genreMatch, setGenreMatch] = useState({ match_playing: Boolean(block.match_playing), match_playing_only: Boolean(block.match_playing_only) });
   // Coming Soon List state
   const [comingSoonLayout, setComingSoonLayout] = useState(block.layout || 'grid');
   // Dynamic Preroll state
@@ -40,6 +43,8 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
     condition: block.condition || null,
     otherwise: block.otherwise || null,
   });
+  // Else if: only checked when the block above it in the chain didn't play
+  const [elseIf, setElseIf] = useState(block.else_if === true);
 
   // Only reset state when opening a different block (detected by ID change)
   useEffect(() => {
@@ -56,9 +61,10 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
       setDpTemplate(block.template || '');
       setDpTheme(block.theme || '');
       setConditionState({ condition: block.condition || null, otherwise: block.otherwise || null });
+      setElseIf(block.else_if === true);
       setLibGenres(block.genres || []);
       setRatingFilter({ ratings: block.ratings || [], restrict_ratings: Boolean(block.restrict_ratings) });
-      setLibMatchPlaying(Boolean(block.match_playing));
+      setGenreMatch({ match_playing: Boolean(block.match_playing), match_playing_only: Boolean(block.match_playing_only) });
     }
   }, [block.id, block, categories, initialBlockId]);
 
@@ -142,7 +148,6 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
       newBlock.count = nexupCount;
       newBlock.mode = nexupMode === 'sequential' ? 'newest' : nexupMode;
       newBlock.genres = libGenres;
-      newBlock.match_playing = libMatchPlaying;
       delete newBlock.category_id;
       delete newBlock.preroll_ids;
       delete newBlock.source;
@@ -178,9 +183,11 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
         delete newBlock.condition;
         delete newBlock.otherwise;
       }
+      if (elseIf) newBlock.else_if = true;
+      else delete newBlock.else_if;
     }
 
-    if (['nexup_trailers', 'library_trailers'].includes(blockType)) Object.assign(newBlock, ratingFilter);
+    if (['nexup_trailers', 'library_trailers'].includes(blockType)) Object.assign(newBlock, ratingFilter, genreMatch);
     onSave(newBlock);
   };
 
@@ -220,21 +227,18 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
 
   const getPreroll = (id) => prerolls.find((p) => p.id === id);
   
-  const getCategoryPrerollCount = (catId) => {
-    return prerolls.filter((p) => 
-      p.category_id === catId || (p.categories && p.categories.some(c => c.id === catId))
-    ).length;
-  };
+  const getCategoryPrerollCount = (catId) => prerolls.filter((p) => prerollInCategory(p, catId)).length;
 
   const filteredPrerolls = prerolls.filter((p) => {
     const name = (p.display_name || p.filename || '').toLowerCase();
     return name.includes(searchTerm.toLowerCase());
   });
 
-  // Group prerolls by category
+  // Group prerolls by category: the primary, else the first category, so a
+  // preroll whose primary category was deleted is not listed as Uncategorized.
   const prerollsByCategory = {};
   filteredPrerolls.forEach((preroll) => {
-    const catId = preroll.category_id || 0;
+    const catId = displayCategoryId(preroll) || 0;
     if (!prerollsByCategory[catId]) {
       prerollsByCategory[catId] = [];
     }
@@ -793,13 +797,6 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
                 Only these genres (optional)
                 <div style={{ marginTop: '6px' }}><GenrePicker values={libGenres} onChange={setLibGenres} /></div>
               </div>
-              <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '13px', color: 'var(--text-color)' }}>
-                <input type="checkbox" checked={libMatchPlaying} onChange={(e) => setLibMatchPlaying(e.target.checked)} />
-                <span>
-                  <strong>Same genre as the movie that's starting</strong> (Jellyfin &amp; Emby). Plex doesn't say which movie is
-                  starting, so on Plex trailers are picked from the whole selection.
-                </span>
-              </label>
               <small style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>
                 Plays trailers from NeX-Up &gt; Library Trailers. The trailer for the movie that's about to play is never picked.
               </small>
@@ -995,6 +992,10 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
             </div>
           )}
 
+          {['nexup_trailers', 'library_trailers'].includes(blockType) && <TrailerGenreMatch
+            value={genreMatch}
+            onChange={patch => setGenreMatch(current => ({ ...current, ...patch }))}
+          />}
           {['nexup_trailers', 'library_trailers'].includes(blockType) && <TrailerRatingFilter
             value={ratingFilter} onChange={patch => setRatingFilter(current => ({ ...current, ...patch }))}
             includeTV={blockType === 'nexup_trailers' && nexupSource !== 'movies'}
@@ -1005,6 +1006,8 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel, adv
               otherwise={conditionState.otherwise}
               onChange={setConditionState}
               categories={categories}
+              chain={{ ...chain, elseIf, neverPlays: elseIf && chain.blockedAbove }}
+              onElseIfChange={setElseIf}
             />
           )}
         </div>

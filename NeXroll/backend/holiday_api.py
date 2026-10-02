@@ -5,11 +5,25 @@ Provides automatic holiday detection and scheduling using external calendar APIs
 
 import requests
 import time
+import unicodedata
 from datetime import datetime, date
 from typing import List, Dict, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _by_name(countries: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Countries in alphabetical order of name, ignoring accents and case.
+
+    Nager.Date lists them by ISO code, which put Switzerland (CH) among the
+    C's and the United Kingdom (GB) among the G's in the country dropdown.
+    Accents are ignored so Åland Islands files under A and Türkiye under T.
+    """
+    def key(country):
+        plain = unicodedata.normalize("NFKD", str(country.get("name") or ""))
+        return "".join(ch for ch in plain if not unicodedata.combining(ch)).casefold()
+    return sorted(countries, key=key)
 
 
 class HolidayAPI:
@@ -134,10 +148,10 @@ class HolidayAPI:
         try:
             response = requests.get(f"{HolidayAPI.BASE_URL}/AvailableCountries", timeout=5)
             if response.status_code == 200:
-                countries = [
+                countries = _by_name([
                     {"countryCode": c["countryCode"], "name": c["name"]}
                     for c in response.json()
-                ]
+                ])
                 HolidayAPI._countries_cache = {"data": countries, "timestamp": time.time()}
                 return countries
             logger.warning(f"AvailableCountries API returned status {response.status_code}")
@@ -148,7 +162,7 @@ class HolidayAPI:
         # rather than permanently downgrading to the ~30-country static list.
         if cached["data"] is not None:
             return cached["data"]
-        return [{"countryCode": k, "name": v} for k, v in HolidayAPI.SUPPORTED_COUNTRIES.items()]
+        return _by_name([{"countryCode": k, "name": v} for k, v in HolidayAPI.SUPPORTED_COUNTRIES.items()])
 
     @staticmethod
     def get_holidays(country_code: str, year: int) -> List[Dict]:

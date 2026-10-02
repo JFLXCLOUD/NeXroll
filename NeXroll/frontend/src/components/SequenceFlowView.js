@@ -18,7 +18,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Play, Clapperboard, GitBranch, Plus, SkipForward, LayoutGrid, ArrowLeft, ArrowRight } from 'lucide-react';
-import { hasCondition, describeCondition, describeOtherwise, needsPlaybackInfo } from '../utils/sequenceConditions';
+import { hasCondition, describeCondition, describeOtherwise, needsPlaybackInfo, chainBounds, chainLabel } from '../utils/sequenceConditions';
 
 /**
  * SequenceFlowView - the Sequence Builder's Flow view: the same sequence drawn
@@ -31,6 +31,9 @@ import { hasCondition, describeCondition, describeOtherwise, needsPlaybackInfo }
  *   - in Advanced mode a conditional block is drawn as an IF node that
  *     branches to the block (condition met) and to its alternative or a
  *     Skip (not met), both joining the next step
+ *   - an Else if chain is drawn as IF, ELSE IF... nodes along the false
+ *     branch, each met block one step lower than the one before, and every
+ *     branch joining the step after the chain
  * Selecting any node selects its block for the Block settings panel.
  */
 
@@ -94,7 +97,7 @@ const IfNode = ({ data, selected }) => (
     <Handle type="target" position={Position.Left} />
     <i><GitBranch size={14} /></i>
     <span className="copy">
-      <strong>IF{data.pluginOnly && <em className="nx-flow-tag">Jellyfin &amp; Emby</em>}</strong>
+      <strong>{data.keyword || 'IF'}{data.pluginOnly && <em className="nx-flow-tag">Jellyfin &amp; Emby</em>}</strong>
       <small title={data.summary}>{data.summary}</small>
     </span>
     <span className="order">{data.order}</span>
@@ -175,15 +178,91 @@ export const layoutSequence = ({ blocks, advanced, selectedIndex, blockTitle, bl
     data: { kind: 'start', title: 'Playback starts', subtitle: 'A movie is chosen' } });
   x += START_W + GAP;
 
-  blocks.forEach((block, index) => {
-    const active = index === selectedIndex;
-    const blockData = {
-      index,
-      code: BLOCK_CODES[block.type] || 'BLK',
-      title: blockTitle(block),
-      description: blockDescription(block),
-      active,
+  const dataFor = index => ({
+    index,
+    code: BLOCK_CODES[blocks[index].type] || 'BLK',
+    title: blockTitle(blocks[index]),
+    description: blockDescription(blocks[index]),
+    active: index === selectedIndex,
+  });
+
+  // An Else if chain: each member is checked only when the one before did not
+  // hold, along the false branches; only one branch plays. Met blocks step
+  // down towards the main line so their lines to the join never cross.
+  const layoutChain = (start, end) => {
+    const joins = [];
+    let falseFrom = null; // IF node whose false branch reaches the next member
+    let reachable = true;
+    const incoming = (targetId, index) => {
+      if (index === start) connect(targetId, index);
+      else if (falseFrom) {
+        edges.push({ id: `e-${falseFrom}-false-${targetId}`, source: falseFrom, sourceHandle: 'false', target: targetId,
+          type: 'insert', data: { insertAt: index }, className: 'nx-flow-edge-false' });
+      }
     };
+    for (let index = start; index <= end; index += 1) {
+      const block = blocks[index];
+      const blockData = dataFor(index);
+      const keyword = index === start ? 'IF' : 'ELSE IF';
+      if (!reachable) {
+        nodes.push({ id: `b-${index}`, type: 'block', position: { x, y: 0 },
+          data: { ...blockData, order: index + 1, badge: `${chainLabel(block)} / never plays` } });
+        x += NODE_W + GAP;
+        continue;
+      }
+      if (!hasCondition(block)) {
+        // No condition: the chain's Else, which always plays when reached.
+        const id = `b-${index}`;
+        nodes.push({ id, type: 'block', position: { x, y: 0 },
+          data: { ...blockData, order: index + 1, badge: index === start ? null : 'Else' } });
+        incoming(id, index);
+        joins.push({ id });
+        x += NODE_W + GAP;
+        reachable = false;
+        falseFrom = null;
+        continue;
+      }
+      const ifId = `if-${index}`;
+      nodes.push({ id: ifId, type: 'ifnode', position: { x, y: 0 },
+        data: { index, order: index + 1, keyword, summary: describeCondition(block.condition), active: blockData.active,
+                pluginOnly: needsPlaybackInfo(block.condition) } });
+      incoming(ifId, index);
+      x += IF_W + GAP;
+      const trueId = `b-${index}`;
+      nodes.push({ id: trueId, type: 'block', position: { x, y: -BRANCH_Y * (end - index + 1) }, draggable: false,
+        data: { ...blockData, branch: 'met' } });
+      edges.push({ id: `e-${ifId}-true`, source: ifId, sourceHandle: 'true', target: trueId, type: 'insert', data: {}, className: 'nx-flow-edge-true' });
+      joins.push({ id: trueId });
+      falseFrom = ifId;
+      if (index === end) {
+        // Nothing in the chain held: the last member's Otherwise, or a Skip.
+        const falseId = `o-${index}`;
+        if (block.otherwise) {
+          nodes.push({ id: falseId, type: 'block', position: { x, y: BRANCH_Y }, draggable: false,
+            data: { index, code: BLOCK_CODES[block.otherwise.type] || 'BLK', title: 'Otherwise',
+                    description: describeOtherwise(block.otherwise, getCategoryName), branch: 'otherwise', active: blockData.active } });
+        } else {
+          nodes.push({ id: falseId, type: 'skip', position: { x: x + 60, y: BRANCH_Y + 14 }, draggable: false,
+            data: { index, active: blockData.active } });
+        }
+        edges.push({ id: `e-${ifId}-false`, source: ifId, sourceHandle: 'false', target: falseId, type: 'insert', data: {}, className: 'nx-flow-edge-false' });
+        joins.push({ id: falseId });
+        x += NODE_W + GAP;
+      }
+    }
+    tails = joins;
+  };
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    const [start, end] = advanced ? chainBounds(blocks, index) : [index, index];
+    if (end > start) {
+      layoutChain(start, end);
+      index = end;
+      continue;
+    }
+    const block = blocks[index];
+    const blockData = dataFor(index);
+    const { active } = blockData;
 
     if (advanced && hasCondition(block)) {
       const ifId = `if-${index}`;
@@ -211,17 +290,19 @@ export const layoutSequence = ({ blocks, advanced, selectedIndex, blockTitle, bl
 
       x += NODE_W + GAP;
       tails = [{ id: trueId }, { id: falseId }];
-      return;
+      continue;
     }
 
     const id = `b-${index}`;
+    const chained = index > 0 && blocks[index].else_if === true;
+    const label = chained ? chainLabel(block) : hasCondition(block) ? 'Conditional' : null;
     nodes.push({ id, type: 'block', position: { x, y: 0 },
       data: { ...blockData, order: index + 1,
-              badge: hasCondition(block) ? (needsPlaybackInfo(block.condition) ? 'Conditional / Jellyfin & Emby' : 'Conditional') : null } });
+              badge: label && needsPlaybackInfo(block.condition) ? `${label} / Jellyfin & Emby` : label } });
     connect(id, index);
     x += NODE_W + GAP;
     tails = [{ id }];
-  });
+  }
 
   nodes.push({ id: 'end', type: 'terminal', position: { x, y: 0 }, draggable: false, selectable: false,
     data: { kind: 'end', title: 'Movie starts', subtitle: 'After the last block' } });

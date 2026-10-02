@@ -1,5 +1,5 @@
-from backend.trailer_filters import has_trailer_policy
-from backend.sequence_conditions import sequence_block_to_play
+from backend.trailer_filters import genre_json, has_trailer_policy
+from backend.sequence_conditions import chain_choice, in_chain, needs_evaluation, sequence_block_to_play
 from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form, Request, Query, Body, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -1846,8 +1846,8 @@ class CategoryCreate(BaseModel):
 
 class PrerollUpdate(BaseModel):
     tags: Optional[str | list[str]] = None
-    category_id: Optional[int] = None                 # primary category (affects storage path and thumbnail folder)
-    category_ids: Optional[list[int]] = None          # additional categories (many-to-many)
+    category_id: Optional[int] = None                 # first category: picks the storage and thumbnail folder
+    category_ids: Optional[list[int]] = None          # every category (many-to-many); [] removes them all
     description: Optional[str] = None
     display_name: Optional[str] = None                # UI display label
     new_filename: Optional[str] = None                # optional on-disk rename (basename; extension optional)
@@ -9772,7 +9772,13 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
 
         if payload.category_ids is not None:
             ids = [int(value) for value in payload.category_ids if str(value).isdigit()]
-            if p.category_id and p.category_id not in ids:
+            if not ids:
+                # An explicitly empty list removes every category, the primary
+                # included. The file stays where it is, as when a category is
+                # deleted. The primary used to be re-added here, so a preroll
+                # could never be made uncategorized from the edit dialog.
+                p.category_id = None
+            elif p.category_id and p.category_id not in ids:
                 ids.insert(0, p.category_id)
             p.categories = (
                 db.query(models.Category).filter(models.Category.id.in_(ids)).all()
@@ -13310,8 +13316,8 @@ _PORTABLE_OTHERWISE_TYPES = ("nexup_trailers", "library_trailers", "coming_soon_
 # Blocks whose settings mean the same thing on any install, and the fields
 # that carry them through a .nexseq export and back.
 _PORTABLE_BLOCK_FIELDS = {
-    "nexup_trailers": ("source", "count", "mode", "ratings", "restrict_ratings"),
-    "library_trailers": ("count", "mode", "genres", "match_playing", "ratings", "restrict_ratings"),
+    "nexup_trailers": ("source", "count", "mode", "match_playing", "match_playing_only", "ratings", "restrict_ratings"),
+    "library_trailers": ("count", "mode", "genres", "match_playing", "match_playing_only", "ratings", "restrict_ratings"),
     "coming_soon_list": ("layout",),
     "dynamic_preroll": ("template", "theme", "filename"),
     "separator": ("duration",),
@@ -13464,12 +13470,15 @@ def _import_otherwise_block(otherwise, db) -> Optional[dict]:
 
 
 def _carry_block_condition(block_data: dict, matched_block: dict, db) -> None:
-    """Copy an imported block's Advanced-mode condition onto the rebuilt block."""
+    """Copy an imported block's Advanced-mode condition, and its place in an
+    Else if chain, onto the rebuilt block."""
     if isinstance(block_data.get("condition"), dict):
         matched_block["condition"] = block_data["condition"]
         otherwise = _import_otherwise_block(block_data.get("otherwise"), db)
         if otherwise:
             matched_block["otherwise"] = otherwise
+    if block_data.get("else_if") is True:
+        matched_block["else_if"] = True
 
 
 def _export_community_id(preroll) -> Optional[str]:
@@ -13604,7 +13613,7 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
                 pattern_block['source'] = block.get('source', 'both')
                 pattern_block['count'] = block.get('count', 2)
                 pattern_block['mode'] = block.get('mode', 'random')
-                for field in ('ratings', 'restrict_ratings'):
+                for field in ('match_playing', 'match_playing_only', 'ratings', 'restrict_ratings'):
                     if field in block:
                         pattern_block[field] = block[field]
             
@@ -13631,7 +13640,9 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
                 exported_otherwise = _export_otherwise_block(block.get('otherwise'), db)
                 if exported_otherwise:
                     pattern_block['otherwise'] = exported_otherwise
-            
+            if block.get('else_if') is True:
+                pattern_block['else_if'] = True
+
             pattern_blocks.append(pattern_block)
         
         # Create pattern data
@@ -14536,6 +14547,7 @@ def get_plex_cinema_trailers(db: Session = Depends(get_db)):
             "help": f["help"],
             "plex_pass": f["plex_pass"],
             "available": server is not None,
+            "trailer_source": sid in PlexConnector.CINEMA_TRAILER_SOURCE_IDS,
         }
         if server is not None:
             ptype = server.get("type") or ""
@@ -14581,6 +14593,33 @@ def update_plex_cinema_trailers(body: CinemaTrailerUpdate, db: Session = Depends
     log_event('INFO', 'plex', f'Cinema Trailers pref updated: {body.key}={body.value}',
               source='update_plex_cinema_trailers')
     return {"success": True, "key": body.key, "value": body.value}
+
+
+@app.post("/plex/cinema-trailers/prerolls-only")
+def plex_cinema_trailers_prerolls_only(db: Session = Depends(get_db)):
+    """
+    Turn off every trailer source on the Plex server so an app set to "Play 1
+    before movie" plays only the preroll list. Trailers in NeXroll sequences are
+    part of that list, so they still play.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.plex_url:
+        raise HTTPException(status_code=400, detail="Plex not configured")
+
+    connector = PlexConnector(setting.plex_url, setting.plex_token)
+    result = connector.disable_trailer_sources()
+    if result is None:
+        raise HTTPException(status_code=502, detail="Could not read preferences from Plex server")
+    if result["changed"]:
+        log_event('INFO', 'plex', f'Plex trailer sources turned off: {", ".join(result["changed"])}',
+                  source='plex_cinema_trailers_prerolls_only')
+    if result["failed"]:
+        labels = {f["id"]: f["label"] for f in _CINEMA_TRAILER_FIELDS}
+        failed = ", ".join(labels.get(sid, sid) for sid in result["failed"])
+        log_event('WARNING', 'plex', f'Plex rejected turning off trailer sources: {", ".join(result["failed"])}',
+                  source='plex_cinema_trailers_prerolls_only')
+        raise HTTPException(status_code=502, detail=f"Plex rejected the change to: {failed}")
+    return {"success": True, "changed": result["changed"]}
 
 def _preview_payload_from_intent(setting, db) -> Optional[dict]:
     """
@@ -14637,7 +14676,7 @@ def _preview_payload_from_intent(setting, db) -> Optional[dict]:
         for block_index, block in enumerate(seq):
             # Show what would actually play: a conditional block that does not
             # hold is replaced by its alternative, or left out.
-            if isinstance(block, dict) and isinstance(block.get("condition"), dict):
+            if needs_evaluation(seq, block_index):
                 if preview_ctx is None:
                     preview_ctx = playback_context(db, media_type="movie", server_type="plex")
                 block = sequence_block_to_play(seq, block_index, preview_ctx)
@@ -16292,10 +16331,17 @@ def system_health_summary(conflicts: Optional[int] = None, db: Session = Depends
         missing = int(stats.get("missing_files") or 0)
         dupes = int(stats.get("duplicate_rows") or 0)
         offline = bool(stats.get("storage_maybe_offline"))
-        if offline:
+        if offline and not int(stats.get("files_on_disk") or 0):
             checks.append(health_summary.make_check(
                 "storage", "Storage", health_summary.ERROR,
                 "Preroll storage looks offline - files could not be found", "Offline"))
+        elif offline:
+            # Files were found, so the storage answers: the missing ones were
+            # deleted, or sit on a share or folder that is offline.
+            checks.append(health_summary.make_check(
+                "storage", "Storage", health_summary.WARN,
+                f"{missing} preroll file{'s' if missing != 1 else ''} can't be found - deleted, or on storage that is offline",
+                f"{missing} missing"))
         elif missing or dupes:
             parts = []
             if missing:
@@ -20295,6 +20341,7 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
         "year": t.year,
         "season_number": t.season_number,
         "network": t.network,
+        "genres": t.genre_list(),
         "release_date": t.release_date.isoformat() if t.release_date else None,
         "release_type": t.release_type,
         "local_path": t.local_path,
@@ -20461,6 +20508,7 @@ async def download_tv_trailer(
         year=show_info.get('year'),
         season_number=season_number,
         certification=show_info.get('certification'),
+        genres=genre_json(show_info.get('genres')),
         overview=show_info.get('overview'),
         network=show_info.get('network'),
         release_type='new_show' if season_number == 1 else 'new_season',
@@ -20987,7 +21035,8 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
         "downloaded": 0,
         "expired": 0,
         "errors": [],
-        "eligible": 0
+        "eligible": 0,
+        "skipped_too_long": 0
     }
     
     # ========================================
@@ -21164,6 +21213,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                 year=show.get('year'),
                 season_number=show['season_number'],
                 certification=show.get('certification'),
+                genres=genre_json(show.get('genres')),
                 overview=show.get('overview'),
                 network=show.get('network'),
                 release_date=datetime.datetime.fromisoformat(show['release_date']) if show.get('release_date') else None,
@@ -21210,6 +21260,12 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                 if download_delay > 0 and (max_trailers == 0 or downloads_completed < max_trailers):
                     _nexup_sync_progress["status"] = f"Rate limiting - waiting {download_delay}s..."
                     await asyncio.sleep(download_delay)
+            elif isinstance(result, dict) and result.get('error') == 'TOO_LONG':
+                tv_trailer.status = 'error'
+                tv_trailer.error_message = str(result.get('message', '')).split(':', 1)[-1].strip()[:500]
+                results["skipped_too_long"] = results.get("skipped_too_long", 0) + 1
+                _nexup_sync_progress["status"] = f"Skipped '{show['title']}' S{show['season_number']} - trailer is longer than the max duration"
+                _file_log(f"Sonarr Sync: Skipped '{show['title']}' S{show['season_number']} - {tv_trailer.error_message}")
             else:
                 tv_trailer.status = 'error'
                 tv_trailer.error_message = "Download failed - no file returned"
@@ -22252,6 +22308,7 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
                 "title": t.title,
                 "year": t.year,
                 "overview": t.overview,
+                "genres": t.genre_list(),
                 "release_date": t.release_date.isoformat() if t.release_date else None,
                 "release_type": t.release_type,
                 "days_until": calc_days_until(t.release_date),
@@ -22722,7 +22779,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
                 if head.strip().replace('_', '').isalpha() and head.strip().isupper():
                     clean = rest.strip()
 
-            if err_code in ('VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED'):
+            if err_code in ('VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED', 'TOO_LONG'):
                 # Concrete, known reason from YouTube — show it verbatim (already
                 # written for users, and NOT "try again", which would mislead).
                 help_msg = clean
@@ -22781,6 +22838,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
         title=movie.get('title', 'Unknown'),
         year=movie.get('year'),
         certification=movie.get('certification'),
+        genres=genre_json(movie.get('genres')),
         overview=movie.get('overview', ''),
         release_date=release_date,
         release_type=release_type,
@@ -23174,10 +23232,11 @@ async def sync_nexup(db: Session = Depends(get_db)):
         "expired": 0,
         "skipped_no_trailer": 0,
         "skipped_already_exists": 0,
+        "skipped_too_long": 0,
         "eligible": 0,
         "errors": []
     }
-    
+
     try:
         # Get ALL movies from Radarr in ONE request (includes download status)
         days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
@@ -23356,6 +23415,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
                         title=movie['title'],
                         year=movie.get('year'),
                         certification=movie.get('certification'),
+                        genres=genre_json(movie.get('genres')),
                         overview=movie.get('overview', ''),
                         release_date=datetime.datetime.fromisoformat(movie['release_date']).date() if movie.get('release_date') else None,
                         release_type=movie.get('release_type'),
@@ -23383,7 +23443,13 @@ async def sync_nexup(db: Session = Depends(get_db)):
                     # Check if result contains YouTube bot block error
                     error_code = str(result.get('error', '')) if result and isinstance(result, dict) else ''
                     detail_msg = str(result.get('message', '')) if result and isinstance(result, dict) else ''
-                    if 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
+                    if error_code == 'TOO_LONG':
+                        # The user's Max Trailer Duration rejected it: a choice,
+                        # not a failure, so it doesn't belong in the error list.
+                        results["skipped_too_long"] = results.get("skipped_too_long", 0) + 1
+                        _nexup_sync_progress["status"] = f"Skipped '{movie['title']}' - trailer is longer than the max duration"
+                        _file_log(f"NeX-Up sync: Skipped '{movie['title']}' - {detail_msg.split(':', 1)[-1].strip()}")
+                    elif 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
                         error_msg = "YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
                         _nexup_sync_progress["status"] = f"YouTube blocked '{movie['title']}' - try re-exporting cookies"
                         _nexup_sync_progress["cookie_error"] = True  # Flag for UI to show help
@@ -25562,7 +25628,9 @@ def evaluate_sequence_conditions(
     For the Sequence Builder preview in Advanced mode. Each entry is
     {"outcome": "plays" | "otherwise" | "skipped", "block": <block to preview
     or null>, "reason": <condition summary or null>}. Blocks without a
-    condition always come back as "plays", unchanged.
+    condition outside an Else if chain always come back as "plays",
+    unchanged. A block in a chain also carries "chain_winner": the index of
+    the chain member that plays, or null when none does.
     """
     from backend.media_audio import FORMATS
     if audio_format is not None and audio_format not in FORMATS:
@@ -25578,17 +25646,20 @@ def evaluate_sequence_conditions(
     )
     results = []
     for block_index, block in enumerate(blocks):
-        if not isinstance(block, dict) or not isinstance(block.get("condition"), dict):
+        if not needs_evaluation(blocks, block_index):
             results.append({"outcome": "plays", "block": block, "reason": None})
             continue
         chosen = sequence_block_to_play(blocks, block_index, ctx)
         summary = describe_condition(block.get("condition"))
         if chosen is block:
-            results.append({"outcome": "plays", "block": block, "reason": summary})
+            entry = {"outcome": "plays", "block": block, "reason": summary}
         elif chosen is None:
-            results.append({"outcome": "skipped", "block": None, "reason": summary})
+            entry = {"outcome": "skipped", "block": None, "reason": summary}
         else:
-            results.append({"outcome": "otherwise", "block": chosen, "reason": summary})
+            entry = {"outcome": "otherwise", "block": chosen, "reason": summary}
+        if in_chain(blocks, block_index):
+            entry["chain_winner"] = chain_choice(blocks, block_index, ctx)[0]
+        results.append(entry)
     return {"blocks": results}
 
 

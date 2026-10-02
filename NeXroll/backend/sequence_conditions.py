@@ -18,6 +18,19 @@ When the condition holds the block plays as normal. When it does not, the
 block without a condition always plays, so every sequence written before this
 existed behaves exactly as it did.
 
+Else if chains (first match wins). A block may set ``"else_if": true`` to
+join the block above it in a chain:
+
+    [{"type": "random", "category_id": 1, "condition": {genre Horror}},
+     {"type": "random", "category_id": 2, "condition": {genre Sci-Fi}, "else_if": true},
+     {"type": "random", "category_id": 3, "else_if": true}]
+
+Only the first block in a chain whose condition holds plays; a member without
+a condition always holds, so it is the chain's ELSE. A member that does not
+hold plays nothing while the chain goes on, so only the last member's
+``otherwise`` can play, and only when no member held. Releases before 2.2.2
+ignore the flag and check every block on its own.
+
 A rule NeXroll cannot answer counts as not met. That matters for the rules
 that depend on what is about to play (genre, media type, stored audio): Jellyfin and Emby
 say, Plex cannot, so on Plex such a block plays its ``otherwise`` rather than
@@ -93,6 +106,14 @@ class PlaybackContext:
     genre_lookup: Optional[Callable[[], Optional[list]]] = None
     tmdb_lookup: Optional[Callable[[], Optional[str]]] = None
     audio_lookup: Optional[Callable[[], Optional[dict]]] = None
+    # Where the block being checked, and its this/next trailer block, sit in
+    # their sequence, so an availability rule can follow an Else if chain.
+    sequence_blocks: Optional[list] = field(default=None, repr=False)
+    condition_index: Optional[int] = field(default=None, repr=False)
+    availability_index: Optional[int] = field(default=None, repr=False)
+    # Shared by every copy made with replace(), like _trailer_cache, so each
+    # chain is decided once per resolution pass.
+    _chain_cache: dict = field(default_factory=dict, repr=False)
     _audio: Optional[dict] = field(default=None, repr=False)
     _audio_known: bool = field(default=False, repr=False)
     _trailer_cache: dict = field(default_factory=dict, repr=False)
@@ -190,7 +211,7 @@ def evaluate_rule(rule: dict, ctx: PlaybackContext) -> Optional[bool]:
         if rule.get("pool") == "block":
             target = ctx.availability_block
             if target is not None and target is not ctx.condition_block:
-                target = block_to_play(target, replace(ctx, condition_block=target))
+                target = _availability_choice(target, ctx)
             if not target or target.get("type") not in ("nexup_trailers", "library_trailers"):
                 count = 0
             elif ctx.trailer_pool_count is None:
@@ -340,13 +361,143 @@ def describe_condition(condition) -> str:
     return joiner.join(parts)
 
 
-def sequence_block_to_play(blocks, index, context):
-    """Bind availability to this/next trailer block for playback and previews.
+def is_else_if(block) -> bool:
+    """True when a block joins the Else if chain of the block above it."""
+    return isinstance(block, dict) and block.get("else_if") is True
 
-    Relative position survives save/export/reorder without a stale numeric ID.
+
+def chain_bounds(blocks, index) -> tuple:
+    """First and last index of the Else if chain holding ``blocks[index]``.
+
+    A block outside any chain is a chain of one: (index, index). The first
+    block of a sequence starts a chain even if it is marked Else if, since
+    there is nothing above it to follow.
+    """
+    start = index
+    while start > 0 and is_else_if(blocks[start]):
+        start -= 1
+    end = index
+    while end + 1 < len(blocks) and is_else_if(blocks[end + 1]):
+        end += 1
+    return start, end
+
+
+def in_chain(blocks, index) -> bool:
+    """True when ``blocks[index]`` belongs to an Else if chain of two or more."""
+    start, end = chain_bounds(blocks, index)
+    return start != end
+
+
+def _bound_context(blocks, index, context):
+    """The context for checking one block's condition where it sits.
+
+    Availability binds to this/next trailer block by relative position, which
+    survives save/export/reorder without a stale numeric ID.
+    """
+    target_index = next((j for j in range(index, len(blocks)) if isinstance(blocks[j], dict)
+                         and blocks[j].get("type") in ("nexup_trailers", "library_trailers")), None)
+    return replace(context,
+                   availability_block=blocks[target_index] if target_index is not None else None,
+                   availability_index=target_index,
+                   condition_block=blocks[index],
+                   condition_index=index,
+                   sequence_blocks=blocks)
+
+
+def _holds(blocks, index, context) -> bool:
+    block = blocks[index]
+    return "condition" not in block or condition_holds(block.get("condition"), _bound_context(blocks, index, context))
+
+
+def _otherwise_of(block) -> Optional[dict]:
+    otherwise = block.get("otherwise")
+    if isinstance(otherwise, dict) and str(otherwise.get("type", "")).lower() in OTHERWISE_TYPES:
+        return otherwise
+    return None
+
+
+def chain_choice(blocks, index, context) -> tuple:
+    """(index, block) that plays for the chain holding ``blocks[index]``.
+
+    The first member whose condition holds plays. When none does, the last
+    member's ``otherwise`` plays at that member's slot, or nothing does:
+    (None, None). Decided once per chain and context.
+    """
+    start, end = chain_bounds(blocks, index)
+    # The cache keeps the list itself, so its id cannot be reused by another
+    # sequence resolved with the same context.
+    key = (id(blocks), start)
+    cached = context._chain_cache.get(key)
+    if cached is not None and cached[0] is blocks:
+        return cached[1]
+    # Mark the chain as undecided while it is checked. A member whose
+    # availability rule follows a trailer block in this same chain does not
+    # come back here (see _availability_choice), so this only guards against
+    # recursion in a malformed sequence.
+    context._chain_cache[key] = (blocks, (None, None))
+    result = (None, None)
+    for k in range(start, end + 1):
+        block = blocks[k]
+        if not isinstance(block, dict):
+            continue
+        if _holds(blocks, k, context):
+            result = (k, block)
+            break
+        if k == end:
+            otherwise = _otherwise_of(block)
+            if otherwise is not None:
+                result = (k, otherwise)
+    context._chain_cache[key] = (blocks, result)
+    return result
+
+
+def _availability_choice(target, ctx):
+    """What actually plays for a this/next trailer block target.
+
+    When the target sits in an Else if chain, the chain decides: the trailer
+    block that wins it (or its final Otherwise), whichever member that is. A
+    condition inside that same chain checks the target on its own, as before,
+    since the chain's answer would depend on that very condition.
+    """
+    blocks, j = ctx.sequence_blocks, ctx.availability_index
+    if blocks is not None and j is not None and j < len(blocks) and blocks[j] is target:
+        start, end = chain_bounds(blocks, j)
+        i = ctx.condition_index
+        if start != end and not (i is not None and start <= i <= end):
+            return chain_choice(blocks, j, ctx)[1]
+    return block_to_play(target, replace(ctx, condition_block=target))
+
+
+def sequence_block_to_play(blocks, index, context):
+    """The block that plays in ``blocks[index]``'s slot, or None.
+
+    Like block_to_play, with the block's place in the sequence taken into
+    account: availability rules bind to this/next trailer block, and a block
+    in an Else if chain plays only if it is the chain's first match (or, as
+    the chain's last member, its Otherwise when nothing matched).
     Counting never samples trailers or consumes their shuffle rotation.
     """
-    target = next((b for b in blocks[index:] if isinstance(b, dict) and
-                   b.get("type") in ("nexup_trailers", "library_trailers")), None)
-    return block_to_play(blocks[index], replace(context, availability_block=target,
-                                               condition_block=blocks[index]))
+    if not in_chain(blocks, index):
+        return block_to_play(blocks[index], _bound_context(blocks, index, context))
+    chosen_index, chosen = chain_choice(blocks, index, context)
+    return chosen if chosen_index == index else None
+
+
+def needs_evaluation(blocks, index) -> bool:
+    """True when what plays in this slot depends on a condition: its own, or
+    another member's in its Else if chain."""
+    block = blocks[index]
+    return isinstance(block, dict) and (isinstance(block.get("condition"), dict) or in_chain(blocks, index))
+
+
+def skip_reason(blocks, index, context) -> str:
+    """Why ``blocks[index]`` plays nothing, in words, for logs and previews."""
+    block = blocks[index]
+    summary = describe_condition(block.get("condition")) if isinstance(block, dict) else "always"
+    if in_chain(blocks, index):
+        chosen_index, _ = chain_choice(blocks, index, context)
+        if chosen_index is not None and chosen_index < index:
+            return f"block {chosen_index + 1} in its Else if chain already played"
+        if chosen_index is not None and chosen_index > index:
+            return f"condition not met ({summary}); block {chosen_index + 1} in its Else if chain played"
+    return f"condition not met ({summary})"

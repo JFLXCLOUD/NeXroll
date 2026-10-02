@@ -130,3 +130,42 @@ describe('condition wording', () => {
     expect(blocksHaveConditions([{ type: 'random', condition: { rules: [{ kind: 'media_type' }] } }])).toBe(true);
   });
 });
+
+describe('Else if in the block editor', () => {
+  const ChainHarness = ({ chain, onElseIfChange = () => {} }) => {
+    const [value, setValue] = useState({
+      condition: { match: 'all', rules: [{ kind: 'genre', values: ['Horror'] }] },
+      otherwise: null,
+    });
+    return (
+      <BlockConditionEditor condition={value.condition} otherwise={value.otherwise} onChange={setValue}
+        categories={categories} chain={chain} onElseIfChange={onElseIfChange} />
+    );
+  };
+
+  test('offers Else if only below a conditional block', () => {
+    const { rerender } = render(<ChainHarness chain={{ canChain: false }} />);
+    expect(screen.queryByLabelText(/Else if: only when the block above/)).not.toBeInTheDocument();
+    const toggle = jest.fn();
+    rerender(<ChainHarness chain={{ canChain: true }} onElseIfChange={toggle} />);
+    fireEvent.click(screen.getByLabelText(/Else if: only when the block above/));
+    expect(toggle).toHaveBeenCalledWith(true);
+  });
+
+  test('a block that continues a chain hands Otherwise to the next block', () => {
+    render(<ChainHarness chain={{ continues: true }} />);
+    expect(screen.queryByLabelText('Otherwise')).not.toBeInTheDocument();
+    expect(screen.getAllByText(/the Else if block below is checked/).length).toBeGreaterThan(0);
+  });
+
+  test('the last member asks what plays when nothing in the chain does', () => {
+    render(<ChainHarness chain={{ elseIf: true, canChain: true }} />);
+    expect(screen.getByLabelText('If no block in the chain plays')).toBeInTheDocument();
+    expect(screen.getByText(/Else if: plays only when no block above it in the chain played/)).toBeInTheDocument();
+  });
+
+  test('warns when an earlier member always wins', () => {
+    render(<ChainHarness chain={{ elseIf: true, neverPlays: true }} />);
+    expect(screen.getByText(/This block never plays/)).toBeInTheDocument();
+  });
+});

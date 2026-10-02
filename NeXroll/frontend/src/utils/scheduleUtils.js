@@ -518,3 +518,30 @@ export const yearlyOrHolidayDateRangesOverlap = (scheduleA, scheduleB) => {
     rangesB.some(([startB, endB]) => startA <= endB && startB <= endA)
   );
 };
+
+/**
+ * Yearly and Holiday schedules come round every year. Their stored dates mark
+ * a month/day window, often in a past year or the year-2000 placeholder, not a
+ * span of time that ends.
+ */
+export const isAnnualSchedule = (schedule) => schedule?.type === 'yearly' || schedule?.type === 'holiday';
+
+/**
+ * Whether an enabled schedule belongs in the dashboard's Upcoming list: it is
+ * running now, or it will run again. The server's next_run is the scheduler's
+ * own answer for every schedule type (null when it never runs again), so it
+ * decides. Today still counts, since next_run can lag a few minutes behind.
+ *
+ * The list used to drop anything whose stored end date had passed, which hid
+ * every Yearly or Holiday schedule saved with an earlier year's dates, such as
+ * a New Year holiday from December 27 to January 4 created last year.
+ */
+export const isUpcomingSchedule = (schedule, activeNow = false, now = new Date()) => {
+  if (!schedule?.is_active) return false;
+  if (activeNow) return true;
+  const next = schedule.next_run ? new Date(schedule.next_run) : null;
+  if (!next || Number.isNaN(next.getTime())) return false;
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  return next >= startOfToday;
+};

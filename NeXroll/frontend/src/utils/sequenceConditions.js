@@ -66,7 +66,52 @@ export const defaultCondition = () => ({ match: 'all', rules: [defaultRule()] })
 export const hasCondition = (block) =>
   !!(block && block.condition && Array.isArray(block.condition.rules) && block.condition.rules.length > 0);
 
-export const blocksHaveConditions = (blocks) => Array.isArray(blocks) && blocks.some(hasCondition);
+/**
+ * Else if chains (first match wins). A block with `else_if: true` joins the
+ * chain of the block above it: only the first member whose condition holds
+ * plays, a member without a condition is the chain's Else, and only the last
+ * member's Otherwise can play, when no member held. Mirrors
+ * sequence_conditions.chain_bounds in the backend.
+ */
+export const isElseIf = (block) => !!(block && block.else_if === true);
+
+/** First and last index of the chain holding blocks[index]; [index, index] alone. */
+export const chainBounds = (blocks, index) => {
+  let start = index;
+  while (start > 0 && isElseIf(blocks[start])) start -= 1;
+  let end = index;
+  while (end + 1 < blocks.length && isElseIf(blocks[end + 1])) end += 1;
+  return [start, end];
+};
+
+/**
+ * Where a block sits in an Else if chain, for the editors and the views:
+ * - elseIf: it follows the block above it
+ * - canChain: the block above has a condition, so following it can work
+ * - continues: the next block follows this one, so its Otherwise never plays
+ * - blockedAbove: the chain above has a member without a condition, which
+ *   always wins, so a block following it could never play
+ * - neverPlays: elseIf and blockedAbove
+ */
+export const chainInfo = (blocks, index) => {
+  const list = Array.isArray(blocks) ? blocks : [];
+  const elseIf = index > 0 && isElseIf(list[index]);
+  const blockedAbove = index > 0
+    && list.slice(chainBounds(list, index - 1)[0], index).some(member => !hasCondition(member));
+  return {
+    elseIf,
+    canChain: index > 0 && hasCondition(list[index - 1]),
+    continues: isElseIf(list[index + 1]),
+    blockedAbove,
+    neverPlays: elseIf && blockedAbove,
+  };
+};
+
+/** Short label for a chained block: "Else if" with a condition, "Else" without. */
+export const chainLabel = (block) => (hasCondition(block) ? 'Else if' : 'Else');
+
+export const blocksHaveConditions = (blocks) =>
+  Array.isArray(blocks) && blocks.some((block, index) => hasCondition(block) || (index > 0 && isElseIf(block)));
 
 export const describeRule = (rule) => {
   if (!rule) return '';
@@ -167,11 +212,27 @@ export const withRules = (condition, otherwise, rules) => (
     : { condition: null, otherwise: null }
 );
 
-/** Summary sentence shown under a condition, e.g. "Plays only when ... Otherwise, ...". */
-export const describeBlockCondition = (condition, otherwise, getCategoryName) => (
-  `Plays ${condition && condition.match === 'any' ? 'when' : 'only when'} ${describeCondition(condition)}. `
-  + `Otherwise, ${describeOtherwise(otherwise, getCategoryName)}.`
-);
+/**
+ * Summary sentence shown under a condition, e.g. "Plays only when ... Otherwise, ...".
+ * `chain` ({ elseIf, continues } from chainInfo) words it for an Else if chain.
+ */
+export const describeBlockCondition = (condition, otherwise, getCategoryName, chain = {}) => {
+  const rules = condition && Array.isArray(condition.rules) ? condition.rules : [];
+  const earlier = chain.elseIf ? 'no block above it in the chain played' : '';
+  if (!rules.length) {
+    return earlier ? `Else: plays only when ${earlier}.` : 'Always plays.';
+  }
+  const when = `${describeCondition(condition)}`;
+  const plays = earlier
+    ? `Else if: plays only when ${earlier} and ${condition.match === 'any' && rules.length > 1 ? `(${when})` : when}.`
+    : `Plays ${condition.match === 'any' ? 'when' : 'only when'} ${when}.`;
+  if (chain.continues) return `${plays} Otherwise, the Else if block below is checked.`;
+  if (earlier) {
+    const fallback = otherwise ? describeOtherwise(otherwise, getCategoryName) : 'nothing plays';
+    return `${plays} If no block in the chain plays, ${fallback}.`;
+  }
+  return `${plays} Otherwise, ${describeOtherwise(otherwise, getCategoryName)}.`;
+};
 
 // Per-browser builder preferences, shared by every builder on the page.
 const useStoredChoice = (key, allowed, fallback) => {

@@ -22,12 +22,15 @@ from backend.shuffle_bag import shuffle_bag_sample
 from backend.yearly_schedules import in_yearly_window
 from backend.schedule_recurrence import parse_recurrence, recurrence_error, WEEKDAYS
 from backend.library_trailers import eligible_library_trailers
-from backend.trailer_filters import filter_trailer_ratings, has_trailer_policy
+from backend.trailer_filters import (filter_trailer_ratings, genre_json, genre_keys, genre_rotation_key,
+                                     has_trailer_policy, match_playing_genre)
 from backend.sequence_conditions import (
     PlaybackContext,
     block_to_play,
     describe_condition,
     has_conditions,
+    needs_evaluation,
+    skip_reason,
 )
 
 # Logging helpers - direct file writes to avoid circular imports
@@ -208,15 +211,23 @@ def _localized_now(db: Session = None) -> datetime.datetime:
         tz = pytz.utc
     return datetime.datetime.now(tz).replace(tzinfo=None)
 
-def resolve_nexup_trailer_block(block: dict, db, rotation_key=None) -> list:
+def filtered_nexup_trailers(block: dict, db, context=None) -> list:
+    """The eligible NeX-Up pool for a block or rule, without sampling or
+    consuming rotation state: source, ratings, then the playing genre."""
+    rows = filter_trailer_ratings(eligible_nexup_trailers(db, block.get("source", "both")), block)
+    return match_playing_genre(rows, block, context)
+
+
+def resolve_nexup_trailer_block(block: dict, db, rotation_key=None,
+                                context: Optional[PlaybackContext] = None) -> list:
     """Resolve a 'nexup_trailers' sequence/filler step to ordered trailer rows.
 
-    Mirror of main.resolve_nexup_trailer_block (kept here to avoid importing the
-    FastAPI app module into the scheduler thread). Honors:
+    The single implementation: main.py imports this one. Honors:
       source: 'both'|'movies'|'tv'   mode: 'random'|'sequential'   count: int
+      match_playing / match_playing_only: see match_playing_genre
     Random = sample; Sequential = soonest release first. Eligible = any
     downloaded + enabled trailer whose file exists (NOT filtered by release
-    date — see main.resolve_nexup_trailer_block for why).
+    date).
     """
     source = str(block.get("source", "both")).lower()
     mode = str(block.get("mode", "random")).lower()
@@ -226,12 +237,13 @@ def resolve_nexup_trailer_block(block: dict, db, rotation_key=None) -> list:
         count = 2
     count = max(count, 1)
 
-    rows = filter_trailer_ratings(eligible_nexup_trailers(db, source), block)
+    rows = filtered_nexup_trailers({**block, "source": source}, db, context)
     if not rows:
         return []
     if mode == "sequential":
         rows.sort(key=lambda t: (t.release_date is None, t.release_date))
         return rows[:count]
+    rotation_key = genre_rotation_key(rotation_key, block, context)
     if rotation_key is not None:
         return shuffle_bag_sample(rotation_key, rows, count)
     if len(rows) > count:
@@ -349,7 +361,7 @@ def playback_context(db, media_type: Optional[str] = None,
         if pool == "library":
             return len(filtered_library_trailers(rule, db, context))
         if pool == "upcoming":
-            return len(filter_trailer_ratings(eligible_nexup_trailers(db, rule.get("source", "both")), rule))
+            return len(filtered_nexup_trailers(rule, db, context))
         return None
     context.trailer_pool_count = count_pool
     return context
@@ -360,24 +372,14 @@ def filtered_library_trailers(block: dict, db, context=None) -> list:
     """The full eligible pool, without sampling or consuming rotation state."""
     rows = filter_trailer_ratings(eligible_library_trailers(db), block)
 
-    def overlaps(row, names):
-        have = {g.lower() for g in row.genre_list()}
-        return bool(have & {str(n).lower() for n in names})
-
-    wanted = [g for g in (block.get("genres") or []) if str(g).strip()]
+    wanted = genre_keys(block.get("genres") or [])
     if wanted:
-        rows = [r for r in rows if overlaps(r, wanted)]
+        rows = [r for r in rows if genre_keys(r.genre_list()) & wanted]
     if context is not None:
         playing_tmdb = context.tmdb_id()
         if playing_tmdb:
             rows = [r for r in rows if str(r.tmdb_id or "") != playing_tmdb]
-        if block.get("match_playing"):
-            playing = context.genres()
-            if playing:
-                matched = [r for r in rows if overlaps(r, playing)]
-                if matched:
-                    rows = matched
-    return rows
+    return match_playing_genre(rows, block, context)
 
 
 def resolve_library_trailer_block(block: dict, db, rotation_key=None,
@@ -388,7 +390,8 @@ def resolve_library_trailer_block(block: dict, db, rotation_key=None,
       genres: [..]   only trailers for movies with any of these genres
       match_playing: prefer trailers sharing a genre with what is about to
                      play (Jellyfin/Emby); falls back to the whole pool when
-                     none do, or when the genre isn't known (Plex)
+                     none do, or when the genre isn't known (Plex), unless
+                     match_playing_only is set, which plays none instead
 
     The trailer for the movie that is about to play is never picked for it.
     """
@@ -402,6 +405,7 @@ def resolve_library_trailer_block(block: dict, db, rotation_key=None,
     if str(block.get("mode", "random")).lower() == "newest":
         rows.sort(key=lambda r: r.added_to_library or datetime.datetime.min, reverse=True)
         return rows[:count]
+    rotation_key = genre_rotation_key(rotation_key, block, context)
     if rotation_key is not None:
         return shuffle_bag_sample(rotation_key, rows, count)
     random.shuffle(rows)
@@ -465,7 +469,7 @@ def resolve_block_paths(block: dict, db, rotation_key=None,
                 paths.append(os.path.abspath(p.path))
 
     elif block_type == "nexup_trailers":
-        picked = resolve_nexup_trailer_block(block, db, rotation_key=rotation_key)
+        picked = resolve_nexup_trailer_block(block, db, rotation_key=rotation_key, context=context)
         if picked:
             paths.extend(os.path.abspath(t.local_path) for t in picked)
         else:
@@ -557,7 +561,7 @@ def resolve_sequence_paths(blocks, db, rotation_scope: tuple,
             continue
         rotation_key = (*rotation_scope, "block", block_index)
         chosen = block
-        if isinstance(block.get("condition"), dict):
+        if needs_evaluation(blocks, block_index):
             if ctx is None:
                 ctx = playback_context(db)
             chosen = sequence_block_to_play(blocks, block_index, ctx)
@@ -565,12 +569,14 @@ def resolve_sequence_paths(blocks, db, rotation_scope: tuple,
                 summary = describe_condition(block.get("condition"))
                 if chosen is None:
                     _scheduler_log(f"{log_prefix}: Skipped block {block_index + 1} ({block.get('type')}): "
-                                   f"condition not met ({summary})")
+                                   f"{skip_reason(blocks, block_index, ctx)}")
                     continue
                 _scheduler_log(f"{log_prefix}: Block {block_index + 1} ({block.get('type')}) condition not met "
                                f"({summary}); playing its alternative ({chosen.get('type')})")
                 rotation_key = (*rotation_key, "otherwise")
-        if ctx is None and str(chosen.get("type", "")).lower() == "library_trailers":
+        chosen_type = str(chosen.get("type", "")).lower()
+        if ctx is None and (chosen_type == "library_trailers"
+                            or (chosen_type == "nexup_trailers" and chosen.get("match_playing"))):
             ctx = playback_context(db)
         paths.extend(resolve_block_paths(
             chosen,
@@ -1506,6 +1512,7 @@ class Scheduler:
                     title=movie['title'],
                     year=movie.get('year'),
                     certification=movie.get('certification'),
+                    genres=genre_json(movie.get('genres')),
                     overview=movie.get('overview', ''),
                     release_date=datetime.datetime.strptime(movie['release_date'], '%Y-%m-%d').date() if movie.get('release_date') else None,
                     release_type=movie.get('release_type'),
@@ -1540,6 +1547,9 @@ class Scheduler:
                 downloaded += 1
                 current_count += 1
                 _scheduler_log(f"NeX-Up auto-sync: Downloaded trailer for '{movie['title']}'")
+            else:
+                reason = str(result.get('message', '')) if isinstance(result, dict) else ''
+                _scheduler_log(f"NeX-Up auto-sync: No trailer saved for '{movie['title']}' - {reason or 'download failed'}")
         
         # Update last sync time (use local time for display)
         setting.nexup_last_sync = datetime.datetime.now()
@@ -1691,6 +1701,7 @@ class Scheduler:
                     year=show.get('year'),
                     season_number=show.get('season_number'),
                     certification=show.get('certification'),
+                    genres=genre_json(show.get('genres')),
                     overview=show.get('overview', ''),
                     network=show.get('network'),
                     release_date=datetime.datetime.strptime(show['release_date'], '%Y-%m-%d').date() if show.get('release_date') else None,
@@ -1722,7 +1733,10 @@ class Scheduler:
                 downloaded += 1
                 current_count += 1
                 _scheduler_log(f"NeX-Up auto-sync: Downloaded trailer for TV show '{show['title']}'")
-        
+            else:
+                reason = str(result.get('message', '')) if isinstance(result, dict) else ''
+                _scheduler_log(f"NeX-Up auto-sync: No trailer saved for TV show '{show['title']}' - {reason or 'download failed'}")
+
         # Update last sync time (use local time for display)
         setting.nexup_last_sonarr_sync = datetime.datetime.now()
         db.commit()

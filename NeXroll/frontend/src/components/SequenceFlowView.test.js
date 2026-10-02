@@ -82,3 +82,43 @@ describe('saved canvas positions', () => {
     expect(layout([block]).nodes[1].position).toEqual(layout([{ type: 'fixed' }]).nodes[1].position);
   });
 });
+
+describe('layoutSequence with Else if chains', () => {
+  const genre = (...values) => ({ match: 'all', rules: [{ kind: 'genre', values }] });
+  const chain = (fallback) => [
+    { type: 'random', condition: genre('Horror') },
+    { type: 'random', condition: genre('Science Fiction'), else_if: true, ...(fallback ? { otherwise: fallback } : {}) },
+  ];
+  const pairs = edges => edges.map(e => `${e.source}${e.sourceHandle ? `:${e.sourceHandle}` : ''}>${e.target}`);
+
+  test('members follow the false branch, and every branch joins the step after the chain', () => {
+    const { nodes, edges } = layout([...chain({ type: 'random', category_id: 4, count: 1 }), { type: 'fixed' }], true);
+    expect(nodes.map(n => n.id)).toEqual(['start', 'if-0', 'b-0', 'if-1', 'b-1', 'o-1', 'b-2', 'end']);
+    expect(nodes.find(n => n.id === 'if-0').data.keyword).toBe('IF');
+    expect(nodes.find(n => n.id === 'if-1').data.keyword).toBe('ELSE IF');
+    expect(pairs(edges)).toEqual([
+      'start>if-0', 'if-0:true>b-0', 'if-0:false>if-1', 'if-1:true>b-1', 'if-1:false>o-1',
+      'b-0>b-2', 'b-1>b-2', 'o-1>b-2', 'b-2>end',
+    ]);
+    // The false line into the next member carries the "+" for that gap.
+    expect(edges.find(e => e.source === 'if-0' && e.target === 'if-1').data.insertAt).toBe(1);
+    // The earlier met block sits higher, so lines to the join never cross it.
+    expect(nodes.find(n => n.id === 'b-0').position.y).toBeLessThan(nodes.find(n => n.id === 'b-1').position.y);
+  });
+
+  test('a member without a condition is the Else, and anything after it never plays', () => {
+    const blocks = [...chain(), { type: 'fixed', else_if: true }, { type: 'random', else_if: true, condition: genre('Action') }];
+    const { nodes, edges } = layout(blocks, true);
+    expect(nodes.map(n => n.id)).toEqual(['start', 'if-0', 'b-0', 'if-1', 'b-1', 'b-2', 'b-3', 'end']);
+    expect(nodes.find(n => n.id === 'b-2').data.badge).toBe('Else');
+    expect(nodes.find(n => n.id === 'b-3').data.badge).toBe('Else if / never plays');
+    expect(pairs(edges)).toContain('if-1:false>b-2');
+    expect(edges.some(e => e.target === 'b-3' || e.source === 'b-3')).toBe(false);
+  });
+
+  test('in Simple mode chained blocks stay single nodes labelled Else if', () => {
+    const { nodes } = layout(chain(), false);
+    expect(nodes.map(n => n.id)).toEqual(['start', 'b-0', 'b-1', 'end']);
+    expect(nodes[2].data.badge).toBe('Else if / Jellyfin & Emby');
+  });
+});

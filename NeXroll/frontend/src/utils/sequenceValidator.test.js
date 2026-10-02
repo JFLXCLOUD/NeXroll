@@ -29,6 +29,15 @@ describe('sanitizeSequence', () => {
       .toEqual([{ type: 'library_trailers', count: 3, mode: 'newest', genres: ['Horror'], match_playing: true }]);
   });
 
+  test('keeps the Else if flag, with or without a condition', () => {
+    const condition = { match: 'all', rules: [{ kind: 'genre', values: ['Horror'] }] };
+    expect(sanitizeSequence([
+      { id: 'ui-4', type: 'random', category_id: 1, count: 1, condition },
+      { id: 'ui-5', type: 'random', category_id: 2, count: 1, else_if: true },
+      { id: 'ui-6', type: 'random', category_id: 3, count: 1, else_if: false },
+    ]).map(block => block.else_if)).toEqual([undefined, true, undefined]);
+  });
+
   test('drops an empty condition and any alternative left behind', () => {
     const [saved] = sanitizeSequence([{
       type: 'fixed',

@@ -13,6 +13,8 @@
  * can say "about" rather than implying it measured something.
  */
 
+import { prerollInCategory } from './prerollCategories';
+
 // Typical lengths for content that does not exist yet at build time.
 export const ASSUMED = {
   preroll: 30,   // a preroll whose duration the library has not recorded
@@ -28,8 +30,9 @@ function durationOf(prerolls, id) {
     : { seconds: ASSUMED.preroll, known: false };
 }
 
+// Every preroll in the category, primary or not, as playback picks them.
 function inCategory(prerolls, categoryId) {
-  return prerolls.filter(p => p.category_id === categoryId);
+  return prerolls.filter(p => prerollInCategory(p, categoryId));
 }
 
 /** Ordered selections of `k` from `n` - how many ways a random block can play. */

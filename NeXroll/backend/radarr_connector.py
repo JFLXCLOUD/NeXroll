@@ -734,6 +734,12 @@ def _parse_cookies_from_browser(spec: str):
     return (browser.strip().lower(), profile or None, keyring or None, container or None)
 
 
+def _format_duration(seconds) -> str:
+    """151 -> '2:31', for messages that quote a trailer length."""
+    seconds = int(round(float(seconds or 0)))
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
 class TrailerDownloader:
     """Handles downloading trailers using yt-dlp with TMDB source discovery and browser cookie support"""
     
@@ -1005,6 +1011,10 @@ class TrailerDownloader:
                 creationflags = subprocess.CREATE_NO_WINDOW
             
             last_error = None
+            # Set when a source's trailer exceeded max_duration. It wins over any
+            # later source's error: the trailer exists and only the user's limit
+            # stopped it, which is the one thing they can act on.
+            too_long_error = None
             cookie_browser = self.get_cookie_browser()
             
             # Debug: Log cookie file status at download time
@@ -1033,11 +1043,13 @@ class TrailerDownloader:
                 elif source_type == 'vimeo':
                     # Vimeo usually works without cookies
                     result = await self._download_with_ytdlp(
-                        source_url, output_template, title, tmdb_id, 
+                        source_url, output_template, title, tmdb_id,
                         [], creationflags, output_dir
                     )
-                    if result:
+                    if isinstance(result, dict) and result.get('path'):
                         return result
+                    if isinstance(result, dict) and result.get('error') == 'too_long':
+                        too_long_error = result['message']
                     last_error = f"Vimeo download failed for {source_name}"
                     
                 elif source_type == 'youtube':
@@ -1091,7 +1103,8 @@ class TrailerDownloader:
 
                     # Track if cookies were tried and failed with bot detection
                     cookies_tried_but_failed = False
-                    best_error = None        # most specific classified yt-dlp error seen
+                    source_too_long = False
+                    best_error = None       # most specific classified yt-dlp error seen
                     last_strategy_msg = None  # raw text of the last failure
 
                     for i, strategy_args in enumerate(youtube_strategies):
@@ -1106,6 +1119,12 @@ class TrailerDownloader:
                         if isinstance(result, dict) and result.get('path'):
                             logger.info(f"Strategy {i+1} succeeded!")
                             return result
+                        # Every client sees the same length, so the remaining
+                        # strategies would only be rejected the same way.
+                        if isinstance(result, dict) and result.get('error') == 'too_long':
+                            too_long_error = result['message']
+                            source_too_long = True
+                            break
 
                         # Capture the REAL yt-dlp error so we can tell the user the
                         # actual reason (e.g. "video unavailable") instead of a guess.
@@ -1118,12 +1137,17 @@ class TrailerDownloader:
                                 best_error = {'category': cls['category'], 'raw': last_strategy_msg}
                             if '--cookies' in actual_args and cls['category'] == 'auth':
                                 cookies_tried_but_failed = True
-                        elif '--cookies' in actual_args and not result:
-                            cookies_tried_but_failed = True
+                        # A None result carries no error text, so it says nothing
+                        # about the cookies; treating it as a sign-in failure is
+                        # what turned skipped downloads into YOUTUBE_BOT_BLOCK.
 
                         # Small delay between strategies to avoid rate limiting
                         if i < len(youtube_strategies) - 1:
                             await asyncio.sleep(0.5)
+
+                    if source_too_long:
+                        # Not a YouTube failure, so none of the guidance below applies.
+                        continue
 
                     # Is the PO-token provider actually usable? Drives the guidance.
                     pot_usable = False
@@ -1193,7 +1217,11 @@ class TrailerDownloader:
                         )
                     logger.warning(last_error)
 
-            logger.error(f"All trailer sources failed for {title}. Last error: {last_error}")
+            if too_long_error:
+                last_error = too_long_error
+                logger.info(f"No trailer for {title} fits the max trailer duration: {last_error}")
+            else:
+                logger.error(f"All trailer sources failed for {title}. Last error: {last_error}")
             # Every strategy failed, so anything yt-dlp wrote is a dead fragment.
             # Clearing it keeps the folder clean and stops the next attempt from
             # trying to resume a partial that will just fail again.
@@ -1203,7 +1231,7 @@ class TrailerDownloader:
                 pass
             # Map the message prefix to a stable error code the UI can branch on.
             code = 'DOWNLOAD_FAILED'
-            for prefix in ('YOUTUBE_BOT_BLOCK', 'VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED', 'SABR_BLOCKED'):
+            for prefix in ('YOUTUBE_BOT_BLOCK', 'VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED', 'SABR_BLOCKED', 'TOO_LONG'):
                 if last_error and last_error.startswith(prefix):
                     code = prefix
                     break
@@ -1349,6 +1377,19 @@ class TrailerDownloader:
                         'resolution': f"{resolution}p" if resolution != 'Unknown' else 'Unknown'
                     }
                 else:
+                    # The duration match_filter rejects a video without raising:
+                    # yt-dlp returns the info dict and writes nothing. Report that
+                    # as its own error, or it reads as an unexplained failure and
+                    # gets blamed on YouTube blocking the download.
+                    duration = info.get('duration')
+                    if self.max_duration and self.max_duration > 0 and duration and duration > self.max_duration:
+                        message = (
+                            f"TOO_LONG: This trailer runs {_format_duration(duration)}, longer than the "
+                            f"{_format_duration(self.max_duration)} Max Trailer Duration in NeX-Up settings, "
+                            "so it was skipped. Raise that limit (or set it to No limit) to download it."
+                        )
+                        logger.info(f"Skipped {title}: trailer runs {duration}s, over the {self.max_duration}s max trailer duration")
+                        return {'error': 'too_long', 'duration': duration, 'message': message}
                     logger.warning(f"Download reported success but file not found for {title}")
                     return None
             elif result and not result.get('success'):
@@ -1517,7 +1558,7 @@ class NexUpManager:
         try:
             # Fetch upcoming movies from Radarr
             upcoming = await self.radarr.get_upcoming_movies(self.days_ahead)
-            from backend.trailer_filters import refresh_trailer_ratings
+            from backend.trailer_filters import genre_json, refresh_trailer_ratings
             refresh_trailer_ratings(db_session, models.ComingSoonTrailer, upcoming, "radarr_movie_id", "radarr_id")
             db_session.commit()
             results['fetched'] = len(upcoming)
@@ -1573,6 +1614,7 @@ class NexUpManager:
                         title=movie['title'],
                         year=movie.get('year'),
                         certification=movie.get('certification'),
+                        genres=genre_json(movie.get('genres')),
                         overview=movie.get('overview', ''),
                         release_date=datetime.fromisoformat(movie['release_date']).date() if movie['release_date'] else None,
                         release_type=movie.get('release_type'),

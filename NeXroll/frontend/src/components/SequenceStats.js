@@ -1,4 +1,5 @@
 import React from 'react';
+import { prerollInCategory } from '../utils/prerollCategories';
 
 /**
  * SequenceStats - Statistics dashboard for sequence analysis
@@ -43,13 +44,13 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
           stats.estimatedPrerollCount += block.preroll_ids.length;
         }
       } else if (block.type === 'random') {
-        const categoryPrerolls = prerolls.filter((p) => p.category_id === block.category_id);
+        const categoryPrerolls = prerolls.filter((p) => prerollInCategory(p, block.category_id));
         const avgDuration = categoryPrerolls.reduce((sum, p) => sum + (p.duration || 30), 0) / (categoryPrerolls.length || 1);
         stats.totalDuration += avgDuration * (block.count || 1);
         stats.estimatedPrerollCount += block.count || 1;
         stats.categories.add(block.category_id);
       } else if (block.type === 'sequential') {
-        const categoryPrerolls = prerolls.filter((p) => p.category_id === block.category_id);
+        const categoryPrerolls = prerolls.filter((p) => prerollInCategory(p, block.category_id));
         stats.totalDuration += categoryPrerolls.reduce((sum, p) => sum + (p.duration || 30), 0);
         stats.estimatedPrerollCount += categoryPrerolls.length;
         stats.categories.add(block.category_id);

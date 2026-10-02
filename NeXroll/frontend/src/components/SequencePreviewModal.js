@@ -300,12 +300,15 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
         const notes = [];
         const blocks = original.blocks.map((block, i) => {
           const result = results[i];
-          if (result && result.outcome === 'plays' && block.condition) {
+          // Else if chains report which member plays; null when none does.
+          const winner = result && 'chain_winner' in result ? result.chain_winner : undefined;
+          if (result && result.outcome === 'plays' && (block.condition || winner !== undefined)) {
             notes.push({
               index: i,
               label: block.label || BLOCK_LABELS[block.type] || 'Sequence block',
               outcome: 'plays',
               condition: block.condition,
+              winner,
             });
           }
           if (!result || result.outcome === 'plays') return block;
@@ -314,6 +317,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
             label: block.label || BLOCK_LABELS[block.type] || 'Sequence block',
             outcome: result.outcome,
             condition: block.condition,
+            winner,
           });
           if (result.outcome === 'skipped' || !result.block) return { id: block.id, type: CONDITION_SKIPPED };
           return { ...result.block, id: block.id };
@@ -650,7 +654,11 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
                 <div key={note.index}>
                   Block {note.index + 1} ({note.label}){' '}
                   {note.outcome === 'plays'
-                    ? <>plays, because {describeCondition(note.condition)}.</>
+                    ? (note.condition
+                      ? <>plays, because {describeCondition(note.condition)}.</>
+                      : <>plays, because no block above it in its Else if chain played.</>)
+                    : note.winner != null && note.winner < note.index
+                      ? <>is skipped, because block {note.winner + 1} in its Else if chain already played.</>
                     : <>
                       {note.outcome === 'skipped' ? 'is skipped' : 'plays its alternative'}
                       {!previewGenre && !previewAudio && needsPlaybackInfo(note.condition)

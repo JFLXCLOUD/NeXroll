@@ -78,6 +78,15 @@ class RecurrenceParityTests(unittest.TestCase):
         s = make_schedule(type='holiday', start_date=dt.datetime(2024, 2, 29), end_date=dt.datetime(2024, 3, 2, 23, 59))
         self.assertTrue(self.scheduler._is_schedule_active(s, dt.datetime(2027, 3, 1)))
 
+    def test_static_holiday_from_an_earlier_year_recurs_across_new_year(self):
+        # Reported: a New Year holiday saved in 2025 as December 27 - January 4.
+        # The dashboard's Upcoming list relies on this next run.
+        s = make_schedule(type='holiday', start_date=dt.datetime(2025, 12, 27),
+                          end_date=dt.datetime(2026, 1, 4, 23, 59, 59))
+        self.assertEqual(self.next(s, dt.datetime(2026, 10, 1, 12)), dt.datetime(2026, 12, 27))
+        self.assertTrue(self.scheduler._is_schedule_active(s, dt.datetime(2027, 1, 2, 20)))
+        self.assertFalse(self.scheduler._is_schedule_active(s, dt.datetime(2027, 1, 5, 12)))
+
     def test_leap_day_crosses_non_leap_century(self):
         s = make_schedule(type='monthly', start_date=dt.datetime(2000, 1, 1), recurrence_pattern='{"months":[2],"monthDays":[29]}')
         self.assertEqual(self.next(s, dt.datetime(2097, 1, 1)), dt.datetime(2104, 2, 29))

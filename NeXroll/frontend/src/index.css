@@ -1625,6 +1625,37 @@ details.nx-plex-help[open] {
   padding: 0.35rem 0.6rem;
 }
 
+/* CategorySelect's inline "+ New category" name field. Wraps under itself in
+   narrow places (bulk bars, community rows) instead of overflowing. */
+.nx-category-create {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  min-width: 0;
+}
+.nx-category-create input {
+  flex: 1 1 160px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+.nx-category-create .button {
+  min-height: unset;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+/* The Library's bulk bar is one compact row: keep the field on it. */
+.nx-hybrid-bulk-dock .nx-category-create { flex-wrap: nowrap; }
+.nx-hybrid-bulk-dock .nx-category-create input { flex: 0 1 180px; height: 34px; font-size: 11px; }
+.nx-hybrid-bulk-dock .nx-category-create .button { height: 34px; font-size: 11px; }
+
 /* ---------- Map Root Loading Indicator (theme-aware) ---------- */
 .nx-map-progress {
   padding: 0.5rem 0.75rem;
@@ -4017,6 +4048,9 @@ body.dark .react-grid-item.react-grid-placeholder {
 }
 .nx-dot.bad {
   background: var(--text-muted);
+}
+.nx-dot.warn {
+  background: var(--warning-color);
 }
 
 /* Context banner (active server / none / conflict). */
@@ -6822,6 +6856,7 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 .nx-connect-card-copy strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nx-connect-card-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; color: var(--text-muted); }
 .nx-connect-card-badge.ok { color: var(--success-color); }
+.nx-connect-card-badge.warn { color: var(--warning-color); }
 .nx-connect-card-body { padding: 10px 12px 12px; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 9px; }
 .nx-connect-card-body .button { min-height: unset; padding: 6px 10px; font-size: 12px !important; align-self: flex-start; }
 .nx-connect-card-meta { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); }

@@ -561,7 +561,8 @@ async def sync_library_trailers(db, movies: list, storage: str, config: dict, do
         progress["status"] = f"Downloading trailer for {title}..."
         progress["current"] = {"title": title, "year": movie.get("year"), "poster_url": movie_poster(movie)}
         url = f"https://www.youtube.com/watch?v={movie['youTubeTrailerId']}" if movie.get("youTubeTrailerId") else None
-        row = _upsert(db, rows_by_movie, movie, source="download", trailer_url=url, last_attempt_at=now, in_selection=True)
+        row = _upsert(db, rows_by_movie, movie, source="download", trailer_url=url, last_attempt_at=now,
+                      in_selection=True, error_message=None)
         try:
             got = await downloader.download_trailer(url, title, tmdb_id=movie.get("tmdbId"), year=movie.get("year"))
         except Exception as exc:  # the downloader reports most failures as None
@@ -578,7 +579,9 @@ async def sync_library_trailers(db, movies: list, storage: str, config: dict, do
             _event(progress, "downloaded", title, poster=movie_poster(movie))
         else:
             row.status = "error"
-            row.error_message = row.error_message or "No trailer could be downloaded for this movie."
+            # download_trailer's message leads with an internal CODE: prefix.
+            reason = str(got.get("message") or "").split(":", 1)[-1].strip() if isinstance(got, dict) else ""
+            row.error_message = row.error_message or reason[:500] or "No trailer could be downloaded for this movie."
             result["failed"] += 1
             _event(progress, "failed", title, poster=movie_poster(movie))
         progress["download_done"] = progress.get("download_done", 0) + 1
@@ -718,6 +721,8 @@ async def _sync_quota_downloads(db, candidates, rows_by_movie, storage, config,
             got = await downloader.download_trailer(url, title, tmdb_id=movie.get('tmdbId'), year=movie.get('year'))
         except Exception as exc:
             got, error = None, str(exc)[:500]
+        if isinstance(got, dict) and got.get('error') and not got.get('path'):
+            error = str(got.get('message') or '').split(':', 1)[-1].strip()[:500] or None
         path = got.get('path') if got else None
         valid = bool(path and os.path.isfile(path) and _inside(os.path.realpath(path), os.path.realpath(library_dir(storage))))
         if valid:

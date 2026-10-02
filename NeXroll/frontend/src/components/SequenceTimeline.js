@@ -3,6 +3,7 @@ import {
   Film, Shuffle, ListOrdered, Clock, Play, Layers, 
   GripVertical, Timer, BarChart3, Clapperboard, LayoutGrid, Sparkles
 } from 'lucide-react';
+import { prerollInCategory } from '../utils/prerollCategories';
 
 /**
  * SequenceTimeline - Timeline visualization for sequence blocks
@@ -28,7 +29,7 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
         return sum + (preroll?.duration || 30);
       }, 0);
     } else if (block.type === 'random' || block.type === 'sequential') {
-      const categoryPrerolls = prerolls.filter((p) => p.category_id === block.category_id);
+      const categoryPrerolls = prerolls.filter((p) => prerollInCategory(p, block.category_id));
       const avgDuration = categoryPrerolls.reduce((sum, p) => sum + (p.duration || 30), 0) / (categoryPrerolls.length || 1);
       return avgDuration * (block.count || 1);
     } else if (block.type === 'queue') {
@@ -125,7 +126,7 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
       }
       return null;
     } else if (block.type === 'random' || block.type === 'sequential') {
-      const categoryPrerolls = prerolls.filter((p) => p.category_id === block.category_id);
+      const categoryPrerolls = prerolls.filter((p) => prerollInCategory(p, block.category_id));
       return categoryPrerolls[0]?.thumbnail;
     }
     return null;

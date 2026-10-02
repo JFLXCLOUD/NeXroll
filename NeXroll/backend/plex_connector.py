@@ -719,6 +719,35 @@ class PlexConnector:
         "CinemaTrailersAlwaysIncludeEnglish", # bool: always include English trailers for movies not in library
     )
 
+    # Where Plex finds trailers of its own. With every one off Plex has no
+    # trailers to add, so an app set to "Play 1 before movie" plays the preroll
+    # list and nothing else. Plex's newer apps (Apple TV and iOS 2026.18, the
+    # Android TV 2026.17 beta) skip prerolls on "Play Pre-roll Only" but still
+    # play them on "Play 1", so this is the setup that works on every app.
+    CINEMA_TRAILER_SOURCE_IDS = (
+        "CinemaTrailersFromLibrary",
+        "CinemaTrailersFromTheater",
+        "CinemaTrailersFromBluRay",
+    )
+
+    def disable_trailer_sources(self) -> Optional[dict]:
+        """
+        Switch off every trailer source the server advertises and leave the
+        other Cinema Trailers settings alone. Returns {"changed": [...],
+        "failed": [...]} with setting ids, or None if the prefs can't be read.
+        Sources that are already off are not written.
+        """
+        prefs = self.get_cinema_trailer_prefs()
+        if prefs is None:
+            return None
+        changed, failed = [], []
+        for sid in self.CINEMA_TRAILER_SOURCE_IDS:
+            pref = prefs.get(sid)
+            if pref is None or str(pref.get("value", "")).strip().lower() not in ("1", "true"):
+                continue
+            (changed if self.set_pref(sid, False) else failed).append(sid)
+        return {"changed": changed, "failed": failed}
+
     def get_cinema_trailer_prefs(self) -> Optional[dict]:
         """
         Read the Cinema Trailers preferences from the Plex server's /:/prefs.

@@ -1,9 +1,10 @@
 import TrailerRatingFilter from './components/TrailerRatingFilter';
+import TrailerGenreMatch from './components/TrailerGenreMatch';
 import CommunityAIBadge from './components/CommunityAIBadge';
 import ConflictLink from './components/ConflictLink';
 import LibraryTrailersTile from './components/LibraryTrailersTile';
 import { isAICommunitySource } from './utils/communityAI';
-import { ratingSummary } from './utils/trailerRatings';
+import { genreMatchSummary, ratingSummary } from './utils/trailerRatings';
 import useHealthSummary from './hooks/useHealthSummary';
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -16,8 +17,9 @@ import PatternImport from './components/PatternImport';
 import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
 import SequenceConditionPanel from './components/SequenceConditionPanel';
+import CategorySelect from './components/CategorySelect';
 import GenrePicker from './components/GenrePicker';
-import { blocksHaveConditions, hasCondition, needsPlaybackInfo, useBuilderMode, useBuilderView } from './utils/sequenceConditions';
+import { blocksHaveConditions, chainInfo, chainLabel, hasCondition, needsPlaybackInfo, useBuilderMode, useBuilderView } from './utils/sequenceConditions';
 import Sidebar from './components/Sidebar';
 import YearlyScheduleFields from './components/YearlyScheduleFields';
 import OnboardingWizard from './components/OnboardingWizard';
@@ -27,6 +29,7 @@ import { PlexPathCheck, FindPlexFolder, PlexFolderPicker, StatusIcon, statusText
 import PluginPlayback from './components/PluginPlayback';
 import { captureDynamicPrerollFrame, drawThemeBackdropFrame, fontStackFor, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
 import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount, sequenceHasUnsavedChanges } from './utils/sequenceValidator';
+import { isUncategorized, prerollCategoryLabels, prerollInCategory } from './utils/prerollCategories';
 import {
   buildBlendBothChanges,
   buildRecurrencePattern,
@@ -41,6 +44,8 @@ import {
   getAnchoredTimeRangeOverlap,
   getSchedulePairKey,
   isEffectiveBlendPair,
+  isAnnualSchedule,
+  isUpcomingSchedule,
   isYearlyOrHolidayScheduleActiveOnDay,
   scheduleIntervalsOnDay,
   priorityToBeatExclusive,
@@ -916,6 +921,11 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
   const [query, setQuery] = React.useState('');
   const containerRef = React.useRef(null);
   const inputRef = React.useRef(null);
+  const searchRef = React.useRef(null);
+  // "+ New category" was only reachable by typing a name that matched nothing,
+  // so people closed the dialog to create one elsewhere. Naming mode makes it
+  // visible: the search box asks for the new name and Enter creates it.
+  const [naming, setNaming] = React.useState(false);
   const listboxId = React.useMemo(() => 'nx-catpicker-list-' + Math.random().toString(36).slice(2), []);
 
   React.useEffect(() => {
@@ -932,6 +942,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
     if (open && inputRef.current) {
       inputRef.current.focus();
     }
+    if (!open) setNaming(false);
   }, [open]);
 
   const [creating, setCreating] = React.useState(false);
@@ -962,6 +973,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
           onChange(normalizedPrimary, nextSecondary);
         }
         setQuery('');
+        setNaming(false);
         setOpen(false);
       }
     } catch (err) {
@@ -1083,12 +1095,31 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
         <div className="nx-catpicker-dropdown">
           <div className="nx-catpicker-search">
             <input
+              ref={searchRef}
               type="text"
-              placeholder={placeholder}
+              aria-label={onCreateCategory ? 'Search or create a category' : 'Search categories'}
+              placeholder={naming ? 'Name the new category, then press Enter' : (onCreateCategory ? 'Search or create a category…' : placeholder)}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                if (showCreate) handleCreateCategory();
+                else if (filtered.length === 1) toggle(filtered[0].id);
+              }}
             />
           </div>
+          {onCreateCategory && !normalizedQuery && (
+            <div className="nx-catpicker-create">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={(e) => { e.stopPropagation(); setNaming(true); if (searchRef.current) searchRef.current.focus(); }}
+              >
+                <Plus size={14} style={{ marginRight: '6px' }} /> New category
+              </button>
+            </div>
+          )}
           {showCreate && (
             <div className="nx-catpicker-create">
               <button
@@ -5566,10 +5597,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  const handleRescanPrerolls = async ({ deleteMissing = false, dedupe = false } = {}) => {
+  const handleRescanPrerolls = async ({ deleteMissing = false, dedupe = false, confirmText = null } = {}) => {
     if (deleteMissing) {
       const ok = window.confirm(
-        'Remove database rows for prerolls whose files are missing from disk? This cannot be undone.'
+        confirmText || 'Remove database rows for prerolls whose files are missing from disk? This cannot be undone.'
       );
       if (!ok) return;
     }
@@ -5606,6 +5637,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       ];
       if (deleteMissing) {
         lines.push(`${stats.deleted_missing || 0} missing row${stats.deleted_missing === 1 ? '' : 's'} removed.`);
+      } else if (stats.deleted_missing) {
+        // The ordinary scan clears entries for files deleted from folders that are still there.
+        lines.push(`${stats.deleted_missing} entr${stats.deleted_missing === 1 ? 'y' : 'ies'} for deleted files removed.`);
+      }
+      if (!deleteMissing && stats.storage_maybe_offline && stats.missing_not_pruned) {
+        lines.push(`The missing files were in folders that are gone or empty, so NeXroll kept their entries in case the storage is offline. If you deleted them, remove them with Remove Missing Rows in Settings > Backup & Restore.`);
       }
       if (dedupe) {
         lines.push(`${stats.deduped_rows || 0} duplicate row${stats.deduped_rows === 1 ? '' : 's'} merged.`);
@@ -6059,9 +6096,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     const payload = {};
     if (editForm.tags && editForm.tags.trim()) payload.tags = editForm.tags.trim();
     if (editForm.category_id) payload.category_id = parseInt(editForm.category_id);
-    if (editForm.category_ids && editForm.category_ids.length > 0) {
-      payload.category_ids = editForm.category_ids.map(id => parseInt(id)).filter(n => !isNaN(n));
-    }
+    // Always the whole list, empty included. Sending only a non-empty list of
+    // the other categories meant a removed category stayed (removing the first
+    // one only moved the file) and removing the last one did nothing at all.
+    payload.category_ids = [editForm.category_id, ...(editForm.category_ids || [])]
+      .map(id => parseInt(id, 10))
+      .filter((id, index, all) => !isNaN(id) && all.indexOf(id) === index);
     if (editForm.description && editForm.description.trim()) payload.description = editForm.description.trim();
     if (typeof editForm.display_name === 'string') payload.display_name = editForm.display_name.trim();
     if (editForm.new_filename && editForm.new_filename.trim()) payload.new_filename = editForm.new_filename.trim();
@@ -6666,18 +6706,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     //    no categories at all (after v1.13.0 deletes a category, prerolls that had
     //    only that category land here).
     if (filterCategory === 'uncategorized') {
-      filtered = filtered.filter(p => {
-        const hasM2m = p.categories && p.categories.length > 0;
-        const hasPrimary = p.category_id != null;
-        return !hasM2m && !hasPrimary;
-      });
+      filtered = filtered.filter(isUncategorized);
     } else if (filterCategory) {
       const catId = parseInt(filterCategory);
-      filtered = filtered.filter(p => {
-        if (p.category_id === catId) return true;
-        if (p.categories && p.categories.some(c => c.id === catId)) return true;
-        return false;
-      });
+      filtered = filtered.filter(p => prerollInCategory(p, catId));
     }
     
     // 2. Filter by tags
@@ -7130,11 +7162,7 @@ const DashboardTiles = {
       const rest = minutes % 60;
       return rest ? `${hours}h ${rest}m` : `${hours}h`;
     })();
-    const count = cat
-      ? prerolls.filter(p =>
-          p.category_id === cat.id || (p.categories || []).some(c => c.id === cat.id)
-        ).length
-      : null;
+    const count = cat ? prerolls.filter(p => prerollInCategory(p, cat.id)).length : null;
     // Playback mode, blend, and the "preview what's applied" action all moved
     // here from the retired "Currently Showing" tile, which rendered the same
     // active-schedule state this tile's left half already covers.
@@ -7255,9 +7283,10 @@ const DashboardTiles = {
   // The dashboard used to ship two upcoming-schedule lists - "What's next" and
   // "Upcoming Schedules" - whose filters disagreed, so the same queue could read
   // differently depending on which tile you looked at. This is now the only one.
-  // It keeps the older tile's more forgiving filter (an ongoing schedule with a
-  // past start and no end date still counts as upcoming) and its scrolling list,
-  // and shows as many rows as the tile's width and detail level allow.
+  // A schedule is listed while it runs or while the server's next_run says it
+  // will run again (isUpcomingSchedule), so an ongoing schedule with no end date
+  // stays and a Yearly or Holiday schedule saved with last year's dates is not
+  // dropped. It shows as many rows as the tile's width and detail level allow.
   whats_next: () => {
     const tile = dashLayout?.tiles?.whats_next || {};
     const detail = tile.detail || 'detailed';
@@ -7265,13 +7294,7 @@ const DashboardTiles = {
     const maxRows = detail === 'compact' ? 3 : ({ sm: 4, md: 8, lg: 20 }[size] || 8);
     const now = new Date();
     const upcoming = (schedules || [])
-      .filter(s => {
-        if (!s.is_active) return false;
-        if (!s.next_run && !s.start_date) return false;
-        // An end date already in the past means the schedule is finished, not
-        // upcoming. No end date means it is ongoing, so it stays in the list.
-        return s.end_date ? new Date(s.end_date) > now : true;
-      })
+      .filter(s => s.is_active)
       .map(s => {
         const start = s.start_date ? new Date(s.start_date) : null;
         const end = s.end_date ? new Date(s.end_date) : null;
@@ -7295,7 +7318,9 @@ const DashboardTiles = {
             ? (nowMinutes >= startMinutes || nowMinutes < finish)
             : (nowMinutes >= startMinutes && nowMinutes < finish);
         }
-        const notFinished = !end || end > now;
+        // A Yearly or Holiday end date belongs to an earlier occurrence (or is
+        // the year-2000 placeholder); it is not when the schedule ends.
+        const notFinished = isAnnualSchedule(s) || !end || end > now;
         return {
           ...s,
           isActiveNow: runsToday && withinWindow && notFinished,
@@ -7307,6 +7332,7 @@ const DashboardTiles = {
           when: usableScheduleDate(s.next_run) || start || now,
         };
       })
+      .filter(s => isUpcomingSchedule(s, s.isActiveNow, now))
       .sort((a, b) => (b.isActiveNow - a.isActiveNow) || (a.when - b.when))
       .slice(0, maxRows);
 
@@ -7627,8 +7653,8 @@ const DashboardTiles = {
   prerolls: () => {
     const total = prerolls.length;
     const totalCats = categories.length;
-    const usedCats = categories.filter(cat => prerolls.some(p => p.category_id === cat.id || (p.categories && p.categories.some(c => c.id === cat.id)))).length;
-    const uncategorized = prerolls.filter(p => !p.category_id && !(p.categories && p.categories.length > 0)).length;
+    const usedCats = categories.filter(cat => prerolls.some(p => prerollInCategory(p, cat.id))).length;
+    const uncategorized = prerolls.filter(isUncategorized).length;
     const recentCutoff = Date.now() - (7 * 86400000);
     const recentCount = prerolls.filter(p => p.upload_date && new Date(p.upload_date).getTime() >= recentCutoff).length;
     const detail = dashLayout?.tiles?.prerolls?.detail || 'detailed';
@@ -8430,8 +8456,18 @@ const DashboardTiles = {
           <div className="nx-page-header-actions">
             {activeTab === 'library' && (
               <>
-                <button type="button" className="button button-secondary" onClick={() => fetchData()}>
-                  <RefreshCw size={15} /> Refresh Library
+                {/* Scans the storage folder for added and deleted files, then
+                    reloads. It used to reload the page data only, so after
+                    deleting files on disk it looked like it did nothing. */}
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => handleRescanPrerolls()}
+                  disabled={backupProgress.active}
+                  title="Scan the storage folder for added or deleted files, then reload the library"
+                >
+                  <RefreshCw size={15} className={backupProgress.active && backupProgress.type === 'rescan' ? 'spin' : ''} />
+                  {backupProgress.active && backupProgress.type === 'rescan' ? 'Scanning...' : 'Refresh Library'}
                 </button>
                 <button type="button" className="button" onClick={() => setActiveTab('library/add')}>
                   <Upload size={15} /> Add Prerolls
@@ -8610,9 +8646,9 @@ const DashboardTiles = {
     let items = [];
 
     if (activeTab === 'library') {
-      const uncategorized = prerolls.filter(preroll =>
-        !preroll.category && !preroll.category_id && !(preroll.category_ids || []).length
-      ).length;
+      // category_ids is never returned by the API, so the old check here
+      // counted every preroll without a primary category (issue #45).
+      const uncategorized = prerolls.filter(isUncategorized).length;
       items = [
         // Count what the grid will actually show. This counted every row in the
         // database while the grid hides NeX-Up output by default, so a library
@@ -9839,12 +9875,23 @@ const DashboardTiles = {
                   Library health needs attention
                 </h3>
                 <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                  {storageHealth.missing_files > 0 && storageHealth.storage_maybe_offline && (
+                  {storageHealth.missing_files > 0 && storageHealth.storage_maybe_offline && !(storageHealth.files_on_disk > 0) && (
                     <div>
                       <strong>{storageHealth.missing_files}</strong> preroll file{storageHealth.missing_files === 1 ? '' : 's'} could not be found. This usually means your
                       storage location (e.g. a network share or external drive) is offline.
                       NeXroll left these entries in place &mdash; they'll relink automatically once storage is back.
                       Do <strong>not</strong> use "Remove Missing Rows" unless you're sure the files are gone for good.
+                    </div>
+                  )}
+                  {/* Files were found, so the storage answers. The missing ones
+                      sat in folders that are now gone or empty: deleted on
+                      purpose, or a share or drive that is offline. NeXroll can't
+                      tell which, so it asks rather than telling the user to wait. */}
+                  {storageHealth.missing_files > 0 && storageHealth.storage_maybe_offline && storageHealth.files_on_disk > 0 && (
+                    <div>
+                      <strong>{storageHealth.missing_files}</strong> preroll file{storageHealth.missing_files === 1 ? '' : 's'} can't be found, and the folders that held them are now gone or empty.
+                      If you deleted them, remove their entries. If they are on a network share or drive that is offline, leave them:
+                      they relink automatically once it is back.
                     </div>
                   )}
                   {storageHealth.missing_files > 0 && !storageHealth.storage_maybe_offline && (
@@ -9863,6 +9910,18 @@ const DashboardTiles = {
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {storageHealth.missing_files > 0 && storageHealth.storage_maybe_offline && storageHealth.files_on_disk > 0 && (
+                <button
+                  className="button button-danger"
+                  onClick={() => handleRescanPrerolls({
+                    deleteMissing: true,
+                    confirmText: `Remove the entries for ${storageHealth.missing_files} preroll file${storageHealth.missing_files === 1 ? '' : 's'} that can't be found? Only do this if you deleted them; if their storage is just offline, they would have to be added again. This cannot be undone.`,
+                  })}
+                  disabled={backupProgress.active}
+                >
+                  <Trash2 size={14} /> I deleted them, remove entries
+                </button>
+              )}
               {/* Hide the deep-link when the only issue is offline storage —
                   there's no safe action to take, the message says to wait. */}
               {!(storageHealth.storage_maybe_offline && storageHealth.duplicate_rows === 0) && (
@@ -10947,22 +11006,21 @@ const DashboardTiles = {
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                   Category <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>(optional)</span>
                 </label>
-                <select
+                <CategorySelect
+                  categories={categories}
                   value={mapRootForm.category_id}
-                  onChange={(e) => {
-                    setMapRootForm({ ...mapRootForm, category_id: e.target.value });
+                  onChange={(value) => {
+                    setMapRootForm({ ...mapRootForm, category_id: value });
                     setMapRootCategoryError(false);
                     if (mapRootResult?.type === 'error') setMapRootResult(null);
                   }}
+                  onCreateCategory={createCategoryInline}
+                  emptyLabel="— Auto / leave uncategorized —"
                   className="input"
                   disabled={mapRootLoading}
                   style={{ width: '100%' }}
-                >
-                  <option value="">— Auto / leave uncategorized —</option>
-                  {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
+                  ariaLabel="Category for imported files"
+                />
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
                   {mapRootForm.category_id
                     ? 'Every imported file will be tagged with this category.'
@@ -11356,7 +11414,7 @@ const DashboardTiles = {
       return false;
     };
     const countInCategory = (category) => prerolls.filter(preroll => (
-      (preroll.category_id === category.id || (preroll.categories || []).some(c => c.id === category.id))
+      prerollInCategory(preroll, category.id)
       && !hiddenByToggles(preroll, category.name)
     )).length;
     // A quick filter that always lands on an empty grid is not a filter, so
@@ -11368,10 +11426,7 @@ const DashboardTiles = {
     const matchedCount = prerolls.filter(preroll =>
       preroll.community_preroll_id && !hiddenByToggles(preroll)
     ).length;
-    const uncategorizedCount = prerolls.filter(preroll =>
-      !preroll.category && !preroll.category_id && !(preroll.category_ids || []).length && !(preroll.categories || []).length
-      && !hiddenByToggles(preroll)
-    ).length;
+    const uncategorizedCount = prerolls.filter(preroll => isUncategorized(preroll) && !hiddenByToggles(preroll)).length;
     const pageNumbers = Array.from(new Set([
       1,
       Math.max(1, currentPageClamped - 1),
@@ -11681,7 +11736,7 @@ const DashboardTiles = {
 
         <div className={`nx-hybrid-bulk-dock${selectedPrerollIds.length ? ' is-visible' : ''}`}>
           <span><strong>{selectedPrerollIds.length}</strong> selected</span>
-          <select value={bulkCategoryId} onChange={(event) => setBulkCategoryId(event.target.value)}><option value="">Set category…</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
+          <CategorySelect categories={categories} value={bulkCategoryId} onChange={setBulkCategoryId} onCreateCategory={createCategoryInline} emptyLabel="Set category…" ariaLabel="Category for the selected prerolls" />
           <button type="button" className="nx-hybrid-btn" disabled={!bulkCategoryId} onClick={() => handleBulkSetPrimary(bulkCategoryId)}>Apply category</button>
           <button type="button" className="nx-hybrid-btn is-danger" onClick={handleBulkDeleteSelected}><Trash size={13} /> Delete</button>
           <button type="button" className="nx-hybrid-icon-btn" onClick={clearSelection} aria-label="Clear selection"><X size={14} /></button>
@@ -19995,7 +20050,7 @@ const DashboardTiles = {
       const presets = {
         random: { type: 'random', category_id: categories[0]?.id || null, count: 1, label: 'Category' },
         fixed: { type: 'fixed', preroll_ids: prerolls[0] ? [prerolls[0].id] : [], label: 'Fixed preroll' },
-        nexup_trailers: { type: 'nexup_trailers', source: 'both', count: 2, mode: 'random', label: 'NeX-Up trailers' },
+        nexup_trailers: { type: 'nexup_trailers', source: 'both', count: 2, mode: 'random', match_playing: false, label: 'NeX-Up trailers' },
         library_trailers: { type: 'library_trailers', count: 2, mode: 'random', genres: [], match_playing: false, label: 'Library trailers' },
         dynamic_preroll: { type: 'dynamic_preroll', filename: generatedItems[0]?.filename || null, label: 'Generated preroll' }
       };
@@ -20029,10 +20084,10 @@ const DashboardTiles = {
       // "up to", because this is how many trailers the block asks for, not how
       // many exist. Reading as inventory, it claimed "2 trailers" on an install
       // with none downloaded, which then played as an empty block.
-      if (block?.type === 'nexup_trailers') return `up to ${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}${ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}`;
+      if (block?.type === 'nexup_trailers') return `up to ${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}${genreMatchSummary(block) ? ` / ${genreMatchSummary(block)}` : ''}${ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}`;
       if (block?.type === 'library_trailers') {
         const genres = (block.genres || []).join(', ') || 'any genre';
-        return `up to ${block.count || 2} from your library / ${genres}${block.match_playing ? ' / same genre as the movie' : ''}${ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}`;
+        return `up to ${block.count || 2} from your library / ${genres}${genreMatchSummary(block) ? ` / ${genreMatchSummary(block)}` : ''}${ratingSummary(block) ? ` / ${ratingSummary(block)}` : ''}`;
       }
       if (block?.type === 'dynamic_preroll') return generatedItems.find(item => item.filename === block.filename)?.name || 'Choose a generated item';
       if (block?.type === 'coming_soon_list') return block.layout === 'list' ? 'Latest Coming Soon list' : 'Latest Coming Soon grid';
@@ -20048,7 +20103,14 @@ const DashboardTiles = {
     const connectedServers = getConnectedServers();
     const hasPlex = connectedServers.includes('plex');
     const pluginServers = connectedServers.filter(server => server !== 'plex');
-    const conditionBadge = block => (needsPlaybackInfo(block.condition) ? 'Conditional / Jellyfin & Emby' : 'Conditional');
+    // An Else if block reads as part of its chain; it may also have no
+    // condition of its own (the chain's Else).
+    const conditionBadge = (block, index) => {
+      const chained = chainInfo(sequenceBlocks, index);
+      const label = chained.neverPlays ? `${chainLabel(block)} / never plays` : chained.elseIf ? chainLabel(block) : 'Conditional';
+      return needsPlaybackInfo(block.condition) ? `${label} / Jellyfin & Emby` : label;
+    };
+    const selectedChain = chainInfo(sequenceBlocks, selectedIndex);
 
     return (
       <div className="nx-schedule-draft nx-draft-builder-page">
@@ -20152,7 +20214,7 @@ const DashboardTiles = {
                     onDragEnd={() => setDraggedBlockIndex(null)}
                   >
                     <span className="drag"><GripVertical size={13} /></span><span className="order">{index + 1}</span>
-                    <span className="copy"><strong>{blockTitle(block)}</strong><small>{blockDescription(block)}</small>{hasCondition(block) && <em className="nx-draft-badge violet"><GitBranch size={10} /> {conditionBadge(block)}</em>}</span>
+                    <span className="copy"><strong>{blockTitle(block)}</strong><small>{blockDescription(block)}</small>{(hasCondition(block) || chainInfo(sequenceBlocks, index).elseIf) && <em className="nx-draft-badge violet"><GitBranch size={10} /> {conditionBadge(block, index)}</em>}</span>
                     <span className="nx-draft-seq-move">
                       <span role="button" tabIndex={0} title="Move up" aria-disabled={index === 0} onClick={event => { event.stopPropagation(); moveBlock(index, index - 1); }} onKeyDown={event => { if (event.key === 'Enter') { event.stopPropagation(); moveBlock(index, index - 1); } }}><ChevronUp size={12} /></span>
                       <span role="button" tabIndex={0} title="Move down" aria-disabled={index === sequenceBlocks.length - 1} onClick={event => { event.stopPropagation(); moveBlock(index, index + 1); }} onKeyDown={event => { if (event.key === 'Enter') { event.stopPropagation(); moveBlock(index, index + 1); } }}><ChevronDown size={12} /></span>
@@ -20238,10 +20300,12 @@ const DashboardTiles = {
                   <div className="nx-draft-field"><span>Only these genres (optional)</span>
                     <GenrePicker values={selectedBlock.genres || []} onChange={genres => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, genres } : block))} />
                   </div>
-                  <label className="nx-draft-check"><input type="checkbox" checked={Boolean(selectedBlock.match_playing)} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, match_playing: event.target.checked } : block))} /><span>Same genre as the movie that's starting</span></label>
-                  <p className="nx-server-note"><strong>Jellyfin &amp; Emby</strong> say which movie is starting, so this can pick horror trailers before a horror movie. Plex doesn't, so on Plex trailers come from the whole selection. The trailer for the movie that's about to play is never picked.</p>
-                  <p className="nx-draft-field-hint">Plays trailers from NeX-Up &gt; Library Trailers. <button type="button" className="nx-draft-link" onClick={() => setActiveTab('nexup/library')}>Open Library Trailers</button></p>
+                  <p className="nx-draft-field-hint">Plays trailers from NeX-Up &gt; Library Trailers. The trailer for the movie that's about to play is never picked. <button type="button" className="nx-draft-link" onClick={() => setActiveTab('nexup/library')}>Open Library Trailers</button></p>
                 </>}
+                {['nexup_trailers', 'library_trailers'].includes(selectedBlock.type) && <TrailerGenreMatch
+                  value={selectedBlock}
+                  onChange={patch => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, ...patch } : block))}
+                />}
                 {['nexup_trailers', 'library_trailers'].includes(selectedBlock.type) && <TrailerRatingFilter
                   value={selectedBlock} includeTV={selectedBlock.type === 'nexup_trailers' && selectedBlock.source !== 'movies'}
                   onChange={patch => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, ...patch } : block))}
@@ -20293,8 +20357,14 @@ const DashboardTiles = {
                       const { condition: _c, otherwise: _o, ...rest } = block;
                       return condition ? { ...rest, condition, ...(otherwise ? { otherwise } : {}) } : rest;
                     }))}
+                    chain={selectedChain}
+                    onElseIfChange={on => setSequenceBlocks(blocks => blocks.map((block, index) => {
+                      if (index !== selectedIndex) return block;
+                      const { else_if: _e, ...rest } = block;
+                      return on ? { ...rest, else_if: true } : rest;
+                    }))}
                   />
-                ) : hasCondition(selectedBlock) && (
+                ) : (hasCondition(selectedBlock) || selectedChain.elseIf) && (
                   <p className="nx-draft-field-hint">This block has conditions. <button type="button" className="nx-draft-link" onClick={() => setSequenceBuilderMode('advanced')}>Switch to Advanced to change them</button></p>
                 )}
                 <div className="nx-draft-info-row"><span>Position</span><strong>{selectedIndex + 1} of {sequenceBlocks.length}</strong></div>
@@ -20516,9 +20586,6 @@ const DashboardTiles = {
                         <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.4rem 0.6rem' }}>
                           <span style={{ fontSize: '0.9rem' }}>
                             {p.display_name || p.filename}
-                            {p.category_id === editingCategory.id && (
-                              <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: '#28a745' }}>(Primary)</span>
-                            )}
                           </span>
                           <div>
                             <button
@@ -21794,15 +21861,18 @@ const DashboardTiles = {
   };
 
 
-  const handleDisconnectPlex = async () => {
-    if (!await showConfirm('Are you sure you want to disconnect from Plex? This will clear all stored connection settings.', { title: 'Disconnect Plex', type: 'danger', confirmText: 'Disconnect' })) return;
+  const handleDisconnectPlex = async ({ saved = false } = {}) => {
+    const confirmed = saved
+      ? await showConfirm(`NeXroll can't connect to the saved Plex server${plexServerInfo?.url ? ` at ${plexServerInfo.url}` : ''}. Remove its saved address and token? You can connect again at any time.`, { title: 'Remove Plex', type: 'danger', confirmText: 'Remove' })
+      : await showConfirm('Are you sure you want to disconnect from Plex? This will clear all stored connection settings.', { title: 'Disconnect Plex', type: 'danger', confirmText: 'Disconnect' });
+    if (!confirmed) return;
     
     fetch(apiUrl('plex/disconnect'), {
       method: 'POST'
     })
       .then(res => res.json())
       .then(data => {
-        alert('Successfully disconnected from Plex!');
+        alert(saved ? 'Removed the saved Plex connection.' : 'Successfully disconnected from Plex!');
         // Clear local state
         setPlexConfig({ url: '', token: '', library: '' });
         setPlexStatus('Disconnected');
@@ -21843,14 +21913,17 @@ const DashboardTiles = {
       });
   };
 
-  const handleDisconnectJellyfin = async () => {
-    if (!await showConfirm('Are you sure you want to disconnect from Jellyfin? This will clear all stored connection settings.', { title: 'Disconnect Jellyfin', type: 'danger', confirmText: 'Disconnect' })) return;
+  const handleDisconnectJellyfin = async ({ saved = false } = {}) => {
+    const confirmed = saved
+      ? await showConfirm(`NeXroll can't connect to the saved Jellyfin server${jellyfinServerInfo?.url ? ` at ${jellyfinServerInfo.url}` : ''}. Remove its saved address and API key? You can connect again at any time.`, { title: 'Remove Jellyfin', type: 'danger', confirmText: 'Remove' })
+      : await showConfirm('Are you sure you want to disconnect from Jellyfin? This will clear all stored connection settings.', { title: 'Disconnect Jellyfin', type: 'danger', confirmText: 'Disconnect' });
+    if (!confirmed) return;
     fetch(apiUrl('jellyfin/disconnect'), {
       method: 'POST'
     })
       .then(res => res.json())
       .then(() => {
-        alert('Successfully disconnected from Jellyfin!');
+        alert(saved ? 'Removed the saved Jellyfin connection.' : 'Successfully disconnected from Jellyfin!');
         setJellyfinConfig({ url: '', api_key: '' });
         setJellyfinStatus('Disconnected');
         setJellyfinServerInfo(null);
@@ -21959,14 +22032,17 @@ const DashboardTiles = {
       });
   };
 
-  const handleDisconnectEmby = async () => {
-    if (!await showConfirm('Are you sure you want to disconnect from Emby? This will clear all stored connection settings.', { title: 'Disconnect Emby', type: 'danger', confirmText: 'Disconnect' })) return;
+  const handleDisconnectEmby = async ({ saved = false } = {}) => {
+    const confirmed = saved
+      ? await showConfirm(`NeXroll can't connect to the saved Emby server${embyServerInfo?.url ? ` at ${embyServerInfo.url}` : ''}. Remove its saved address and API key? You can connect again at any time.`, { title: 'Remove Emby', type: 'danger', confirmText: 'Remove' })
+      : await showConfirm('Are you sure you want to disconnect from Emby? This will clear all stored connection settings.', { title: 'Disconnect Emby', type: 'danger', confirmText: 'Disconnect' });
+    if (!confirmed) return;
     fetch(apiUrl('emby/disconnect'), {
       method: 'POST'
     })
       .then(res => res.json())
       .then(() => {
-        alert('Successfully disconnected from Emby!');
+        alert(saved ? 'Removed the saved Emby connection.' : 'Successfully disconnected from Emby!');
         setEmbyConfig({ url: '', api_key: '' });
         setEmbyStatus('Disconnected');
         setEmbyServerInfo(null);
@@ -22409,8 +22485,48 @@ const DashboardTiles = {
             <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Loader2 size={16} className="spin" /> Loading Plex settings…</div>
           )}
 
-          {cinemaTrailers && Array.isArray(cinemaTrailers.fields) && (
+          {cinemaTrailers && Array.isArray(cinemaTrailers.fields) && (() => {
+            // Plex's new apps skip prerolls on "Play Pre-roll Only". "Play 1 before
+            // movie" with every Plex trailer source off plays only the prerolls.
+            const sources = cinemaTrailers.fields.filter(f => f.trailer_source && f.available);
+            const sourcesOff = sources.length > 0 && sources.every(f => !f.value);
+            return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{
+                padding: '0.85rem 1rem',
+                background: 'var(--hover-bg)',
+                borderRadius: '8px',
+                borderLeft: `3px solid ${sourcesOff ? 'var(--success-color)' : 'var(--accent-color)'}`
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem 1rem', flexWrap: 'wrap' }}>
+                  <div style={{ minWidth: 0, flex: '1 1 280px' }}>
+                    <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      {sourcesOff
+                        ? <><CheckCircle size={16} style={{ color: 'var(--success-color)' }} /> Prerolls only</>
+                        : <><Info size={16} style={{ color: 'var(--accent-color)' }} /> Play only your prerolls</>}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
+                      {sourcesOff ? (
+                        <>Plex's own trailers are off. In each Plex app, set <strong>Cinema Trailers</strong> to <strong>Play 1 before movie</strong> and it plays only your prerolls.</>
+                      ) : (
+                        <>To play your prerolls without Plex's trailers, turn Plex's trailers off here, then set <strong>Cinema Trailers</strong> to <strong>Play 1 before movie</strong> in each Plex app.</>
+                      )}
+                      {' '}Avoid <strong>Play Pre-roll Only</strong>: Plex's new Apple TV and iOS apps (2026.18) skip prerolls with it. Trailers in your NeXroll sequences still play.
+                    </div>
+                  </div>
+                  {!sourcesOff && sources.length > 0 && (
+                    <button
+                      className="button"
+                      style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                      disabled={!!cinemaTrailersSaving}
+                      onClick={applyPrerollsOnly}
+                    >
+                      {cinemaTrailersSaving === 'prerolls-only' && <Loader2 size={14} className="spin" />}
+                      Turn off Plex trailers
+                    </button>
+                  )}
+                </div>
+              </div>
               {cinemaTrailers.fields.map(field => {
                 const unavailable = !field.available;
                 const saving = cinemaTrailersSaving === field.id;
@@ -22474,7 +22590,8 @@ const DashboardTiles = {
                 Changes save to Plex immediately. Plex reads these when movie playback begins.
               </p>
             </div>
-          )}
+            );
+          })()}
 
           {!cinemaTrailersLoading && !cinemaTrailers && (
             <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -23516,6 +23633,25 @@ const DashboardTiles = {
     }
   };
 
+  const applyPrerollsOnly = async () => {
+    setCinemaTrailersSaving('prerolls-only');
+    try {
+      const res = await fetch(apiUrl('plex/cinema-trailers/prerolls-only'), { method: 'POST' });
+      if (res.ok) {
+        showAlert('Plex trailers are off. Set Cinema Trailers to Play 1 before movie in each Plex app.', 'success');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.detail || 'Failed to turn off Plex trailers', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to turn off Plex trailers: ' + (e?.message || e), 'error');
+    } finally {
+      setCinemaTrailersSaving(null);
+      // Show Plex's real state, including any source it refused to change.
+      loadCinemaTrailers();
+    }
+  };
+
   const loadVerboseLogging = React.useCallback(async () => {
     try {
       const res = await fetch(apiUrl('/settings/verbose-logging'));
@@ -24436,6 +24572,9 @@ const DashboardTiles = {
       if (data.skipped_already_exists > 0) {
         message += `• Skipped (already have): ${data.skipped_already_exists}\n`;
       }
+      if (data.skipped_too_long > 0) {
+        message += `• Skipped (longer than Max Trailer Duration): ${data.skipped_too_long}\n`;
+      }
       
       if (data.errors && data.errors.length > 0) {
         message += `\n\nErrors:\n${data.errors.slice(0, 3).join('\n')}`;
@@ -24604,7 +24743,10 @@ const DashboardTiles = {
       message += `• Eligible: ${data.eligible || 0} (with trailers, releasing soon)\n`;
       message += `• Downloaded: ${data.downloaded} new trailers\n`;
       message += `• Expired: ${data.expired} (movies now in library)`;
-      
+      if (data.skipped_too_long > 0) {
+        message += `\n• Skipped (longer than Max Trailer Duration): ${data.skipped_too_long}`;
+      }
+
       if (data.errors && data.errors.length > 0) {
         message += `\n\nErrors:\n${data.errors.slice(0, 3).join('\n')}`;
         if (data.errors.length > 3) {
@@ -27959,7 +28101,7 @@ const DashboardTiles = {
                     Max Trailer Duration
                   </label>
                   <select
-                    value={nexupSettings.max_trailer_duration || 180}
+                    value={nexupSettings.max_trailer_duration ?? 180}
                     onChange={(e) => handleUpdateNexupSettings({ max_trailer_duration: parseInt(e.target.value) })}
                     style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
                   >
@@ -27973,7 +28115,7 @@ const DashboardTiles = {
                     <option value="600">10 minutes</option>
                   </select>
                   <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
-                    Skip trailers longer than this duration (0 = no limit)
+                    Sync skips trailers longer than this. Most trailers run 2 to 3 minutes. The download button on the Upcoming tab ignores this limit.
                   </p>
                 </div>
               </div>
@@ -33501,10 +33643,22 @@ const DashboardTiles = {
 
   const renderJellyfin = () => {
     const connected = jellyfinStatus === 'Connected';
+    const saved = !connected && Boolean(jellyfinServerInfo?.url || jellyfinServerInfo?.has_api_key);
     return (
     <div className="nx-conn-panel" style={{ '--brand': '#6c5ce7' }}>
       {/* Identity, status, meta, and Disconnect now live in the server card
           above (renderConnect) — this panel only covers connect/settings UI. */}
+
+      {saved && (
+        <div className="nx-notice warn" style={{ marginBottom: '1rem' }}>
+          <strong>NeXroll can't connect to the saved Jellyfin server{jellyfinServerInfo?.url ? ` at ${jellyfinServerInfo.url}` : ''}.</strong>
+          <p style={{ margin: '0.5rem 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+            Check that Jellyfin is running and that NeXroll can reach it. If it moved, or its API key changed, connect again below.
+            If you no longer use it, remove it.
+          </p>
+          <button type="button" className="button button-danger" onClick={() => handleDisconnectJellyfin({ saved: true })}><Trash2 size={13} /> Remove saved connection</button>
+        </div>
+      )}
 
       {/* Plugin clients (when present) */}
       {jellyfinServerInfo?.plugin_clients?.length > 0 && (
@@ -33848,10 +34002,22 @@ const DashboardTiles = {
 
   const renderEmby = () => {
     const connected = embyStatus === 'Connected';
+    const saved = !connected && Boolean(embyServerInfo?.url || embyServerInfo?.has_api_key);
     return (
     <div className="nx-conn-panel" style={{ '--brand': '#52c41a' }}>
       {/* Identity, status, meta, and Disconnect now live in the server card
           above (renderConnect) — this panel only covers connect/settings UI. */}
+
+      {saved && (
+        <div className="nx-notice warn" style={{ marginBottom: '1rem' }}>
+          <strong>NeXroll can't connect to the saved Emby server{embyServerInfo?.url ? ` at ${embyServerInfo.url}` : ''}.</strong>
+          <p style={{ margin: '0.5rem 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+            Check that Emby is running and that NeXroll can reach it. If it moved, or its API key changed, connect again below.
+            If you no longer use it, remove it.
+          </p>
+          <button type="button" className="button button-danger" onClick={() => handleDisconnectEmby({ saved: true })}><Trash2 size={13} /> Remove saved connection</button>
+        </div>
+      )}
 
       {/* Emby needs the plugin before anything plays, and nothing in the app
           used to say so - a user could connect Emby successfully, build a
@@ -34170,6 +34336,9 @@ const DashboardTiles = {
         ].filter(Boolean),
         canDisconnect: true,
         disconnect: handleDisconnectPlex,
+        // Settings are saved, but the server does not answer or rejects them.
+        saved: Boolean(plexServerInfo?.url),
+        savedUrl: plexServerInfo?.url,
       },
       {
         id: 'jellyfin', label: 'Jellyfin', mark: 'J', brand: '#6c5ce7',
@@ -34182,6 +34351,8 @@ const DashboardTiles = {
         ].filter(Boolean),
         canDisconnect: jellyfinServerInfo?.connection_type !== 'plugin',
         disconnect: handleDisconnectJellyfin,
+        saved: Boolean(jellyfinServerInfo?.url || jellyfinServerInfo?.has_api_key),
+        savedUrl: jellyfinServerInfo?.url,
       },
       {
         id: 'emby', label: 'Emby', mark: 'E', brand: '#52c41a',
@@ -34204,6 +34375,8 @@ const DashboardTiles = {
         ].filter(Boolean),
         canDisconnect: embyServerInfo?.connection_type !== 'plugin',
         disconnect: handleDisconnectEmby,
+        saved: Boolean(embyServerInfo?.url || embyServerInfo?.has_api_key),
+        savedUrl: embyServerInfo?.url,
       },
     ];
 
@@ -34261,7 +34434,7 @@ const DashboardTiles = {
                   <span className="nx-connect-card-mark">{srv.mark}</span>
                   <span className="nx-connect-card-copy">
                     <strong>{srv.label}</strong>
-                    <span className={`nx-connect-card-badge${srv.connected ? ' ok' : ''}`}><span className={`nx-dot ${srv.connected ? 'ok' : 'bad'}`} />{srv.connected ? 'Connected' : 'Not connected'}</span>
+                    <span className={`nx-connect-card-badge${srv.connected ? ' ok' : srv.saved ? ' warn' : ''}`}><span className={`nx-dot ${srv.connected ? 'ok' : srv.saved ? 'warn' : 'bad'}`} />{srv.connected ? 'Connected' : srv.saved ? "Can't connect" : 'Not connected'}</span>
                   </span>
                 </button>
                 {srv.connected ? (
@@ -34275,7 +34448,26 @@ const DashboardTiles = {
                           onClick={() => { userPickedServerRef.current = true; setActiveServer(srv.id); }}
                         >Settings &amp; plugin <ChevronRight size={13} /></button>
                       )}
-                      {srv.canDisconnect && <button type="button" className="button button-danger" onClick={srv.disconnect}><Unlink size={13} /> Disconnect</button>}
+                      {srv.canDisconnect && <button type="button" className="button button-danger" onClick={() => srv.disconnect()}><Unlink size={13} /> Disconnect</button>}
+                    </div>
+                  </div>
+                ) : srv.saved ? (
+                  // Saved but not answering: offer removal here too, or a
+                  // server that moved or was retired could never be removed.
+                  <div className="nx-connect-card-body">
+                    <ul className="nx-connect-card-meta">
+                      {srv.savedUrl && <li title={srv.savedUrl}>{srv.savedUrl}</li>}
+                      <li>Saved, but NeXroll can't connect to it</li>
+                    </ul>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                      {!active && (
+                        <button
+                          type="button"
+                          className="nx-connect-card-setup"
+                          onClick={() => { userPickedServerRef.current = true; setActiveServer(srv.id); }}
+                        >Settings <ChevronRight size={13} /></button>
+                      )}
+                      <button type="button" className="button button-danger" onClick={() => srv.disconnect({ saved: true })}><Trash2 size={13} /> Remove</button>
                     </div>
                   </div>
                 ) : (
@@ -35992,13 +36184,13 @@ const DashboardTiles = {
 
             <div className="nx-community-download-fields">
               <label>Add to category
-                <select
+                <CategorySelect
+                  categories={categories}
                   value={getCommunityCategorySelection(communitySelectedCategories, communityRenamingPreroll.id) || ''}
-                  onChange={(event) => setCommunitySelectedCategories(prev => setCommunityCategorySelection(prev, communityRenamingPreroll.id, event.target.value || null))}
-                >
-                  <option value="">Uncategorized</option>
-                  {categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
-                </select>
+                  onChange={(value) => setCommunitySelectedCategories(prev => setCommunityCategorySelection(prev, communityRenamingPreroll.id, value || null))}
+                  onCreateCategory={createCategoryInline}
+                  emptyLabel="Uncategorized"
+                />
               </label>
               <label>Tags<input value="community" readOnly /></label>
             </div>
@@ -36616,17 +36808,15 @@ const DashboardTiles = {
                         <strong>{communitySelectedCount} selected</strong>
                         <span>Downloads run one at a time, {COMMUNITY_BULK_GAP_SECONDS}s apart</span>
                       </div>
-                      <select
+                      <CategorySelect
                         className="nx-community-select"
+                        categories={categories}
                         value={communityBulkCategory}
-                        onChange={(e) => setCommunityBulkCategory(e.target.value)}
+                        onChange={setCommunityBulkCategory}
+                        onCreateCategory={createCategoryInline}
+                        emptyLabel="No category"
                         title="Category for every preroll in this batch"
-                      >
-                        <option value="">No category</option>
-                        {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                          <option key={cat.id} value={cat.id}>{cat.name}</option>
-                        ))}
-                      </select>
+                      />
                       <button type="button" className="button button-secondary" onClick={() => setCommunitySelectedIds([])}>Clear</button>
                       <button type="button" className="button" onClick={runCommunityBulkDownload}>
                         <Download size={14} /> Download {communitySelectedCount}
@@ -36679,23 +36869,21 @@ const DashboardTiles = {
 
                   <div className="nx-comm-row-actions">
                     {catOpen && (
-                      <select
+                      <CategorySelect
                         className="nx-community-select"
+                        categories={categories}
                         value={selectedCategory || ''}
-                        onChange={(e) => setCommunitySelectedCategories(prev =>
-                          setCommunityCategorySelection(prev, preroll.id, e.target.value)
+                        onChange={(value) => setCommunitySelectedCategories(prev =>
+                          setCommunityCategorySelection(prev, preroll.id, value)
                         )}
+                        onCreateCategory={createCategoryInline}
+                        emptyLabel="Select category…"
                         style={{
                           padding: '0.4rem 0.6rem', fontSize: '0.85rem',
                           border: '1px solid var(--border-color)', borderRadius: '8px',
                           backgroundColor: 'var(--input-bg)', color: 'var(--text-color)', cursor: 'pointer'
                         }}
-                      >
-                        <option value="">Select category…</option>
-                        {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                          <option key={cat.id} value={cat.id}>{cat.name}</option>
-                        ))}
-                      </select>
+                      />
                     )}
                     <button onClick={(event) => { event.stopPropagation(); handleCommunityPreview(preroll); }} className="button button-secondary" title="Preview video">
                       <Play size={14} /> Preview
@@ -36851,18 +37039,16 @@ const DashboardTiles = {
                 )}
                 {communityShowAddToCategory[communityRandomPreroll.id] && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <select
+                    <CategorySelect
+                      categories={categories}
                       value={getCommunityCategorySelection(communitySelectedCategories, communityRandomPreroll.id) || ''}
-                      onChange={(e) => setCommunitySelectedCategories(prev =>
-                        setCommunityCategorySelection(prev, communityRandomPreroll.id, e.target.value)
+                      onChange={(value) => setCommunitySelectedCategories(prev =>
+                        setCommunityCategorySelection(prev, communityRandomPreroll.id, value)
                       )}
+                      onCreateCategory={createCategoryInline}
+                      emptyLabel="Select category…"
                       style={{ flex: '1 1 180px', padding: '0.45rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-color)' }}
-                    >
-                      <option value="">Select category…</option>
-                      {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
-                      ))}
-                    </select>
+                    />
                     <button
                       onClick={() => handleDownload(communityRandomPreroll)}
                       disabled={communityIsDownloading[communityRandomPreroll.id]}
@@ -38700,9 +38886,10 @@ const DashboardTiles = {
                    <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }} title={editingPreroll.path}>{editingPreroll.path}</span>
                  </div>
                )}
-               {editingPreroll.category?.name && (
+               {prerollCategoryLabels(editingPreroll, categories).length > 0 && (
                  <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', opacity: 0.8 }}>
-                   <strong>Category:</strong> {editingPreroll.category.name}
+                   <strong>{prerollCategoryLabels(editingPreroll, categories).length === 1 ? 'Category:' : 'Categories:'}</strong>{' '}
+                   {prerollCategoryLabels(editingPreroll, categories).join(', ')}
                  </div>
                )}
              </div>

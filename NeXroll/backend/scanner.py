@@ -102,10 +102,13 @@ def reconcile_prerolls(
     delete_missing: force-remove every row whose file is gone (user-initiated,
         no safety threshold).
     auto_prune_missing: automatically remove rows whose file is gone, BUT only
-        when it's safe — never when storage looks offline (no files found on
-        disk, or a large fraction of rows suddenly missing). This is what makes
-        deletions in Explorer self-heal without prompting the user, while
-        protecting against wiping the library if a network share blips.
+        when it's safe. A missing file whose folder is still there and not
+        empty was deleted, and is removed however many there are. Files whose
+        folder is gone or empty could be an offline share: those are removed
+        only when files were found on disk and they are a small minority. This
+        is what makes deletions in Explorer self-heal without prompting the
+        user, while protecting against wiping the library if a network share
+        blips.
     exclude_trees: directory trees the scanner must leave alone (the NeX-Up
         trailer storage). Files there are owned by NeX-Up, which registers
         them under its system categories itself; when the scanner indexed
@@ -345,30 +348,54 @@ def reconcile_prerolls(
             except Exception:
                 continue
         total_rows = db.query(models.Preroll).count()
-        n = len(prunable)
-        # Safe to auto-remove only when we actually found files on disk (storage
-        # is online) AND the missing set is a small minority (a real deletion,
-        # not an outage). Threshold: up to 25% of rows, or 10 files, whichever is
-        # larger.
-        outage_suspected = (stats["files_on_disk"] == 0) or (
-            n > 0 and n > max(10, int(total_rows * 0.25))
+
+        # Tell deletions from outages by the folder each missing file lived in.
+        # A share or drive that drops takes its folders with it, or leaves an
+        # empty mount point; a folder that is still there with something in it
+        # is plainly online, so its missing files were deleted. Only files whose
+        # folder is gone or empty are unclear, and only those face the outage
+        # threshold. Before this, deleting more than a quarter of the library in
+        # place looked like an outage and nothing was ever cleaned up.
+        folder_online = {}
+
+        def _folder_has_entries(path) -> bool:
+            folder = os.path.dirname(os.path.abspath(path))
+            if folder not in folder_online:
+                try:
+                    with os.scandir(folder) as entries:
+                        folder_online[folder] = any(True for _ in entries)
+                except OSError:
+                    folder_online[folder] = False
+            return folder_online[folder]
+
+        storage_online = stats["files_on_disk"] > 0
+        deleted = [p for p in prunable if storage_online and _folder_has_entries(p.path)]
+        deleted_ids = {id(p) for p in deleted}
+        unclear = [p for p in prunable if id(p) not in deleted_ids]
+        # Safe to auto-remove unclear rows only when files were found on disk
+        # (storage is online) AND they are a small minority. Threshold: up to
+        # 25% of rows, or 10 files, whichever is larger.
+        outage_suspected = (not storage_online) or (
+            len(unclear) > max(10, int(total_rows * 0.25))
         )
-        if n > 0 and outage_suspected:
-            stats["missing_not_pruned"] = n
+        to_prune = deleted + ([] if outage_suspected else unclear)
+        if unclear and outage_suspected:
+            stats["missing_not_pruned"] = len(unclear)
             stats["storage_maybe_offline"] = True
             log(
-                f"Scanner: {n} of {total_rows} preroll file(s) not found "
-                f"(files_on_disk={stats['files_on_disk']}). Storage may be offline; "
-                f"NOT auto-removing rows. They will relink automatically when storage returns.",
+                f"Scanner: {len(unclear)} of {total_rows} preroll file(s) not found, in folders "
+                f"that are gone or empty (files_on_disk={stats['files_on_disk']}). Storage may be "
+                f"offline; NOT auto-removing those rows. They will relink automatically when "
+                f"storage returns, or can be removed with Remove Missing Rows.",
                 level="WARNING",
             )
-        elif n > 0:
-            for p in prunable:
-                try:
-                    db.delete(p)
-                    stats["deleted_missing"] += 1
-                except Exception as e:
-                    stats["errors"].append(f"auto-prune failed for preroll {getattr(p, 'id', '?')}: {e}")
+        for p in to_prune:
+            try:
+                db.delete(p)
+                stats["deleted_missing"] += 1
+            except Exception as e:
+                stats["errors"].append(f"auto-prune failed for preroll {getattr(p, 'id', '?')}: {e}")
+        if stats["deleted_missing"]:
             log(f"Scanner: auto-removed {stats['deleted_missing']} row(s) for files deleted from disk")
 
     if dedupe:
