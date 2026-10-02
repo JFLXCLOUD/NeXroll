@@ -83,7 +83,7 @@ If you would rather not arrange tiles by hand, the layout menu offers presets �
 
 The Quick actions tile collects the maintenance commands you would otherwise hunt for in Settings:
 
-- **Rescan library** — reconcile the database against the files on disk.
+- **Rescan library** — reconcile the database against the files on disk. Entries for files deleted from folders that are still there are removed; see [missing files](Preroll-Library#troubleshooting).
 - **Rebuild thumbnails** — regenerate missing preview images.
 - **Re-apply current schedule** — push the active selection to your media server again, useful after a server restart.
 

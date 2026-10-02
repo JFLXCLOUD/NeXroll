@@ -11,6 +11,8 @@ Switch between **grid** and **list** with the view toggle in the page header.
 - **Grid** shows thumbnails. Hover a card for Preview, Edit and Delete.
 - **List** is a sortable table — name, category, duration, community status, date added.
 
+**Refresh Library** in the page header scans your storage folder for files added or deleted outside NeXroll, then reloads the library. It shows **Scanning...** while it runs and reports what it found. (Before 2.2.2 it only reloaded the page, so it seemed to do nothing after you deleted files on disk.)
+
 Use the **Preview panel** toggle to open an inspector on the right. It plays the selected preroll inline (muted, looping) and shows category, duration, resolution and tags. Click a row to inspect it; the **Preview** button always opens the full-size player.
 
 ### Filtering
@@ -46,7 +48,16 @@ This is the right choice when your prerolls live on a NAS or a share you manage 
 
 Open **Library → Categories**.
 
-Categories are how schedules select content: a schedule points at a category, not at individual files. A preroll can belong to several categories at once, with one marked primary for display.
+Categories are how schedules select content: a schedule points at a category, not at individual files. A preroll can belong to several categories at once, and they are all equal. A preroll can also have no category; the Library's **Uncategorized** filter finds those.
+
+NeXroll stores an uploaded file in a folder named after the first category you choose for it. The folder only decides where the file sits on disk; which schedules play it depends on its categories alone. Removing or deleting that first category doesn't delete or strand the file.
+
+You don't have to come here first to make a category. Wherever you put prerolls into one, you can create it on the spot:
+
+- **Uploading, or editing a preroll:** open the **Categories** box and click **New category**, or type a name that doesn't exist yet and press Enter.
+- **Import Folder, the Library's bulk bar, and Community Prerolls downloads:** choose **+ New category…** at the bottom of the category list, type the name, and click **Create**.
+
+The new category is selected straight away. Typing the name of a category you already have selects that one instead of making a duplicate.
 
 Each category has:
 
@@ -97,7 +108,11 @@ Select several prerolls with their checkboxes to get a bulk bar:
 Run **Rebuild thumbnails** from the dashboard's Quick actions tile.
 
 **Entries exist but the files are gone.**
-Run a rescan. NeXroll reconciles the database against disk and reports what is missing rather than deleting rows behind your back.
+Click **Refresh Library**. When you delete prerolls from a folder that is still there, NeXroll removes their entries on the next scan, however many you deleted.
+
+When the missing files were in folders that are now gone or empty, NeXroll can't tell a deletion from a network share or drive that is offline, so it keeps a large batch of them. The dashboard then says so and offers **I deleted them, remove entries**. Click it if you deleted them; otherwise leave them, and they relink when the storage is back. **Remove Missing Rows** under **Settings → Backup & Restore** does the same at any time.
+
+Before 2.2.2, deleting more than about a quarter of the library at once was always treated as storage going offline, and the entries were kept until you used Remove Missing Rows.
 
 **Everything plays except prerolls in one folder.**
 Almost always a path your media server cannot open. See [Path Mappings](Path-Mappings).

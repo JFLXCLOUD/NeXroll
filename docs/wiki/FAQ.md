@@ -166,12 +166,15 @@ Schedules automatically change your prerolls based on dates. For example:
 - Halloween category active Oct 1-31
 - Default category via Filler for the rest of the year
 
-### What's the difference between Exclusive and Blend?
+### What's the difference between Standard, Exclusive and Blend?
 
 | Mode | Behavior |
 |------|----------|
+| **Standard** | When schedules overlap, the highest priority plays and the others wait |
 | **Exclusive** | Only this schedule's prerolls play (overrides everything) |
-| **Blend** | Combines prerolls with other active schedules |
+| **Blend** | Takes turns with other active Blend schedules, picked at random about once a minute |
+
+Standard schedules are never combined. See [Scheduling](Scheduling#standard-exclusive-and-blend).
 
 ### What's the difference between Fallback and Filler?
 
@@ -188,7 +191,11 @@ Check these common issues:
 
 ### Can I have overlapping schedules?
 
-Yes! Use **Priority** (1-10) to control which schedule wins, or enable **Blend** to combine them.
+Yes! Use **Priority** (1-10) to control which schedule wins, or make them **Blend** schedules so they take turns.
+
+### Can I play a different preroll depending on the movie's genre?
+
+Yes, on Jellyfin and Emby. Schedules are picked by date and time, not by what is playing, so do it inside one sequence: add a block per genre with a **Genre** condition and chain them with **Else if**, so only the first matching genre plays and a final block plays for everything else. See [One genre preroll per movie, in priority order](Advanced-Sequences#one-genre-preroll-per-movie-in-priority-order). Plex never tells NeXroll which movie is starting, so Plex gets the final block.
 
 ---
 
@@ -227,7 +234,9 @@ Yes, at least one of them. NeX-Up fetches upcoming release information from thes
 
 ### Why are my trailer downloads failing?
 
-YouTube has aggressive bot detection. Try:
+First, if the **Download** button on the Upcoming tab works but sync skips the same trailers, check **Max Trailer Duration** in NeX-Up settings: sync skips trailers longer than it, and most trailers run 2 to 3 minutes. Before 2.2.2 these skips were reported as a YouTube sign-in block.
+
+Otherwise, YouTube has aggressive bot detection. Try:
 1. **Upload YouTube cookies** — Export from an incognito browser session
 2. **Try a different VPN IP** — YouTube may have blocked your current IP
 3. **Wait between downloads** — Don't bulk-download too many at once
@@ -280,6 +289,7 @@ See [Path Mappings](Path-Mappings) for detailed examples.
 2. **Apply to Plex**: Did you click "Apply to Plex" after making changes?
 3. **File access**: Can Plex access the preroll files?
 4. **Plex settings**: Check Settings → Server → Extras in Plex
+5. **Plex app setting**: Set Cinema Trailers to **Play 1 before movie**, not **Play Pre-roll Only**, which Plex's new Apple TV and iOS apps ignore. See [Connect](Connect#cinema-trailers-plex)
 
 ### Prerolls aren't playing in Jellyfin
 

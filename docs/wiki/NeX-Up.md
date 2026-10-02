@@ -47,6 +47,7 @@ Go to the **Settings** tab to configure:
 | **Storage Path** | Where trailers are saved (use the Browse button to select) | Default is fine |
 | **Days Ahead** | How far in the future to look for releases | 30-90 days |
 | **Max Trailers** | Maximum number of trailers to keep | 10-20 |
+| **Max Trailer Duration** | Sync skips trailers longer than this. Most trailers run 2 to 3 minutes, so 1.5 minutes skips nearly all of them. The download button on the Upcoming tab ignores this limit | 3 minutes or No limit |
 | **Quality** | Download quality (720p, 1080p, 4K) | 1080p |
 | **Auto-Cleanup** | Remove trailers after content releases and lands in your library | Enabled |
 | **Release Date to Use** | Which date a trailer follows: **Digital First** (default), **Digital Only** (skip movies with no digital date), **Physical First**, or **Theatrical**. Retention is measured from this date, so a trailer is never removed before the movie is out | Digital First |
@@ -183,9 +184,24 @@ Add a **Library trailers** block in the [Sequence Builder](Sequences). Choose:
 - **How many** trailers, **shuffled** or **newest in your library first**
 - **Only these genres** (optional), to limit the block to, for example, horror
 - **Restrict age ratings** (2.2.0 and later), to allow only selected ratings in this block
-- **Same genre as the movie that's starting** (Jellyfin & Emby), to pick trailers that share a genre with the movie about to play. Plex doesn't say which movie is starting, so on Plex trailers come from the whole selection.
+- **Same genre as the movie that's starting** (Jellyfin & Emby), to pick trailers that share a genre with the movie about to play. See [Matching the movie's genre](#matching-the-movies-genre).
 
-Jellyfin/Emby can exclude the feature's own trailer when its TMDB identity is available. Plex does not provide the playing movie's identity. Same-genre selection is a preference: when no genre matches, it falls back within the block's other restrictions. A Library trailers block can also be a condition's **Otherwise**; see [Advanced Sequences](Advanced-Sequences).
+Jellyfin/Emby can exclude the feature's own trailer when its TMDB identity is available. Plex does not provide the playing movie's identity. A Library trailers block can also be a condition's **Otherwise**; see [Advanced Sequences](Advanced-Sequences).
+
+### Matching the movie's genre
+
+> NeX-Up trailers can match genres from **2.2.2**. Library trailers could already; the **Play no trailers** choice is new in 2.2.2 for both.
+
+Tick **Same genre as the movie that's starting** on a **NeX-Up trailers** or **Library trailers** block, then choose what happens **when no trailer shares its genre**:
+
+- **Play trailers of any genre**: trailers sharing a genre come first; when none do, the block picks from all its trailers
+- **Play no trailers**: the block plays only trailers sharing a genre, and nothing when none do
+
+Only Jellyfin and Emby say which movie is starting. Plex applies one preroll list before every movie, so on Plex the first choice picks from all trailers and **Play no trailers** plays nothing.
+
+A trailer matches when it shares any genre with the movie. TV genres such as **Action & Adventure** and **Sci-Fi & Fantasy** count as each of their parts, so a Stranger Things trailer can play before a science fiction movie. Source, age ratings and the Library block's **Only these genres** still apply first. Each genre keeps its own shuffle, so horror movies cycle through the horror trailers before repeating.
+
+NeX-Up trailers take their genres from Radarr and Sonarr. Trailers downloaded before 2.2.2 have none until the next NeX-Up sync fills them in, without redownloading, and until then they never match. In Advanced mode, the Sequence Builder preview's genre setting shows whether a **Trailers available** condition that follows the block would hold for that genre; the trailer preview itself lists all of the block's trailers.
 
 ### Rating metadata after upgrading
 
@@ -560,6 +576,7 @@ Trailers are removed automatically once the film enters your library, or once th
 | **Quality** | Maximum resolution to fetch |
 | **Days ahead** | How far into the future to look for releases |
 | **Max trailers** | Hard cap on how many are kept |
+| **Max trailer duration** | Sync skips longer trailers; the Upcoming tab's download button ignores it |
 | **Max storage** | Hard cap in GB |
 | **Delay between downloads** | How politely requests are paced |
 | **Max concurrent** | How many downloads run at once |
@@ -591,6 +608,10 @@ You'll see:
 3. Confirm deletion
 
 The trailer is removed from disk and the category.
+
+### Trailer genres
+
+From 2.2.2 each trailer lists its movie's or show's genres, taken from Radarr or Sonarr. They show under the title and in the preview panel, and the search box matches them, so searching **horror** lists horror trailers. Trailers downloaded earlier show **After the next sync** until a NeX-Up sync fills them in.
 
 ### Automatic Cleanup
 
@@ -721,6 +742,8 @@ Jellyfin and Emby need no mapping: their NeXroll Intros plugin downloads each tr
 ## Troubleshooting
 
 ### Trailers Not Downloading
+
+If the **Download** button on the Upcoming tab works but sync skips the same trailers, check **Max Trailer Duration** in NeX-Up settings. Sync skips trailers longer than it and says so in its summary and the log. Before 2.2.2 these skips were reported as a YouTube sign-in block.
 
 1. **Check YouTube cookies** — Re-export if expired
 2. **Verify VPN** — Try a different server/IP

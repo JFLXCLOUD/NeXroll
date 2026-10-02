@@ -232,10 +232,10 @@ Plex can't reach the preroll folder at all. Check that the share is mounted on t
 
 **Plex can open everything, but nothing plays**
 The paths are fine; check the Plex side:
-- In the Plex app on your TV or phone, **Cinema Trailers** must be set to 1 or more. Recheck after an app update.
+- In the Plex app on your TV or phone, **Cinema Trailers** must be set to **Play 1 before movie** or more. Plex's new Apple TV and iOS apps skip prerolls on **Play Pre-roll Only**. To keep Plex's own trailers out, use **Turn off Plex trailers** on the [Connect](Connect#cinema-trailers-plex) page. Recheck after an app update.
 - Each movie library's **Advanced** settings must have **Enable Cinema Trailers** on.
 - Not every Plex app plays prerolls, so try another device.
-- On Apple TV, playback can fail when **Settings > Extras > Include Cinema Trailers from new and upcoming movies** is on. Try switching those options off.
+- On Apple TV, playback can fail when **Settings > Extras > Include Cinema Trailers from new and upcoming movies** is on. **Turn off Plex trailers** switches those options off.
 
 **My files moved into category folders**
 When a preroll's main category changes, NeXroll files it in that category's folder and gives Plex the new path, so playback isn't affected.

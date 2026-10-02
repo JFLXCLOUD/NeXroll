@@ -4,7 +4,7 @@ NeXroll's scheduling system allows you to automatically change which prerolls pl
 
 ## Schedule Types
 
-Choose the recurrence separately from whether a schedule is Exclusive or Blend:
+Choose the recurrence separately from whether a schedule is Standard, Exclusive or Blend:
 
 | Type | When it runs |
 |---|---|
@@ -28,10 +28,25 @@ Monthly keeps its actual first and last active dates. A day that does not exist 
 
 Monthly and Holiday expose optional daily start/end hours and retain them through editing. Linked holidays keep their selected future first year as dates refresh; older fixed-date holidays remain editable.
 
-## Exclusive and Blend behavior
+## Standard, Exclusive and Blend
+
+Each schedule has one of three behaviors, chosen in the **Set priority and fallback behavior** step when you create or edit it. They decide what happens when schedules overlap.
+
+| Behavior | When it overlaps other schedules |
+|---|---|
+| **Standard** (default) | The highest priority wins. Only the winner plays |
+| **Exclusive** | Wins over every Standard and Blend schedule |
+| **Blend** | Takes turns with the other active Blend schedules |
+
+NeXroll picks the schedule from the date and time, about once a minute, before any movie starts. It never picks a schedule by what is about to play. To play different prerolls for different movies, by genre, by server, or by time of day, use one schedule with a sequence whose blocks have conditions; see [Advanced Sequences](Advanced-Sequences). For one genre preroll per movie, see the recipe [One genre preroll per movie, in priority order](Advanced-Sequences#one-genre-preroll-per-movie-in-priority-order).
+
+### Standard Mode
+Overlapping **Standard** schedules are not combined. The one with the highest [priority](#priority) plays, and the others wait until it ends. A tie goes to the schedule that ends first, then to the one that started first.
+
+If the winner's sequence has nothing to play for a movie (for example, every conditional block is skipped), NeXroll does not hand that movie to another schedule. Give the sequence a block that plays when nothing else does, such as the last block of an [Else if chain](Advanced-Sequences#else-if-first-match-wins).
 
 ### Exclusive Mode
-When a schedule is **Exclusive**, it takes complete control — only prerolls from that schedule's category will play.
+When a schedule is **Exclusive**, it takes complete control while it is active. Only that schedule's category or sequence plays, whatever else is scheduled. If several Exclusive schedules overlap, the highest priority wins, then the one that ends first.
 
 **Use cases:**
 - Holiday-specific prerolls (only Christmas prerolls during December)
@@ -39,7 +54,9 @@ When a schedule is **Exclusive**, it takes complete control — only prerolls fr
 - Time-restricted content (mature content after 10pm)
 
 ### Blend Mode
-When a schedule is **Blend** (non-exclusive), its prerolls are combined with other active blend schedules.
+When two or more **Blend** schedules are active, NeXroll mixes them over time. About once a minute it picks one of them at random and plays its category or sequence, so across an evening each one gets turns. A blended sequence always plays whole; NeXroll never interleaves blocks from two sequences.
+
+While two or more Blend schedules are active, Standard schedules that overlap them wait. A single active Blend schedule behaves like a Standard one.
 
 **Use cases:**
 - Seasonal additions (add fall-themed prerolls to your regular rotation)
@@ -54,7 +71,7 @@ When a schedule is **Blend** (non-exclusive), its prerolls are combined with oth
    - **Category**: Which preroll category to use
    - **Date Range**: Start and end dates
    - **Time Range** (optional): Restrict to specific hours
-   - **Exclusive**: Toggle on/off
+   - **Standard / Exclusive / Blend**: How it behaves when it overlaps other schedules
    - **Priority**: Set priority level (1-10)
    - **Use Sequence**: Optionally use a saved sequence instead of a category
    - **Enabled**: Toggle to activate/deactivate
@@ -87,26 +104,24 @@ This is great for theater-style experiences (e.g., Coming Soon intro → random 
 - End Time: 03:00 (3am)
 - This schedule is only active from 10pm to 3am
 
-## Priority & Win/Lose Logic
+## Priority
 
-When multiple exclusive schedules overlap, priority and **Win/Lose** determines which one takes control.
+When schedules overlap, priority decides which one plays.
 
 ### How Priority Works
-- Schedules have a priority level from 1 (lowest) to 10 (highest)
-- Higher priority number schedules win when multiple schedules overlap
-- Same-priority conflicts are shown with orange warning badges
-
-### Win/Lose
-- **Win**: This schedule takes priority over others
-- **Lose**: This schedule yields to "Win" schedules
-- **Neither**: Standard priority (first-come basis)
+- Schedules have a priority level from 1 (lowest) to 10 (highest). New schedules start at 5
+- Exclusive schedules win first. Among overlapping Exclusive schedules, or among overlapping Standard schedules, the higher priority wins
+- A tie goes to the schedule that ends first, then (for Standard) to the one that started first
+- Overlaps NeXroll has to settle by a tie are shown with orange warning badges, so you can set the priorities yourself
 
 ### Example Scenario
-You have two schedules for December 25th:
-1. "Christmas Day" (Win) — Christmas-specific prerolls
-2. "Holiday Season" (Lose) — General winter prerolls
+You have two schedules covering December 25th:
+1. "Holiday Season", December 1 to 31, priority 5: general winter prerolls
+2. "Christmas Day", December 25, priority 8: Christmas-specific prerolls
 
-On December 25th, "Christmas Day" wins and its prerolls play exclusively.
+On December 25th, "Christmas Day" wins and only its prerolls play. "Holiday Season" plays again from December 26th.
+
+Older NeXroll releases had a separate **Win/Lose** setting. It no longer exists; priority alone decides.
 
 ## Fallback and Filler
 
@@ -134,7 +149,7 @@ See [Configuration - Filler Category](Configuration#filler-category) for details
 
 NeXroll automatically detects potential conflicts:
 
-- **Orange badges** appear when exclusive schedules overlap at the same priority
+- **Orange badges** appear when overlapping schedules tie at the same priority
 - **Calendar indicators** show conflicts in Day, Week, and Month views
 - **Lock icon** on higher-priority schedules, greyed-out on lower-priority ones
 
@@ -172,7 +187,7 @@ The Dashboard Overview includes a mini calendar showing this week's scheduled pr
 ## Best Practices
 
 ### 1. Use Exclusive Sparingly
-Only use Exclusive mode when you truly want one category to dominate. For most cases, Blend mode provides better variety.
+Only use Exclusive mode when you truly want one category to dominate. For most cases, Standard with a sensible priority, or Blend for variety, is enough.
 
 ### 2. Set Proper Date Ranges
 Don't leave schedules active indefinitely. Set clear end dates, especially for holidays.
@@ -188,7 +203,7 @@ environment:
 ```
 
 ### 5. Use Priority for Overlaps
-When schedules must overlap (e.g., "Holiday Season" spans multiple specific holidays), use priority levels and Win/Lose to control behavior.
+When schedules must overlap (e.g., "Holiday Season" spans multiple specific holidays), give the more specific schedule the higher priority.
 
 ### 6. Use Filler for Gaps
 Configure a Filler Category to ensure something always plays, even when no schedules are active.
@@ -224,8 +239,8 @@ Saved sequences keep their existing behavior unless you add the new [rating rest
 - Check **Settings → Logs** for scheduler activity
 
 ### Overlapping Schedules Conflict
-- Use priority levels and Win/Lose logic
-- Consider converting one to Blend mode
+- Give the schedule that should win a higher priority
+- Consider converting both to Blend mode if they should take turns
 - Check Calendar view for conflicts (orange indicators)
 
 ### Prerolls Not Updating in Plex

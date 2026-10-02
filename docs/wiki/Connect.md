@@ -46,6 +46,14 @@ The page shows the connected server, its name and version, and a live status dot
 
 Use **Test connection** to confirm NeXroll can still reach the server, and apply a schedule to confirm the server accepts the preroll path. A successful apply that still plays nothing is nearly always a path problem, not a connection problem — see below.
 
+### Cinema Trailers (Plex)
+
+With Plex connected, the Connect page also shows Plex's own **Cinema Trailers** settings: whether Plex takes trailers from movies in your library and, with Plex Pass, from new movies in theaters and on Blu-ray. Changes save straight to your Plex server.
+
+**To play only your prerolls**, click **Turn off Plex trailers**. Then, in each Plex app, set **Cinema Trailers** to **Play 1 before movie** (on Apple TV: **Settings > Player Experience > Cinema Trailers**). Plex has no trailers of its own left to add, so it plays your prerolls and then the movie. Trailers in your NeXroll sequences still play, because they are part of the preroll list NeXroll sends.
+
+Use this instead of the app's **Play Pre-roll Only** option. Plex's new Apple TV and iOS apps (2026.18, September 2026) skip prerolls when that option is chosen, and the Android TV beta before them did the same. **Play 1 before movie** works on old and new apps alike.
+
 ---
 
 ## Paths are the usual problem
@@ -66,6 +74,14 @@ Each server is reached its own way. Plex has the preroll setting written to it d
 
 Disconnecting a server only removes that destination. Your library, categories and schedules are untouched.
 
+### Removing a server NeXroll can't reach
+
+> **New in 2.2.2.**
+
+If a server is saved but doesn't answer, because it is off, has moved, or its API key or token changed, its card shows **Can't connect** with the saved address and a **Remove** button. Opening its settings shows the same choice above the connect form. **Remove** clears the saved address and key, exactly like Disconnect. To keep the server, start it or connect again with its new address or key instead.
+
+Before 2.2.2 the card only offered Disconnect while the server answered, so a retired server could not be removed.
+
 Before 2.2.0-beta.10, NeXroll allowed only one server and asked you to disconnect the first before connecting another. That limit is gone.
 
 ---
@@ -78,8 +94,14 @@ Check that NeXroll can reach the address *from where NeXroll runs*. In Docker, `
 **Plex sign-in never completes.**
 The request times out after ten minutes. Start it again; if the tab never opened, use the direct link shown on the page.
 
+**A server shows Can't connect and you no longer use it.**
+Click **Remove** on its card. See [Removing a server NeXroll can't reach](#removing-a-server-nexroll-cant-reach).
+
 **Connected, applies cleanly, nothing plays.**
 A path mapping issue. See [Path Mappings](Path-Mappings).
+
+**Prerolls stopped after a Plex app update.**
+If the app's **Cinema Trailers** option is **Play Pre-roll Only**, change it to **Play 1 before movie** and turn Plex's trailers off. See [Cinema Trailers](#cinema-trailers-plex).
 
 More: [Troubleshooting](Troubleshooting).
 

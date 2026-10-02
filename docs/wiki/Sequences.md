@@ -111,7 +111,7 @@ Your sequence is now in your library and can be:
 
 Two optional switches at the top of the sequence add more control:
 
-- **Advanced** mode lets any block decide *when* it plays, such as only when trailers are available, only late at night, or only before horror movies on Jellyfin and Emby, and what plays in its place when it doesn't.
+- **Advanced** mode lets any block decide *when* it plays, such as only when trailers are available, only late at night, or only before horror movies on Jellyfin and Emby, and what plays in its place when it doesn't. Blocks can be chained with **Else if** so only the first match plays, for example one genre preroll per movie with a default for everything else; see [Else if: first match wins](Advanced-Sequences#else-if-first-match-wins).
 - **Flow** view draws the sequence as a workflow you can pan, zoom and drag, with conditions shown as branches.
 
 See [Advanced Sequences](Advanced-Sequences) for the full guide, including what Plex, Jellyfin and Emby can each check.

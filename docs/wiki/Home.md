@@ -13,6 +13,15 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.2.2
+
+- **Else if chains:** only the first matching block plays, for example one genre preroll per movie with a default for everything else. See [Advanced Sequences](Advanced-Sequences#else-if-first-match-wins).
+- **NeX-Up trailers matched to the film's genre** on Jellyfin and Emby. See [NeX-Up](NeX-Up#matching-the-movies-genre).
+- **Prerolls only on Plex's new Apple TV and iOS app:** **Turn off Plex trailers** on the Connect page. See [Connect](Connect).
+- **Create a category where you need it**, and remove a saved server NeXroll can't reach. See [Preroll Library](Preroll-Library#categories) and [Connect](Connect#removing-a-server-nexroll-cant-reach).
+- **Deleted prerolls clean themselves up**, and Refresh Library scans the disk. See [Preroll Library](Preroll-Library#troubleshooting).
+- **Standard, Exclusive and Blend explained**, including how priority decides overlaps. See [Scheduling](Scheduling#standard-exclusive-and-blend).
+
 ## What's New in v2.2.0
 
 ### New in the stable release

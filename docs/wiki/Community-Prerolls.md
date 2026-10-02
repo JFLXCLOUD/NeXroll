@@ -54,7 +54,7 @@ Results are returned a page at a time (your **item limit** sets the page size). 
 ## Downloading a preroll
 
 1. Click **Download** on any result.
-2. A dialog lets you **rename** the file (the community's numeric ID prefix is stripped by default) and optionally **add it to a category**.
+2. A dialog lets you **rename** the file (the community's numeric ID prefix is stripped by default) and optionally **add it to a category**. If the category doesn't exist yet, choose **+ New category…** in the list to create it there.
 3. Confirm — NeXroll downloads the file, generates a thumbnail, and adds it to your library.
 
 Already-downloaded prerolls are marked so you don't grab duplicates. After a download you stay exactly where you were in the list (same page, same scroll position).

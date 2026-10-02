@@ -2,7 +2,7 @@
 
 The Sequence Builder has two optional extras on top of the usual list of blocks:
 
-- **Advanced mode** lets a block decide *when* it plays, and what plays in its place when it doesn't. This is the builder's IF / THEN / OTHERWISE.
+- **Advanced mode** lets a block decide *when* it plays, and what plays in its place when it doesn't. This is the builder's IF / THEN / OTHERWISE. Blocks can also form an **Else if** chain, so only the first one that matches plays.
 - **Flow view** draws your sequence as a workflow you can pan, zoom and drag, with conditions shown as branches.
 
 Neither is required. A sequence built in Simple mode and List view works exactly as it always has. If you're new to sequences, start with [Sequences](Sequences).
@@ -53,6 +53,43 @@ Click **Add another rule**, then choose whether the block needs **all** of the r
 ### When NeXroll can't tell
 
 If NeXroll can't answer a rule, the rule counts as **not met** and the **Otherwise** plays. A conditional block only plays when NeXroll *knows* its condition holds. This includes unknown stored audio metadata and genre/audio rules on Plex, even when negated; see [What each server can check](#what-each-server-can-check).
+
+### Else if: first match wins
+
+> **New in 2.2.2.**
+
+Each conditional block is normally checked on its own. If two blocks' conditions both hold, both play: a movie that is Horror and Science Fiction plays a Horror block and a Science Fiction block.
+
+To play only one of several blocks, chain them with **Else if**:
+
+1. Add the blocks one after another, in order of priority, each with its own condition
+2. Select the second block and tick **Else if: only when the block above didn't play**. Do the same on each block after it
+3. To play something when none of them match, either give the chain's last block an **Otherwise**, or end the chain with one more block that has no condition and **Else if** ticked
+
+NeXroll checks the chain from the top. The first block whose condition holds plays, and the rest of the chain is skipped. When none holds:
+
+- the block at the end without a condition (the chain's **Else**) plays, or
+- the last block's alternative plays (its Otherwise, shown as **If no block in the chain plays**), or
+- nothing from the chain plays.
+
+| Block | Condition | Else if |
+|---|---|---|
+| Horror category | when Genre is Horror | |
+| Sci-Fi category | when Genre is Science Fiction | ticked |
+| Action category | when Genre is Action | ticked |
+| House intros | none | ticked |
+
+With this chain, a Horror + Science Fiction movie plays only the Horror block, an Action + Science Fiction movie plays only the Sci-Fi block, and a comedy plays the house intro.
+
+Things to know:
+
+- **Else if** is offered on a block when the block above it has a condition. The list, the block settings and Flow view label chained blocks **Else if**, or **Else** for one without a condition.
+- Only the last block of a chain uses its Otherwise. On the other blocks, the builder hides the Otherwise and says that the next Else if block is checked instead.
+- A block after the chain's Else never plays, because the Else always plays when it is reached. The builder marks it **never plays**.
+- Blocks before and after the chain play as usual. A block without Else if starts a new chain, so one sequence can hold several.
+- Reordering blocks can join or split a chain. Check the labels after moving blocks.
+- A **Trailers available** rule set to **This / next trailer block** follows the chain: when that trailer block is part of an Else if chain, the rule checks whichever block of the chain plays.
+- On Plex, genre and audio rules are never met, so a genre chain plays its Else (or the last block's Otherwise) on Plex. This makes a chain a good way to give Plex a sensible default.
 
 ---
 
@@ -180,6 +217,8 @@ In Advanced mode, a conditional block is drawn as an **IF** node with two branch
 
 Both branches join the next block. In Simple mode a conditional block is a single node marked **Conditional**.
 
+An [Else if chain](#else-if-first-match-wins) is drawn as an **IF** node followed by **ELSE IF** nodes along the false branches: each one is only reached when the one before it is false. Each true branch steps up from the main line so its line to the join stays clear, and the chain's Else (a block with no condition) sits on the last false branch. Every branch joins the block after the chain.
+
 Flow view hides the Block library column to give the canvas more room, since the **+** on each connection adds blocks. Long sequences open at the start and continue to the right, rather than shrinking until they can't be read.
 
 Block positions are saved with the sequence. Simple and Advanced layouts are remembered separately, including the condition branches. Switching to List and back preserves your placement. Follow the connection arrows and step numbers to see playback order; moving a block on the canvas does not change what plays next.
@@ -191,7 +230,7 @@ Block positions are saved with the sequence. Simple and Advanced layouts are rem
 Click **Preview** to play the sequence as a viewer would see it right now.
 
 - Conditions are checked as if a movie were starting at this moment.
-- A panel lists each conditional block and whether it **plays**, **plays its alternative** or **is skipped**, and why.
+- A panel lists each conditional block and whether it **plays**, **plays its alternative** or **is skipped**, and why. In an Else if chain it also says when a block is skipped because an earlier block in the chain already played.
 - For a sequence with genre rules, **Preview as** switches between **Plex (genre unknown)** and each genre the sequence uses. For example, **A Horror movie on Jellyfin or Emby**. Use it to check what both kinds of viewer will get.
 - For a sequence with **Media server** rules, **Preview for** picks the server: Plex, Jellyfin or Emby.
 
@@ -221,6 +260,20 @@ Build four blocks in order:
 
 The two sections work independently. If the upcoming pool is empty but the library pool has matches, viewers still get Now Available and its trailers.
 
+### One genre preroll per movie, in priority order
+
+Jellyfin & Emby. One preroll for the movie's genre, chosen by your order of priority, and your usual intro for everything else.
+
+1. Create a category for each genre (for example **Horror**, **Sci-Fi**, **Action**) and one for your usual intros
+2. Switch to **Advanced** and add a **Category** block for each genre, in priority order, each playing 1 preroll
+3. Give each block the condition **when Genre is** that genre. Pick the names from the suggestions: Jellyfin and Emby call it **Science Fiction**, not Sci-Fi
+4. On every genre block after the first, tick **Else if: only when the block above didn't play**
+5. Add a **Category** block for your usual intros at the end, with no condition, and tick **Else if**
+
+A movie that is both Horror and Sci-Fi plays only the Horror preroll. A movie with none of these genres, every movie on Plex, and any movie whose genres NeXroll can't look up get your usual intro. Put this sequence on your everyday schedule in place of its category. Blocks you want before every movie, such as a studio intro, go outside the chain without a condition.
+
+Use **Preview** with **Preview as** to check each genre.
+
 ### Halloween prerolls before horror movies (Jellyfin & Emby)
 
 1. Add a **Category** block for your Halloween category
@@ -245,6 +298,8 @@ Jellyfin plays its own Halloween prerolls, and Plex (and Emby, unless you tick i
 3. Tick **Same genre as the movie that's starting**
 
 A horror movie prefers trailers for other horror movies you own, and a comedy prefers comedies. If no genre matches, selection falls back within the block's other filters, including its rating restriction. On Plex, the same block selects from the whole filtered pool. Jellyfin/Emby can exclude the feature's own trailer when its TMDB identity is available; Plex does not provide that playback context.
+
+The same option works on a **NeX-Up trailers** block from 2.2.2, for upcoming releases. To play only matching trailers, set **When no trailer shares its genre** to **Play no trailers**: a movie with no matching trailer then gets none, and on Plex the block never plays. Pair it with a **Trailers available** condition on your Coming Soon intro, set to **This / next trailer block**, so the intro is skipped along with the trailers. See [Matching the movie's genre](NeX-Up#matching-the-movies-genre).
 
 ### A late-night bumper at weekends
 
@@ -274,6 +329,8 @@ Movies get the full intro, and episodes get a quick bumper.
 
 Rating restrictions and availability-pool choices survive save, export/import, and sequence backups, including trailer alternatives. The destination must run 2.2.0 or later; do not rely on an older release to enforce them. Upgrading existing sequences does not add restrictions or change their old availability pool.
 
+Else if chains survive save, export/import and backups too. The destination must run 2.2.2 or later: older releases ignore **Else if** and check every block on its own, so several blocks of a chain could play.
+
 - **Export** keeps each block's conditions. An Otherwise that plays a category travels by category name and is matched to a category with the same name on import. An Otherwise made of specific prerolls isn't exported, because those files belong to your install; on another install that block is skipped when its condition isn't met.
 - **Backups** keep conditions. On restore, an Otherwise whose category no longer exists is dropped, so the block is skipped rather than playing the wrong thing.
 
@@ -283,6 +340,12 @@ Rating restrictions and availability-pool choices survive save, export/import, a
 
 **A genre block never plays on Jellyfin or Emby.**
 Check that the server is connected on the [Connect](Connect) page with a working API key, and that the NeXroll Intros plugin is installed. NeXroll asks the server for the title's genres. If it can't reach the server, the rule counts as not met. Also check the genre names match your library's: pick them from the suggestions rather than typing them.
+
+**Two genre blocks both play before a movie with both genres.**
+Each conditional block is checked on its own. Chain them with [Else if](#else-if-first-match-wins) so only the first match plays.
+
+**A block marked Else if never plays.**
+A block above it in the chain has no condition, so that block always plays first. Give that block a condition, or move the Else to the end of the chain. The builder labels such a block **never plays**.
 
 **A genre block always plays its Otherwise on Plex.**
 That is expected. Plex never says which movie is starting; see [If you use Plex](#if-you-use-plex).
