@@ -1,12 +1,13 @@
 # Screenshots for the README
 
-All seven images share one frame: the dark backdrop, logo row, numbered headline and rounded app panel from the Flow view demo recording, with the "product demo, sample library" label. The folder keeps its 2.2.0 name so existing links still work.
+All seven are full-window browser captures (1920x1080, captured at 2x and scaled down) in the Midnight theme, taken October 4, 2026. The folder keeps its 2.2.0 name so existing links still work.
 
-`sequence-flow.png` was added for 2.2.0-beta.11. It is a frame of the Flow view demo recording, and its "07" chapter number comes from that recording. The sequence, categories and trailer titles in it are demonstration data. It was reduced to a 256-colour palette.
+The pages were rendered by the frontend from the working tree after the 2.2.2 release. That build includes two fixes not in 2.2.2: Library Trailers no longer count as uncategorized, and the Schedules page's "Today's run" lists the running schedule first.
 
-The other six (dashboard, library, schedules, calendar, generator, community) replaced the September 2026 beta.9 captures on October 3, 2026. They are browser captures of the 2.2.2 frontend build at 1920x1080 and 2x scale, in the Midnight theme, with the clock fixed to October 8, 2026. The sidebar and top bar are cropped out. Each capture was placed in the frame by the `ReadmeStill` composition in `launch-video/src/ReadmeStills.jsx`. They are saved as lossless full-colour PNGs, because a 256-colour palette banded the thumbnail and glow gradients.
-
-The browser used example API responses for the library, schedules, connections, system health, Library Trailers, Favorites and the community catalog. Names, statistics and server details are fictional. The library thumbnails are original SVG demonstration artwork. Generator Studio shows its actual live canvas preview. No live media-server data, credentials or community downloads were used.
+- `dashboard.png`, `schedules.png` and `community.png` show the maintainer's own NeXroll install, read through its API with every write request blocked. On the dashboard, the Plex server address is blurred because a plex.direct hostname contains the server's unique ID.
+- `library.png` shows 20 prerolls from the same install, with their real names, categories and thumbnails, served from a mocked API so the grid shows a chosen set. Third-party footage (TV bumpers, film clips, studio logos, movie trailers) was left out.
+- `calendar.png` and `generator.png` use example API responses. Schedule and server names are fictional. Generator Studio shows its actual live canvas preview.
+- `sequence-flow.png` comes from the Flow view demo script (`launch-video/scripts/capture-flow-demo.cjs`), stopped at the step where NeX-Up trailers play when available and a category plays otherwise. Its sequence and category names are demonstration data.
 
 The two `readme-preview-*` images show the local Markdown preview of the 2.2.0 draft in light and dark mode.
 

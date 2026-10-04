@@ -22,7 +22,7 @@ Self-hosted on **Windows, Docker, or Unraid**, with everything managed from your
 
 ![The NeXroll dashboard showing the current and next schedule, system health, library and storage](docs/screenshots/v2.2.0/dashboard.png)
 
-*Screenshots show NeXroll 2.2 with example data and demonstration artwork.*
+*Screenshots show NeXroll 2.2. The dashboard, schedules, community and library views come from a real install; the rest use example data.*
 
 ## Features at a glance
 
@@ -73,7 +73,7 @@ Add a personal touch with custom welcome screens, announcements, and Coming Soon
 
 Find a new opening for your next movie night. Browse the collection, preview videos, and add your favorites straight to your library.
 
-![Community browsing with filters and a list of example prerolls](docs/screenshots/v2.2.0/community.png)
+![Community browsing filtered to holiday prerolls, with the preview panel showing one of them](docs/screenshots/v2.2.0/community.png)
 
 Powered by [TypicalNerds](https://typicalnerds.uk/). Thank you to TypicalNerds and the creators who share their work with the community.
 
