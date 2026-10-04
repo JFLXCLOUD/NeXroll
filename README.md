@@ -22,8 +22,6 @@ Self-hosted on **Windows, Docker, or Unraid**, with everything managed from your
 
 ![The NeXroll dashboard showing the current and next schedule, system health, library and storage](docs/screenshots/v2.2.0/dashboard.png)
 
-*Screenshots show NeXroll 2.2. The dashboard, schedules, community and library views come from a real install; the rest use example data.*
-
 ## Features at a glance
 
 - **Visual sequences.** Combine intros, trailers, and pauses in a list or Flow view, with conditional branches and fallback selections.
