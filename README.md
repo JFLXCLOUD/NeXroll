@@ -20,9 +20,9 @@
 
 Self-hosted on **Windows, Docker, or Unraid**, with everything managed from your browser.
 
-![The NeXroll dashboard showing the current selection, upcoming schedules, and library activity](docs/screenshots/v2.2.0/dashboard.png)
+![The NeXroll dashboard showing the current and next schedule, system health, library and storage](docs/screenshots/v2.2.0/dashboard.png)
 
-*Screenshots show NeXroll 2.2.0 with example data and demonstration artwork.*
+*Screenshots show NeXroll 2.2 with example data and demonstration artwork.*
 
 ## Features at a glance
 

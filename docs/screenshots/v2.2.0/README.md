@@ -1,13 +1,13 @@
-# Screenshots for the 2.2.0 README draft
+# Screenshots for the README
 
-Captured September 9, 2026 from the current local frontend build prepared for 2.2.0-beta.9. These are browser captures of the application, using its Midnight theme and updated logo.
+All seven images share one frame: the dark backdrop, logo row, numbered headline and rounded app panel from the Flow view demo recording, with the "product demo, sample library" label. The folder keeps its 2.2.0 name so existing links still work.
 
-The browser used example API responses for the library, schedules, connections, system health, and community catalog. Names, statistics, and server details are fictional. The library thumbnails are original SVG demonstration artwork. Generator Studio shows its actual live canvas preview. No live media-server data, credentials, or community downloads were used.
+`sequence-flow.png` was added for 2.2.0-beta.11. It is a frame of the Flow view demo recording, and its "07" chapter number comes from that recording. The sequence, categories and trailer titles in it are demonstration data. It was reduced to a 256-colour palette.
 
-Included views: dashboard, library gallery, schedules, monthly calendar, Generator Studio, and Community Prerolls. The two `readme-preview-*` images show the local Markdown preview in light and dark mode.
+The other six (dashboard, library, schedules, calendar, generator, community) replaced the September 2026 beta.9 captures on October 3, 2026. They are browser captures of the 2.2.2 frontend build at 1920x1080 and 2x scale, in the Midnight theme, with the clock fixed to October 8, 2026. The sidebar and top bar are cropped out. Each capture was placed in the frame by the `ReadmeStill` composition in `launch-video/src/ReadmeStills.jsx`. They are saved as lossless full-colour PNGs, because a 256-colour palette banded the thumbnail and glow gradients.
 
-`sequence-flow.png` was added later, for 2.2.0-beta.11, and comes from a different source than the rest: it is a frame of the Flow view demo recording, so it carries that recording's caption and its "product demo, sample library" label rather than being a plain browser capture. The sequence, categories, and trailer titles in it are demonstration data. It was reduced to a 256-colour palette to keep it the same weight as the other captures.
+The browser used example API responses for the library, schedules, connections, system health, Library Trailers, Favorites and the community catalog. Names, statistics and server details are fictional. The library thumbnails are original SVG demonstration artwork. Generator Studio shows its actual live canvas preview. No live media-server data, credentials or community downloads were used.
 
-These captures illustrate the interface; they are not evidence of live playback, downloads, or backend health. Refresh them if the interface changes before the stable release.
+The two `readme-preview-*` images show the local Markdown preview of the 2.2.0 draft in light and dark mode.
 
-The approved layout is now used in the repository's root `README.md`, starting with 2.2.0-beta.9. It remains labeled as a beta until the stable 2.2.0 release.
+These captures illustrate the interface; they are not evidence of live playback, downloads or backend health. Refresh them when the interface changes.
