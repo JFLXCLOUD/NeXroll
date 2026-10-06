@@ -15,6 +15,8 @@ docker pull jbrns/nexroll:1.11.0
 docker pull jbrns/nexroll:beta
 ```
 
+The same images and tags are on GitHub Container Registry as `ghcr.io/jflxcloud/nexroll`, for example `docker pull ghcr.io/jflxcloud/nexroll:latest`. Use it if Docker Hub's pull limits get in the way. Both carry the `org.opencontainers.image.source` label, so tools like Renovate find the release notes. (GHCR wasn't updated between 1.5.12 and 2.2.3.)
+
 ### Supported Architectures
 - `linux/amd64` — Intel/AMD servers, most VPS
 - `linux/arm64` — Raspberry Pi 4/5, Apple Silicon, ARM servers

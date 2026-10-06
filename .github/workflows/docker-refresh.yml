@@ -19,6 +19,7 @@ on:
 
 env:
   IMAGE_NAME: jbrns/nexroll
+  GHCR_IMAGE: ghcr.io/jflxcloud/nexroll
 
 # Shared with docker-build.yml's release-triggered push — prevents a real
 # release and a scheduled refresh from racing on the same floating tag.
@@ -78,6 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - name: Checkout latest stable release
         uses: actions/checkout@v5
@@ -96,6 +98,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push :latest
         uses: docker/build-push-action@v6
         with:
@@ -103,7 +112,12 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ env.IMAGE_NAME }}:latest
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.GHCR_IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
           build-args: |
             VERSION=${{ needs.resolve-refs.outputs.stable_tag }}
           cache-from: type=gha
@@ -115,6 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - name: Checkout the ref :beta tracks
         uses: actions/checkout@v5
@@ -133,6 +148,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push :beta
         uses: docker/build-push-action@v6
         with:
@@ -140,7 +162,12 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ env.IMAGE_NAME }}:beta
+          tags: |
+            ${{ env.IMAGE_NAME }}:beta
+            ${{ env.GHCR_IMAGE }}:beta
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
           build-args: |
             VERSION=${{ needs.resolve-refs.outputs.beta_tag }}
           cache-from: type=gha

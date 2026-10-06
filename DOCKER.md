@@ -21,6 +21,8 @@ URLs (default):
 | `jbrns/nexroll:beta` | Latest beta/pre-release version (for testing new features) |
 | `jbrns/nexroll:1.12.0` | Specific version (pin to a known good version) |
 
+The same images, with the same tags, are published to GitHub Container Registry as `ghcr.io/jflxcloud/nexroll` (for example `ghcr.io/jflxcloud/nexroll:latest`). Use it if Docker Hub's pull limits get in the way. Both carry the `org.opencontainers.image.source` label, so tools like Renovate find the release notes.
+
 **To use the beta channel**, change your image tag:
 ```yaml
 image: jbrns/nexroll:beta

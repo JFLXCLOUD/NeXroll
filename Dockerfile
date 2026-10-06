@@ -69,10 +69,14 @@ FROM python:3.12-slim
 
 ARG APP_VERSION=dev
 ARG VERSION=dev
+# image.source is how Renovate and GHCR find the GitHub repo and its release
+# notes. The image workflows set it too, for refreshes built from older tags.
 LABEL org.opencontainers.image.title="NeXroll" \
       org.opencontainers.image.description="NeXroll preroll management system" \
       org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/JFLXCLOUD/NeXroll" \
+      org.opencontainers.image.url="https://github.com/JFLXCLOUD/NeXroll"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
