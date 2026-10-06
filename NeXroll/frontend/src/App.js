@@ -19198,9 +19198,15 @@ const DashboardTiles = {
       </section>
     );
 
-    const todayQueue = [...runningSchedules, ...enabledSchedules]
-      .sort((a, b) => (upcomingScheduleDate(a) || 0) - (upcomingScheduleDate(b) || 0))
-      .slice(0, 5);
+    // Running schedules first, then the next ones to start. A schedule with no
+    // upcoming window used to sort as date 0, so it led the queue ahead of the
+    // running one, and its "No upcoming window" label spilled into the name.
+    const todayQueue = [
+      ...runningSchedules,
+      ...enabledSchedules
+        .filter(schedule => upcomingScheduleDate(schedule))
+        .sort((a, b) => upcomingScheduleDate(a) - upcomingScheduleDate(b)),
+    ].slice(0, 5);
 
     return (
       <div className="nx-command-center">
