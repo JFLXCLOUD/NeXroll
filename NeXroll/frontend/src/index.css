@@ -9138,7 +9138,7 @@ body.light .nx-lt-chip.off, body.light .nx-lt-pin.never { color: #c03a44; }
 .nx-ap-day-filter { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -4px 0 10px; padding: 6px 10px; border: 1px solid rgba(77,163,255,.35); border-radius: 8px; background: rgba(77,163,255,.08); color: #72b7ff; font-size: 12px; }
 .nx-ap-command { display: grid; grid-template-columns: minmax(220px,1fr) 150px 155px auto; gap: 7px; padding: 9px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
 .nx-ap-command > label { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--input-bg); color: var(--text-muted); }
-.nx-ap-command input { min-width: 0; width: 100%; height: 31px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-color); font-size: 9px; }
+.nx-ap-command input { min-width: 0; width: 100%; height: 31px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-color); font-size: 12px; }
 .nx-ap-command select { min-height: 33px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--input-bg); color: var(--text-color); font-size: 12px; }
 .nx-ap-upcoming .nx-ap-command { margin-bottom: 10px; }
 .nx-ap-upcoming-list { overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--raised-bg); }
@@ -9720,9 +9720,11 @@ body.light .nx-ap-trailer-table > article.selected { background: #fff8e9; }
   .nx-ap-generator-preview,
   .nx-ap-preview-rail { position: static; }
   .nx-ap-trailer-layout.has-preview { grid-template-columns: 1fr; }
+  /* Search on its own row, then as many filters per row as fit. A fixed
+     180px + 1fr + 1fr ran past the edge of a phone. */
   .nx-ap-command,
-  .nx-ap-trailers .nx-ap-command { grid-template-columns: minmax(180px,1fr) 1fr 1fr; }
-  .nx-ap-command > label { grid-column: 1 / -1; }
+  .nx-ap-trailers .nx-ap-command { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .nx-ap-command > label { grid-column: 1 / -1; min-height: 38px; }
 }
 
 /* Connect and Community approved page density. */
@@ -10973,8 +10975,10 @@ body.light .nx-draft-cal-event { color: #157a55; }
   .nx-trash-toolbar > div { flex-wrap: wrap !important; }
   .nx-library-categories .nx-cat-search,
   .nx-trash-search { flex: 1 1 100% !important; width: 100% !important; min-width: 0; }
+  /* Two per row. No calc(): the minifier splits a calc() flex into longhands
+     and drops the !important. */
   .nx-library-categories .nx-cat-filter,
-  .nx-trash-toolbar select { flex: 1 1 calc(50% - 7px) !important; min-width: 0; }
+  .nx-trash-toolbar select { flex: 1 1 40% !important; min-width: 0; }
   .nx-library-categories .nx-category-grid { grid-template-columns: 1fr !important; }
 }
 
@@ -11453,3 +11457,99 @@ body.light .nx-draft-cal-event { color: #157a55; }
 .nx-plugin-playback-warning { display: flex; gap: 0.5rem; align-items: flex-start; margin-top: 0.35rem; padding: 0.6rem 0.7rem;
   border-radius: 6px; background: var(--warning-soft); border: 1px solid var(--warning-color); font-size: 0.85rem; line-height: 1.5; }
 .nx-plugin-playback-warning svg { color: var(--warning-color); flex-shrink: 0; margin-top: 0.15rem; }
+
+/* Inputs that sit inside a search box of their own: an icon and the input in
+   one bordered label. The site-wide input rules (body.dark input..., the
+   .nx-content :is(input...) rule and the dark :focus rule, all !important)
+   also gave the inner input a background, border, focus ring, minimum height
+   and, on phones, padding, so a second box showed inside the first and on
+   phones spilled out of it. This selector outranks them. (Trash and the
+   sequence library style the input itself as the box, so they aren't listed.) */
+body :is(.nx-sidebar, .nx-content) :is(
+  .nx-sidebar-search-box,
+  .nx-ap-command > label,
+  .nx-lt-browser-search,
+  .nx-lt-movie-search > label,
+  .nx-command-search
+) > input:not([type="checkbox"]),
+body :is(.nx-sidebar, .nx-content) :is(
+  .nx-sidebar-search-box,
+  .nx-ap-command > label,
+  .nx-lt-browser-search,
+  .nx-lt-movie-search > label,
+  .nx-command-search
+) > input:not([type="checkbox"]):focus {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  height: auto;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+@media (max-width: 768px) {
+  /* 16px keeps iOS from zooming in on focus; a later 480px rule shrank search
+     fields and selects to .85rem and padded selects until their text was cut
+     off ("Any score" read as "Anv score"). */
+  body :is(.nx-sidebar, .nx-content) :is(.nx-sidebar-search-box, .nx-ap-command > label,
+    .nx-lt-browser-search, .nx-lt-movie-search > label, .nx-command-search) > input:not([type="checkbox"]) { font-size: 16px !important; }
+  .nx-ap-page select { min-height: 38px; height: auto !important; padding-top: 0 !important; padding-bottom: 0 !important; font-size: 16px !important; }
+  .nx-ap-page :is(.nx-lt-browser-search, .nx-lt-movie-search > label) { min-height: 38px; }
+}
+
+/* NeX-Up pages on phones and tablets. */
+.nx-ap-upcoming-meta { display: contents; }
+
+/* Tablets: the desktop row widths (about 750px) no longer fit, so the columns
+   narrow; headings and rows keep sharing them. */
+@media (min-width: 721px) and (max-width: 980px) {
+  .nx-ap-upcoming-list > article { grid-template-columns: 74px minmax(130px, 1fr) 108px 96px 56px 110px; gap: 7px; }
+  .nx-ap-trailer-head,
+  .nx-ap-trailer-table > article { grid-template-columns: minmax(150px, 1fr) 76px 66px 64px 100px 96px; gap: 7px; }
+}
+
+/* Phones and small tablets: rows stack instead of running in columns. */
+@media (max-width: 720px) {
+  /* Upcoming: date beside the title; status labels and actions underneath. */
+  .nx-ap-upcoming-list > article { grid-template-columns: 58px minmax(0, 1fr) auto; row-gap: 7px; }
+  .nx-ap-upcoming-list > article > .nx-ap-release { grid-column: 1; grid-row: 1 / span 2; align-self: start; flex-direction: column; align-items: flex-start; gap: 5px; }
+  .nx-ap-release time { white-space: nowrap; }
+  .nx-ap-upcoming-list > article > .nx-ap-upcoming-title { grid-column: 2 / -1; grid-row: 1; min-width: 0; }
+  .nx-ap-upcoming-meta { grid-column: 2; grid-row: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 5px 6px; min-width: 0; }
+  .nx-ap-upcoming-list > article > .nx-ap-row-actions { grid-column: 3; grid-row: 2; align-self: end; }
+
+  /* Your Trailers table: title and buttons, then duration, size, usage and
+     removal date on a second line. The column headings don't fit, so they go. */
+  .nx-ap-trailer-head { display: none; }
+  .nx-ap-trailer-table > article { grid-template-columns: auto auto auto minmax(0, 1fr) auto; row-gap: 6px; padding: 8px 10px; }
+  .nx-ap-trailer-table > article > .nx-ap-table-media { grid-column: 1 / 5; grid-row: 1; }
+  .nx-ap-trailer-table > article > .nx-ap-row-actions { grid-column: 5; grid-row: 1; }
+  .nx-ap-trailer-table > article > :nth-child(2) { grid-column: 1; grid-row: 2; }
+  .nx-ap-trailer-table > article > :nth-child(3) { grid-column: 2; grid-row: 2; }
+  .nx-ap-trailer-table > article > :nth-child(4) { grid-column: 3; grid-row: 2; justify-self: start; }
+  .nx-ap-trailer-table > article > :nth-child(5) { grid-column: 4; grid-row: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nx-ap-trailer-table > footer { flex-wrap: wrap; }
+}
+
+/* Phones. */
+@media (max-width: 600px) {
+  .nx-ap-panel-head { flex-wrap: wrap; }
+  .nx-ap-panel-head > :last-child:not(:first-child) { margin-left: auto; }
+  /* Upcoming's Movies/TV and List/Posters/Calendar toggles: each gets its own
+     row when both don't fit, with the buttons sharing it evenly. */
+  .nx-ap-panel-head > div:last-child:has(> .nx-ap-segmented) { width: 100%; flex-wrap: wrap; gap: 6px; }
+  .nx-ap-panel-head .nx-ap-segmented { flex: 1 1 auto; }
+  .nx-ap-panel-head .nx-ap-segmented > button { flex: 1 1 auto; white-space: nowrap; }
+
+  /* Your Trailers' five counters: two per row, the last one full width. */
+  .nx-ap-stats.five { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .nx-ap-stats.five > :last-child { grid-column: 1 / -1; }
+
+  /* Settings rows: the label above its control, so long choices aren't cut. */
+  .nx-ap-control-row { grid-template-columns: minmax(0, 1fr); gap: 7px; }
+}
