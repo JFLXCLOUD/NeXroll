@@ -13,6 +13,14 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.2.3
+
+- **Tag and File path conditions:** play a preroll only before movies with a tag such as IMAX, or whose file path contains some text. See [Advanced Sequences](Advanced-Sequences#an-imax-preroll-before-imax-movies-jellyfin--emby).
+- **A Logs page that shows what went wrong:** scheduler and background problems appear under Events, and app.log can be read and downloaded in NeXroll. See [Configuration](Configuration#log-viewer).
+- **Add a trailer yourself** from a YouTube link or a file, linked to the movie in Radarr. See [NeX-Up](NeX-Up#add-a-trailer-yourself).
+- **A reworked Categories page and editor.** See [Preroll Library](Preroll-Library#the-categories-page).
+- **Random rotation keeps moving** on Plex while music or a long movie plays, and remembers its place through restarts. See [Sequences](Sequences#how-often-random-picks-change).
+
 ## What's New in v2.2.2
 
 - **Else if chains:** only the first matching block plays, for example one genre preroll per movie with a default for everything else. See [Advanced Sequences](Advanced-Sequences#else-if-first-match-wins).
