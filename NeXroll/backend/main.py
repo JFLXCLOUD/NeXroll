@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, select, func, text
+from sqlalchemy import and_, or_, select, func, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from pydantic import BaseModel
 from typing import List, Optional
@@ -67,6 +67,7 @@ from backend.scheduler import (
 )
 from backend.sequence_conditions import block_to_play, describe_condition
 from backend import secure_store
+from backend import app_log
 from backend import plugin_url_repair
 from backend.changelog_text import strip_html_comments
 from backend import settings_singleton
@@ -1085,97 +1086,34 @@ threading.Thread(target=migrate_legacy_community_prerolls, daemon=True).start()
 # Run hash migration in background for existing prerolls
 threading.Thread(target=migrate_preroll_hashes, daemon=True).start()
 
-# Simple file logger to ProgramData\NeXroll\logs for frozen builds
+# app.log lives in backend/app_log.py, shared with the scheduler: one writer,
+# one lock and rotation that works on Windows.
 def _ensure_log_dir():
-    r"""
-    Resolve a writable log directory with fallback:
-      1) %ProgramData%\NeXroll\logs (if writable)
-      2) %LOCALAPPDATA% or %APPDATA%\NeXroll\logs (if writable)
-      3) .\logs under current working directory (if writable)
-      4) cwd (as last resort)
-    """
-    candidates = []
-    try:
-        if sys.platform.startswith("win"):
-            base = os.environ.get("ProgramData")
-            if base:
-                candidates.append(os.path.join(base, "NeXroll", "logs"))
-            la = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-            if la:
-                candidates.append(os.path.join(la, "NeXroll", "logs"))
-    except Exception:
-        pass
-    candidates.append(os.path.join(os.getcwd(), "logs"))
-
-    for d in candidates:
-        try:
-            os.makedirs(d, exist_ok=True)
-            test = os.path.join(d, f".nexroll_write_test_{os.getpid()}.tmp")
-            with open(test, "a", encoding="utf-8") as f:
-                f.write("ok")
-            try:
-                os.remove(test)
-            except Exception:
-                pass
-            return d
-        except Exception:
-            continue
-    # Last resort
-    return os.getcwd()
+    r"""The app.log folder: NEXROLL_LOG_DIR, else %ProgramData%\NeXroll\logs on
+    Windows or NEXROLL_DB_DIR/logs elsewhere (Docker's /data/logs), then the
+    fallbacks in app_log.log_dir_candidates()."""
+    return app_log.log_dir()
 
 def _log_file_path():
-    try:
-        return os.path.join(_ensure_log_dir(), "app.log")
-    except Exception:
-        return os.path.join(os.getcwd(), "app.log")
+    return app_log.log_path()
 
 # Cached verbose logging state to avoid DB hits
 _verbose_logging_cache = {"enabled": False, "last_check": 0}
 _verbose_cache_ttl = 5  # seconds
 
-# Track last log rotation check to avoid checking on every write
-_log_rotation_cache = {"last_check": 0}
-_log_rotation_check_interval = 60  # Check every 60 seconds
-
-def _check_log_rotation():
-    """Check and rotate log if needed (cached to avoid checking too often)"""
-    try:
-        import time
-        now = time.time()
-        
-        # Only check periodically
-        if now - _log_rotation_cache["last_check"] < _log_rotation_check_interval:
-            return
-        
-        _log_rotation_cache["last_check"] = now
-        
-        log_path = _log_file_path()
-        if not os.path.exists(log_path):
-            return
-        
-        size_mb = os.path.getsize(log_path) / (1024 * 1024)
-        if size_mb > 10:  # 10MB limit
-            backup_path = log_path + ".1"
-            # Remove old backup if exists
-            if os.path.exists(backup_path):
-                os.remove(backup_path)
-            # Rename current log to backup
-            os.rename(log_path, backup_path)
-    except Exception:
-        pass
-
 def _file_log(msg: str, level: str = "INFO"):
     """
-    Log message to file with timestamp and level.
+    Log message to app.log with timestamp and level.
     Levels: DEBUG, INFO, WARNING, ERROR
+
+    Warnings and errors also reach the Logs page (app_log.forward), unless the
+    caller records the same problem with log_event() right alongside.
     """
     try:
-        # Check rotation before writing
-        _check_log_rotation()
-        
-        with open(_log_file_path(), "a", encoding="utf-8") as f:
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"[{ts}] [{level}] {msg}\n")
+        level = (level or "INFO").upper()
+        app_log.write_line(level, msg)
+        if level in ("WARNING", "ERROR", "CRITICAL"):
+            app_log.forward(level, app_log.guess_category(msg), msg, source=app_log.caller_name())
     except Exception:
         pass
 
@@ -1184,11 +1122,11 @@ def _is_verbose_logging_enabled() -> bool:
     try:
         import time
         now = time.time()
-        
+
         # Use cached value if recent
         if now - _verbose_logging_cache["last_check"] < _verbose_cache_ttl:
             return _verbose_logging_cache["enabled"]
-        
+
         # Refresh cache from DB
         from backend.database import SessionLocal
         db = SessionLocal()
@@ -1204,10 +1142,13 @@ def _is_verbose_logging_enabled() -> bool:
         return False
 
 def _verbose_log(msg: str):
-    """Log message only if verbose logging is enabled"""
+    """Log message only if verbose logging is enabled. Reaches the Logs page
+    when its minimum level is Debug."""
     if _is_verbose_logging_enabled():
-        print(f"[DEBUG] {msg}")
-        _file_log(msg, level="DEBUG")
+        if not app_log.tee_active():  # the packaged build's tee would write it twice
+            print(f"[DEBUG] {msg}")
+        app_log.write_line("DEBUG", msg)
+        app_log.forward("DEBUG", app_log.guess_category(msg), msg, source=app_log.caller_name())
 
 def _rotate_log_if_needed(max_size_mb=10):
     """
@@ -1215,19 +1156,9 @@ def _rotate_log_if_needed(max_size_mb=10):
     Keeps one backup (app.log.1) and starts fresh.
     """
     try:
-        log_path = _log_file_path()
-        if not os.path.exists(log_path):
-            return
-        
-        size_mb = os.path.getsize(log_path) / (1024 * 1024)
-        if size_mb > max_size_mb:
-            backup_path = log_path + ".1"
-            # Remove old backup if exists
-            if os.path.exists(backup_path):
-                os.remove(backup_path)
-            # Rename current log to backup
-            os.rename(log_path, backup_path)
-            _file_log(f"Log rotated: previous log saved to {backup_path} ({size_mb:.1f} MB)")
+        rotated = app_log.rotate_if_needed(max_bytes=int(max_size_mb * 1024 * 1024))
+        if rotated:
+            _file_log(f"Log rotated: previous log saved to {_log_file_path()}.1 ({rotated / (1024 * 1024):.1f} MB)")
     except Exception as e:
         try:
             _file_log(f"Log rotation error: {e}", level="ERROR")
@@ -1273,121 +1204,57 @@ def _log_startup_banner():
         except Exception:
             pass
 
-# Global logging helpers: write unhandled exceptions and stdout/stderr to ProgramData\NeXroll\logs\app.log
+# Global logging helpers: unhandled exceptions (main thread and background
+# threads) and, in packaged builds, stdout/stderr go to app.log.
 def _install_global_excepthook():
     try:
         import traceback
+        def _record(prefix, exc_type, exc, tb, source):
+            trace = "".join(traceback.format_exception(exc_type, exc, tb))
+            app_log.write_line("ERROR", f"{prefix}: {trace}")
+            app_log.forward("ERROR", "system", f"{prefix}: {exc_type.__name__}: {exc}",
+                            source=source, details={"traceback": trace[-4000:]})
         def _hook(exc_type, exc, tb):
             try:
-                lines = "".join(traceback.format_exception(exc_type, exc, tb))
-                _file_log(f"Unhandled exception: {lines}", level="ERROR")
+                _record("Unhandled exception", exc_type, exc, tb, "excepthook")
+            except Exception:
+                pass
+        def _thread_hook(args):
+            # Background threads (scheduler loop, NeX-Up sync, scans) used to
+            # print their crash to stderr, which only a packaged build kept.
+            try:
+                if args.exc_type is SystemExit:
+                    return
+                name = getattr(args.thread, "name", None) or "thread"
+                _record(f"Unhandled exception in thread {name}", args.exc_type, args.exc_value,
+                        args.exc_traceback, name)
             except Exception:
                 pass
         sys.excepthook = _hook
+        threading.excepthook = _thread_hook
     except Exception:
         pass
 
 def _redirect_std_streams():
     """
-    When running as a packaged EXE, tee stdout/stderr to app.log so print() and uvicorn traces
-    are persisted under ProgramData. Keeps original console streams in dev runs.
+    When running as a packaged EXE, copy stdout/stderr into app.log so print()
+    output and Python warnings are kept under ProgramData. Dev runs and Docker
+    keep their console.
     """
     try:
         if not getattr(sys, "frozen", False):
             return
-        log_path = _log_file_path()
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        class _Tee:
-            """Tee stream that reopens the log file periodically so rotation works."""
-            _MAX_BYTES = 10 * 1024 * 1024  # 10 MB
-            _REOPEN_INTERVAL = 30  # seconds
-            def __init__(self, original, path):
-                self._orig = original
-                self._path = path
-                self._fh = open(path, "a", encoding="utf-8", buffering=1)
-                self._last_reopen = time.time()
-            def _maybe_reopen(self):
-                try:
-                    now = time.time()
-                    if now - self._last_reopen < self._REOPEN_INTERVAL:
-                        return
-                    self._last_reopen = now
-                    # Rotate if needed
-                    if os.path.exists(self._path) and os.path.getsize(self._path) > self._MAX_BYTES:
-                        try:
-                            self._fh.close()
-                        except Exception:
-                            pass
-                        bk = self._path + ".1"
-                        if os.path.exists(bk):
-                            os.remove(bk)
-                        os.rename(self._path, bk)
-                        self._fh = open(self._path, "a", encoding="utf-8", buffering=1)
-                    elif not os.path.exists(self._path):
-                        # File was rotated externally — reopen
-                        try:
-                            self._fh.close()
-                        except Exception:
-                            pass
-                        self._fh = open(self._path, "a", encoding="utf-8", buffering=1)
-                except Exception:
-                    pass
-            def write(self, s):
-                try:
-                    if self._orig:
-                        self._orig.write(s)
-                except Exception:
-                    pass
-                try:
-                    self._maybe_reopen()
-                    self._fh.write(s)
-                except Exception:
-                    pass
-            def flush(self):
-                try:
-                    if self._orig:
-                        self._orig.flush()
-                except Exception:
-                    pass
-                try:
-                    self._fh.flush()
-                except Exception:
-                    pass
-        try:
-            tee = _Tee(getattr(sys, "stdout", None), log_path)
-            sys.stdout = tee
-            sys.stderr = _Tee(getattr(sys, "stderr", None), log_path)
-        except Exception:
-            pass
+        app_log.install_std_tee()
         _file_log("Stdout/stderr redirection active")
     except Exception:
         pass
 
 def _setup_python_logging():
-    """Configure Python's logging module with rotating file handler"""
+    """Send Python's logging module (radarr/sonarr connectors, dynamic preroll,
+    holidays, uvicorn errors) to app.log, warnings and errors on to the Logs page."""
     try:
         import logging
-        from logging.handlers import RotatingFileHandler
-        log_path = _log_file_path()
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        
-        # RotatingFileHandler: 10 MB max, keep 1 backup
-        file_handler = RotatingFileHandler(
-            log_path, maxBytes=10*1024*1024, backupCount=1, encoding='utf-8'
-        )
-        file_handler.setLevel(logging.INFO)
-        
-        # Use a format similar to _file_log
-        formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', 
-                                      datefmt='%Y-%m-%d %H:%M:%S')
-        file_handler.setFormatter(formatter)
-        
-        # Add handler to root logger only — adding to child loggers too causes every
-        # message to be written twice (child handler + root propagation).
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
-        root_logger.addHandler(file_handler)
-            
+        app_log.install_logging_handler(logging.INFO)
     except Exception as e:
         _file_log(f"Failed to setup Python logging: {e}", level="ERROR")
 
@@ -2537,7 +2404,7 @@ async def _log_errors_mw(request, call_next):
     try:
         status = getattr(response, "status_code", 200)
         if status >= 400:
-            _file_log(f"HTTP {status} {request.method} {request.url.path}")
+            _file_log(f"HTTP {status} {request.method} {request.url.path}", level="ERROR" if status >= 500 else "INFO")
     except Exception:
         pass
 
@@ -2549,6 +2416,9 @@ async def _log_errors_mw(request, call_next):
     return response
 
 
+_request_log_throttle = app_log.RepeatThrottle(600)
+
+
 # Request logging middleware for enhanced logging system
 @app.middleware("http")
 async def _request_logging_mw(request: Request, call_next):
@@ -2556,8 +2426,9 @@ async def _request_logging_mw(request: Request, call_next):
     # Skip logging for static files and certain paths
     path = request.url.path
     
-    # Always skip static/asset files
-    skip_always = ('/static/', '/asset-manifest.json', '/manifest.json', '/sw.js', '/favicon.ico', '/logs')
+    # Always skip static/asset files, the log viewer itself and the live
+    # /events stream (open for minutes, so it would always read as "slow")
+    skip_always = ('/static/', '/asset-manifest.json', '/manifest.json', '/sw.js', '/favicon.ico', '/logs', '/events')
     if any(path.startswith(sp) for sp in skip_always):
         return await call_next(request)
     
@@ -2601,9 +2472,22 @@ async def _request_logging_mw(request: Request, call_next):
                 level = "WARNING"
             else:
                 level = "INFO"
-            
+
+            # A read that worked quickly says nothing: the dashboard's polling
+            # alone made 99% of a real install's log table these lines. Keep
+            # changes (POST/PUT/DELETE), failures and slow requests.
+            if level == "INFO" and request.method in ("GET", "HEAD", "OPTIONS"):
+                return response
+
+            # The same request failing on every refresh is one line per ten
+            # minutes, with a count, not a wall of identical warnings.
+            allowed, repeats = _request_log_throttle.check(
+                f"{level} {request.method} {path} {status}", time.monotonic(), time.time())
+            if not allowed:
+                return response
+
             # Format message
-            message = f"{request.method} {path} - {status} ({duration_ms}ms)"
+            message = f"{request.method} {path} - {status} ({duration_ms}ms){repeats}"
             
             # Log to database in background
             client_ip = request.client.host if request.client else None
@@ -5994,15 +5878,28 @@ def _log_auth_event(db: Session, event_type: str, username: str = None, user_id:
 # Log levels hierarchy: DEBUG < INFO < WARNING < ERROR < CRITICAL
 LOG_LEVEL_PRIORITY = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
 
+# Every log_event() and every logged request reads these, so keep them for a
+# few seconds instead of querying settings each time. PUT /logs/settings clears it.
+_log_settings_cache = {"value": None, "ts": 0.0}
+_LOG_SETTINGS_TTL = 5.0
+
+
+def _invalidate_log_settings():
+    _log_settings_cache["value"] = None
+
+
 def _get_log_settings(db: Session = None) -> dict:
     """Get current logging settings from database"""
+    cached = _log_settings_cache["value"]
+    if cached is not None and time.monotonic() - _log_settings_cache["ts"] < _LOG_SETTINGS_TTL:
+        return cached
     close_db = False
     if db is None:
         db = SessionLocal()
         close_db = True
     try:
         setting = db.query(models.Setting).first()
-        return {
+        value = {
             "log_level": getattr(setting, 'log_level', 'INFO') or 'INFO',
             "log_retention_days": getattr(setting, 'log_retention_days', 30) or 30,
             "log_to_database": getattr(setting, 'log_to_database', True),
@@ -6010,6 +5907,9 @@ def _get_log_settings(db: Session = None) -> dict:
             "log_scheduler_logging": getattr(setting, 'log_scheduler_logging', True),
             "log_api_logging": getattr(setting, 'log_api_logging', True),
         }
+        _log_settings_cache["value"] = value
+        _log_settings_cache["ts"] = time.monotonic()
+        return value
     finally:
         if close_db:
             db.close()
@@ -6023,9 +5923,10 @@ def _should_log(level: str, settings: dict = None) -> bool:
     return LOG_LEVEL_PRIORITY.get(level, 0) >= LOG_LEVEL_PRIORITY.get(min_level, 20)
 
 
-def log_event(level: str, category: str, message: str, source: str = None, 
+def log_event(level: str, category: str, message: str, source: str = None,
               details: dict = None, request_id: str = None, user_id: int = None,
-              duration_ms: int = None, ip_address: str = None, db: Session = None):
+              duration_ms: int = None, ip_address: str = None, db: Session = None,
+              forwarded: bool = False):
     """
     Log an event to the database for the enhanced logging system.
     
@@ -6040,12 +5941,18 @@ def log_event(level: str, category: str, message: str, source: str = None,
         duration_ms: Optional duration in ms for timed operations
         ip_address: Optional client IP
         db: Optional database session (will create one if not provided)
+        forwarded: True when app_log passes on an app.log line (internal)
     """
+    level = str(level or "INFO").upper()
+    if not forwarded:
+        # The same problem is often written to app.log right alongside; this
+        # tells app_log not to record that copy a second time.
+        app_log.note_explicit_event(level)
     close_db = False
     if db is None:
         db = SessionLocal()
         close_db = True
-    
+
     try:
         settings = _get_log_settings(db)
         
@@ -6065,7 +5972,7 @@ def log_event(level: str, category: str, message: str, source: str = None,
         
         # Create log entry
         log_entry = models.LogEntry(
-            level=level.upper(),
+            level=level,
             category=category,
             source=source[:200] if source else None,
             message=message[:2000] if message else "",  # Limit message length
@@ -6083,6 +5990,10 @@ def log_event(level: str, category: str, message: str, source: str = None,
     finally:
         if close_db:
             db.close()
+
+
+app_log.set_db_sink(lambda level, category, message, source=None, details=None: log_event(
+    level, category, message, source=source, details=details, forwarded=True))
 
 
 def _iso_utc(dt):
@@ -7387,6 +7298,63 @@ def _redact_details(raw, sensitive_values=None):
         return red
 
 
+def _require_log_access(request: Request, db: Session):
+    """Logs are for admins; local requests are always allowed."""
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        user = get_current_user_optional(request, db)
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+
+
+def _routine_read_filter():
+    """Excludes request-middleware rows for reads that worked. Builds before
+    2.2.3 recorded every request, and the dashboard's polling made those 99% of
+    a real install's log table; the viewer hides them unless asked."""
+    return ~and_(
+        func.coalesce(models.LogEntry.source, '') == 'request_middleware',
+        models.LogEntry.level == 'INFO',
+        models.LogEntry.message.like('GET %'),
+    )
+
+
+def _log_filter_time(raw):
+    """An ISO date/time from a query string as naive UTC, the way log
+    timestamps are stored. None when it doesn't parse."""
+    try:
+        value = datetime.datetime.fromisoformat(raw.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _filtered_logs(db: Session, level=None, category=None, search=None, start_date=None,
+                   end_date=None, include_reads=True):
+    query = db.query(models.LogEntry)
+    if level:
+        query = query.filter(models.LogEntry.level == level.upper())
+    if category:
+        query = query.filter(models.LogEntry.category == category.lower())
+    if search:
+        like = f"%{search.strip()}%"
+        query = query.filter(or_(
+            models.LogEntry.message.ilike(like),
+            models.LogEntry.source.ilike(like),
+            models.LogEntry.request_id.ilike(like),
+            models.LogEntry.details.ilike(like),
+        ))
+    start = _log_filter_time(start_date) if start_date else None
+    if start is not None:
+        query = query.filter(models.LogEntry.timestamp >= start)
+    end = _log_filter_time(end_date) if end_date else None
+    if end is not None:
+        query = query.filter(models.LogEntry.timestamp <= end)
+    if not include_reads:
+        query = query.filter(_routine_read_filter())
+    return query
+
+
 @app.get("/logs")
 async def logs_get(
     request: Request,
@@ -7396,53 +7364,30 @@ async def logs_get(
     category: Optional[str] = None,
     search: Optional[str] = None,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    include_reads: bool = True,
 ):
     """
     Get application logs with filtering options.
-    
+
     Query params:
     - limit: Max number of logs to return (default 100, max 1000)
     - level: Filter by log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-    - category: Filter by category (system, scheduler, api, user, plex, jellyfin, nexup)
-    - search: Search in message text
+    - category: Filter by category (system, scheduler, api, user, plex, jellyfin, emby, plugin, nexup)
+    - search: Search message, source, request ID and details
     - start_date: Filter logs after this date (ISO format)
     - end_date: Filter logs before this date (ISO format)
+    - include_reads: false hides logged requests for reads that worked
     """
-    user = get_current_user_optional(request, db)
-    
-    # Allow local requests without auth
-    if _check_auth_enabled(db) and not _is_local_request(request):
-        if not user or user.role != 'admin':
-            raise HTTPException(status_code=403, detail="Admin access required")
-    
-    # Build query with filters
-    query = db.query(models.LogEntry)
-    
-    if level:
-        query = query.filter(models.LogEntry.level == level.upper())
-    if category:
-        query = query.filter(models.LogEntry.category == category.lower())
-    if search:
-        query = query.filter(models.LogEntry.message.ilike(f"%{search}%"))
-    if start_date:
-        try:
-            start = datetime.datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-            query = query.filter(models.LogEntry.timestamp >= start)
-        except:
-            pass
-    if end_date:
-        try:
-            end = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-            query = query.filter(models.LogEntry.timestamp <= end)
-        except:
-            pass
-    
+    _require_log_access(request, db)
+    limit = max(1, min(limit, 1000))
+    query = _filtered_logs(db, level, category, search, start_date, end_date, include_reads)
+
     # Get total count before limiting
     total = query.count()
-    
+
     # Order by most recent first and apply limit
-    logs = query.order_by(models.LogEntry.timestamp.desc()).limit(min(limit, 1000)).all()
+    logs = query.order_by(models.LogEntry.timestamp.desc(), models.LogEntry.id.desc()).limit(limit).all()
 
     svals = collect_sensitive_values(db)
     return {
@@ -7473,40 +7418,43 @@ async def logs_get_stats(
     db: Session = Depends(get_db)
 ):
     """
-    Get log statistics (counts by level and category).
+    Log statistics: counts by level and category (every category present),
+    the same by level for the last 24 hours, and how many rows are routine
+    request reads.
     """
-    user = get_current_user_optional(request, db)
-    
-    # Allow local requests without auth
-    if _check_auth_enabled(db) and not _is_local_request(request):
-        if not user or user.role != 'admin':
-            raise HTTPException(status_code=403, detail="Admin access required")
-    
-    # Count by level
-    level_counts = {}
-    for level in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
-        count = db.query(models.LogEntry).filter(models.LogEntry.level == level).count()
-        level_counts[level] = count
-    
-    # Count by category
+    _require_log_access(request, db)
+    levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+    level_col, category_col = models.LogEntry.level, models.LogEntry.category
+
+    level_counts = {level: 0 for level in levels}
+    for level, count in db.query(level_col, func.count(models.LogEntry.id)).group_by(level_col).all():
+        if level:
+            level_counts[level] = count
+
     category_counts = {}
-    for category in ['system', 'scheduler', 'api', 'user', 'plex', 'jellyfin', 'nexup']:
-        count = db.query(models.LogEntry).filter(models.LogEntry.category == category).count()
-        if count > 0:
+    for category, count in db.query(category_col, func.count(models.LogEntry.id)).group_by(category_col).all():
+        if category:
             category_counts[category] = count
-    
-    # Get oldest and newest log timestamps
-    oldest = db.query(models.LogEntry).order_by(models.LogEntry.timestamp.asc()).first()
-    newest = db.query(models.LogEntry).order_by(models.LogEntry.timestamp.desc()).first()
-    
-    total = db.query(models.LogEntry).count()
-    
+
+    since = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    last_24h = {level: 0 for level in levels}
+    for level, count in (db.query(level_col, func.count(models.LogEntry.id))
+                         .filter(models.LogEntry.timestamp >= since).group_by(level_col).all()):
+        if level:
+            last_24h[level] = count
+
+    oldest, newest = db.query(func.min(models.LogEntry.timestamp), func.max(models.LogEntry.timestamp)).one()
+    total = db.query(func.count(models.LogEntry.id)).scalar() or 0
+    routine_reads = total - (db.query(func.count(models.LogEntry.id)).filter(_routine_read_filter()).scalar() or 0)
+
     return {
         "total": total,
         "by_level": level_counts,
         "by_category": category_counts,
-        "oldest": _iso_utc(oldest.timestamp) if oldest else None,
-        "newest": _iso_utc(newest.timestamp) if newest else None
+        "last_24h": last_24h,
+        "routine_reads": routine_reads,
+        "oldest": _iso_utc(oldest) if oldest else None,
+        "newest": _iso_utc(newest) if newest else None
     }
 
 
@@ -7517,47 +7465,25 @@ async def logs_export(
     format: str = "json",
     level: Optional[str] = None,
     category: Optional[str] = None,
+    search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    include_reads: bool = True,
     limit: int = 10000
 ):
     """
     Export logs as JSON or CSV file.
-    
+
     Query params:
     - format: 'json' or 'csv' (default json)
-    - level, category, start_date, end_date: Same filters as GET /logs
+    - level, category, search, start_date, end_date, include_reads: Same filters as GET /logs
     - limit: Max logs to export (default 10000)
     """
-    user = get_current_user_optional(request, db)
-    
-    # Allow local requests without auth
-    if _check_auth_enabled(db) and not _is_local_request(request):
-        if not user or user.role != 'admin':
-            raise HTTPException(status_code=403, detail="Admin access required")
-    
-    # Build query with filters
-    query = db.query(models.LogEntry)
-    
-    if level:
-        query = query.filter(models.LogEntry.level == level.upper())
-    if category:
-        query = query.filter(models.LogEntry.category == category.lower())
-    if start_date:
-        try:
-            start = datetime.datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-            query = query.filter(models.LogEntry.timestamp >= start)
-        except:
-            pass
-    if end_date:
-        try:
-            end = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-            query = query.filter(models.LogEntry.timestamp <= end)
-        except:
-            pass
-    
+    _require_log_access(request, db)
+    query = _filtered_logs(db, level, category, search, start_date, end_date, include_reads)
+
     # Get logs
-    logs = query.order_by(models.LogEntry.timestamp.desc()).limit(min(limit, 50000)).all()
+    logs = query.order_by(models.LogEntry.timestamp.desc(), models.LogEntry.id.desc()).limit(max(1, min(limit, 50000))).all()
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -7585,7 +7511,7 @@ async def logs_export(
                 log.duration_ms or "",
                 redact_log_text(log.ip_address or "", svals)
             ])
-        
+
         content = output.getvalue()
         return Response(
             content=content,
@@ -7612,7 +7538,7 @@ async def logs_export(
                 for log in logs
             ]
         }
-        
+
         return Response(
             content=json.dumps(data, indent=2),
             media_type="application/json",
@@ -7620,80 +7546,113 @@ async def logs_export(
         )
 
 
+def _app_log_stamp_iso(stamp):
+    """app.log times are the server's local time; give the browser the offset
+    so it can show them in the viewer's own time like the event log."""
+    try:
+        return datetime.datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").astimezone().isoformat()
+    except (ValueError, OSError):
+        return stamp
+
+
+def _file_info(path):
+    try:
+        return {
+            "size_kb": round(os.path.getsize(path) / 1024, 1),
+            "modified": datetime.datetime.fromtimestamp(os.path.getmtime(path)).astimezone().isoformat(),
+        }
+    except OSError:
+        return None
+
+
 @app.get("/logs/file")
 async def logs_get_file(
     request: Request,
     db: Session = Depends(get_db),
-    limit: int = 200,
-    level: Optional[str] = None
+    limit: int = 300,
+    level: Optional[str] = None,
+    search: Optional[str] = None,
 ):
     """
-    Read log entries from app.log file.
-    Returns parsed log entries from the file-based logging system.
-    
+    Entries from app.log, newest first. Lines that continue an entry (a
+    traceback, the rest of a multi-line message) come back as its "detail".
+
     Query params:
-    - limit: Max number of recent entries to return (default 200)
-    - level: Filter by level (DEBUG, INFO, WARNING, ERROR)
+    - limit: Max entries to return (default 300, max 2000)
+    - level: Only this level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    - search: Text to look for in the message or its detail
     """
-    user = get_current_user_optional(request, db)
-    
-    # Allow local requests without auth
-    if _check_auth_enabled(db) and not _is_local_request(request):
-        if not user or user.role != 'admin':
-            raise HTTPException(status_code=403, detail="Admin access required")
-    
-    logs = []
+    _require_log_access(request, db)
+    limit = max(1, min(limit, 2000))
+    log_path = _log_file_path()
+    backup = _file_info(log_path + ".1")
+    if not os.path.exists(log_path):
+        return {"logs": [], "file_path": log_path, "file_exists": False, "backup": backup}
     try:
-        log_path = _log_file_path()
-        if not os.path.exists(log_path):
-            return {"logs": [], "file_path": log_path, "file_exists": False}
-        
-        svals = collect_sensitive_values(db)
-        # Read file in reverse order to get most recent entries first
-        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-        
-        # Parse log lines: [YYYY-MM-DD HH:MM:SS] [LEVEL] message
-        import re
-        log_pattern = re.compile(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\w+)\] (.*)$')
-        
-        for line in reversed(lines):
-            line = line.strip()
-            if not line:
-                continue
-            
-            match = log_pattern.match(line)
-            if match:
-                timestamp_str, log_level, message = match.groups()
-                
-                # Apply level filter if specified
-                if level and log_level.upper() != level.upper():
-                    continue
-                
-                logs.append({
-                    "timestamp": timestamp_str,
-                    "level": log_level.upper(),
-                    "message": redact_log_text(message, svals),
-                    "source": "app.log"
-                })
-                
-                if len(logs) >= limit:
-                    break
-        
-        # Get file info
-        file_size = os.path.getsize(log_path)
-        file_modified = datetime.datetime.fromtimestamp(os.path.getmtime(log_path)).isoformat()
-        
-        return {
-            "logs": logs,
-            "total_in_file": len(lines),
-            "file_path": log_path,
-            "file_exists": True,
-            "file_size_kb": round(file_size / 1024, 1),
-            "file_modified": file_modified
-        }
+        entries = app_log.parse_entries(app_log.read_tail(log_path))
     except Exception as e:
-        return {"logs": [], "error": str(e), "file_exists": False}
+        return {"logs": [], "error": str(e), "file_path": log_path, "file_exists": True, "backup": backup}
+
+    want = app_log.LEVEL_ALIASES.get(level.upper(), level.upper()) if level else None
+    needle = search.strip().lower() if search and search.strip() else None
+    by_level = {}
+    picked = []
+    matched = 0
+    for entry in reversed(entries):
+        by_level[entry["level"]] = by_level.get(entry["level"], 0) + 1
+        if want and entry["level"] != want:
+            continue
+        if needle and needle not in (entry["message"] + "\n" + entry["detail"]).lower():
+            continue
+        matched += 1
+        if len(picked) < limit:
+            picked.append(entry)
+
+    svals = collect_sensitive_values(db)
+    info = _file_info(log_path) or {}
+    return {
+        "logs": [
+            {
+                "timestamp": _app_log_stamp_iso(entry["timestamp"]),
+                "level": entry["level"],
+                "message": redact_log_text(entry["message"], svals),
+                "detail": redact_log_text(entry["detail"], svals) if entry["detail"] else "",
+                "source": "scheduler" if entry["message"].startswith("SCHEDULER:") else "app.log",
+            }
+            for entry in picked
+        ],
+        "matched": matched,
+        "total_entries": len(entries),
+        "by_level": by_level,
+        "file_path": log_path,
+        "file_exists": True,
+        "file_size_kb": info.get("size_kb"),
+        "file_modified": info.get("modified"),
+        "backup": backup,
+    }
+
+
+@app.get("/logs/file/download")
+async def logs_download_file(
+    request: Request,
+    db: Session = Depends(get_db),
+    backup: bool = False,
+):
+    """app.log (or app.log.1 with backup=true) as a download, secrets and IP
+    addresses redacted like everywhere else logs leave the app."""
+    _require_log_access(request, db)
+    path = _log_file_path() + (".1" if backup else "")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="That log file doesn't exist yet")
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        content = redact_log_text(f.read(), collect_sensitive_values(db))
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"nexroll_app_log{'_previous' if backup else ''}_{stamp}.log"
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={name}"},
+    )
 
 
 @app.delete("/logs")
@@ -7703,7 +7662,8 @@ async def logs_clear(
     older_than_days: Optional[int] = None,
     level: Optional[str] = None,
     category: Optional[str] = None,
-    clear_all: bool = False
+    clear_all: bool = False,
+    routine_reads: bool = False
 ):
     """
     Clear logs with optional filters.
@@ -7712,16 +7672,13 @@ async def logs_clear(
     - clear_all: Delete EVERY log entry, ignoring the retention cutoff. Use this
       to wipe historical noise (e.g. old pre-fix error spam). Overrides the
       retention safety below.
+    - routine_reads: Delete only logged requests for reads that worked (what
+      builds before 2.2.3 recorded for every dashboard poll), whatever their age.
     - older_than_days: Delete logs older than X days (if not specified, uses retention setting)
     - level: Only delete logs of this level
     - category: Only delete logs of this category
     """
-    user = get_current_user_optional(request, db)
-
-    # Allow local requests without auth
-    if _check_auth_enabled(db) and not _is_local_request(request):
-        if not user or user.role != 'admin':
-            raise HTTPException(status_code=403, detail="Admin access required")
+    _require_log_access(request, db)
 
     query = db.query(models.LogEntry)
 
@@ -7731,6 +7688,8 @@ async def logs_clear(
     # entries older than the retention setting and left recent noise behind).
     if clear_all:
         pass  # no time/level/category restriction — delete all
+    elif routine_reads:
+        query = query.filter(~_routine_read_filter())
     else:
         if older_than_days is not None:
             cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=older_than_days)
@@ -7758,13 +7717,8 @@ async def logs_get_settings(
     db: Session = Depends(get_db)
 ):
     """Get logging settings."""
-    user = get_current_user_optional(request, db)
-    
-    # Allow local requests without auth
-    if _check_auth_enabled(db) and not _is_local_request(request):
-        if not user or user.role != 'admin':
-            raise HTTPException(status_code=403, detail="Admin access required")
-    
+    _require_log_access(request, db)
+
     setting = db.query(models.Setting).first()
     
     return {
@@ -7783,13 +7737,8 @@ async def logs_update_settings(
     db: Session = Depends(get_db)
 ):
     """Update logging settings."""
-    user = get_current_user_optional(request, db)
-    
-    # Allow local requests without auth
-    if _check_auth_enabled(db) and not _is_local_request(request):
-        if not user or user.role != 'admin':
-            raise HTTPException(status_code=403, detail="Admin access required")
-    
+    _require_log_access(request, db)
+
     body = await request.json()
     setting = db.query(models.Setting).first()
     
@@ -7799,10 +7748,15 @@ async def logs_update_settings(
     
     # Update settings
     valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
-    if 'log_level' in body and body['log_level'].upper() in valid_levels:
-        setting.log_level = body['log_level'].upper()
+    if 'log_level' in body and str(body['log_level']).upper() in valid_levels:
+        setting.log_level = str(body['log_level']).upper()
+    retention_changed = False
     if 'log_retention_days' in body:
-        days = int(body['log_retention_days'])
+        try:
+            days = int(body['log_retention_days'])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="log_retention_days must be a number of days")
+        retention_changed = setting.log_retention_days != max(1, min(days, 365))
         setting.log_retention_days = max(1, min(days, 365))  # 1-365 days
     if 'log_to_database' in body:
         setting.log_to_database = bool(body['log_to_database'])
@@ -7814,7 +7768,12 @@ async def logs_update_settings(
         setting.log_api_logging = bool(body['log_api_logging'])
     
     db.commit()
-    
+    _invalidate_log_settings()
+
+    # A shorter retention applies now, not at the next daily cleanup.
+    if retention_changed:
+        cleanup_old_logs(db=db)
+
     # Log the settings change
     log_event('INFO', 'system', 'Logging settings updated', source='logs_update_settings',
               details={k: v for k, v in body.items()}, db=db)
@@ -26481,22 +26440,27 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
             except Exception as e:
                 z.writestr("db/schema_error.txt", str(e))
 
-            # Logs — read, scrub, then write (never copy raw)
+            # Logs — read, scrub, then write (never copy raw). app.log.1 is the
+            # previous 10 MB, which often still holds the start of a problem.
             try:
                 log_file = _log_file_path()
-                if log_file and os.path.exists(log_file):
-                    with open(log_file, "r", encoding="utf-8", errors="replace") as lf:
-                        scrubbed_log = _scrub(lf.read())
-                    z.writestr(os.path.join("logs", os.path.basename(log_file)), scrubbed_log)
+                for path in (log_file, log_file + ".1"):
+                    if path and os.path.exists(path):
+                        with open(path, "r", encoding="utf-8", errors="replace") as lf:
+                            scrubbed_log = _scrub(lf.read())
+                        z.writestr("logs/" + os.path.basename(path), scrubbed_log)
             except Exception:
                 pass
 
             # DB event log — log_event() records (plugin/intros requests, scheduler
             # events, jellyfin/nexup activity) only exist in the log_entries table,
             # not app.log; without them a bundle shows no plugin activity at all.
+            # Routine request reads are left out: older builds logged every
+            # dashboard poll, which pushed the real events out of these 5000.
             try:
                 entries = (
                     db.query(models.LogEntry)
+                    .filter(_routine_read_filter())
                     .order_by(models.LogEntry.timestamp.desc())
                     .limit(5000)
                     .all()
@@ -26504,7 +26468,9 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
                 if entries:
                     lines = []
                     for e in reversed(entries):
-                        ts_str = e.timestamp.strftime("%Y-%m-%d %H:%M:%S") if e.timestamp else "?"
+                        # Stored as UTC; app.log is local time, so match it.
+                        ts_str = (e.timestamp.replace(tzinfo=datetime.timezone.utc).astimezone()
+                                  .strftime("%Y-%m-%d %H:%M:%S") if e.timestamp else "?")
                         line = f"[{ts_str}] [{e.level}] [{e.category}] {e.message}"
                         if e.source:
                             line += f" (source={e.source})"

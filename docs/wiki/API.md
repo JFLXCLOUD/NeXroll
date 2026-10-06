@@ -740,9 +740,13 @@ GET /logs?level=ERROR&category=scheduler&search=failed&limit=100
 | Parameter | Description |
 |-----------|-------------|
 | `level` | Filter by log level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
-| `category` | Filter by category: system, scheduler, api, user, plex, jellyfin, nexup |
-| `search` | Search in log messages |
-| `limit` | Max results to return |
+| `category` | Filter by category: system, scheduler, api, user, plex, jellyfin, emby, plugin, nexup |
+| `search` | Search messages, sources, request IDs and details |
+| `start_date`, `end_date` | ISO date/time range |
+| `include_reads` | `false` hides logged requests for reads that worked (default `true`) |
+| `limit` | Max results to return (up to 1000) |
+
+The response's `total` is how many entries match, before `limit`.
 
 ### Log Statistics
 
@@ -750,7 +754,7 @@ GET /logs?level=ERROR&category=scheduler&search=failed&limit=100
 GET /logs/stats
 ```
 
-Returns counts by level and category.
+Returns `total`, counts `by_level` and `by_category` (every category present), `last_24h` by level, `routine_reads` (logged page loads) and the `oldest`/`newest` timestamps.
 
 ### Export Logs
 
@@ -758,21 +762,32 @@ Returns counts by level and category.
 GET /logs/export?format=json
 ```
 
-Formats: `json`, `csv`
+Formats: `json`, `csv`. Takes the same filters as `GET /logs`.
 
 ### Log File
 
 ```http
-GET /logs/file
+GET /logs/file?level=ERROR&search=plex&limit=300
 ```
 
-Returns the raw log file contents.
+Entries from `app.log`, newest first. Lines that continue an entry (an error trace, the rest of a multi-line message) come back as its `detail`. Also returns `matched`, `total_entries`, `by_level`, the file's path, size and modified time, and `backup` (size and modified time of `app.log.1`, or null).
+
+```http
+GET /logs/file/download
+GET /logs/file/download?backup=true
+```
+
+Downloads `app.log` (or `app.log.1`) with secrets and IP addresses redacted.
 
 ### Clear Logs
 
 ```http
-DELETE /logs
+DELETE /logs?older_than_days=7
+DELETE /logs?routine_reads=true
+DELETE /logs?clear_all=true
 ```
+
+`routine_reads=true` deletes only logged requests for reads that worked. Without any filter, entries older than the retention period are deleted.
 
 ### Log Settings
 
@@ -783,11 +798,11 @@ Content-Type: application/json
 
 {
   "log_level": "INFO",
-  "retention_days": 30,
-  "enable_db_logging": true,
-  "enable_request_logging": true,
-  "enable_scheduler_logging": true,
-  "enable_api_logging": true
+  "log_retention_days": 30,
+  "log_to_database": true,
+  "log_request_logging": true,
+  "log_scheduler_logging": true,
+  "log_api_logging": true
 }
 ```
 

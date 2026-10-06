@@ -143,24 +143,28 @@ NeXroll includes a built-in logging system for debugging and monitoring.
 
 ### Log Viewer
 
-Go to **Settings → Logs** to:
-- View logs in real-time
-- Filter by level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-- Filter by category: system, scheduler, api, user, plex, jellyfin, emby, nexup
-- Search through log entries
-- Export logs as JSON or CSV — **API keys and IP addresses are automatically redacted** on export and copy, so logs are safe to share
-- Download a **diagnostics bundle** for support straight from the Logs page
+**Settings → Logs** has two views:
+
+- **Events**: what NeXroll did and what went wrong. Prerolls applied or cleared, changes held back while something plays, settings changes, warnings and errors from every part of the app. Filter by level and area (System, Scheduler, API, User, Plex, Jellyfin, Emby, Plugin, NeX-Up), search messages, sources and request IDs, and click an entry for its details, including the error trace when there is one. Export the events that match as JSON or CSV.
+- **App log**: `app.log` itself, newest first. Everything NeXroll writes, including scheduler detail and full error traces, which stay attached to their entry. Filter by level, search, and download `app.log` (or the previous file, `app.log.1`).
+
+The cards at the top count stored events and the warnings and errors from the last 24 hours. **API keys, tokens and IP addresses are redacted** wherever logs are viewed, copied, exported or downloaded, so logs are safe to share. **Diagnostics bundle** downloads a ZIP of both logs and system details to attach to a bug report.
+
+New in 2.2.3: scheduler and background warnings used to be in `app.log` only and now appear under Events too. The same message repeating (a check that fails every five minutes, say) is recorded once an hour with a count instead of hundreds of times.
 
 ### Log Settings
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **Log Level** | Minimum level to capture | INFO |
-| **Retention Period** | Days to keep logs (1-365) | 30 |
-| **Database Logging** | Log to database for UI viewing | Enabled |
-| **Request Logging** | Log API requests with timing | Enabled |
-| **Scheduler Logging** | Log scheduler activity | Enabled |
-| **API Logging** | Log external API calls | Enabled |
+| **Minimum level** | Events below this level aren't recorded. Debug also records Verbose Logging's detail | Info |
+| **Keep events for** | Days to keep events (7 days to 1 year). A shorter period applies straight away | 30 days |
+| **Log API changes and failures** | Settings changes, uploads and deletes, failed requests and anything slower than 5 seconds. Page loads aren't recorded | On |
+| **Log scheduler activity** | Prerolls applied or cleared, changes held while something plays, and scheduler warnings | On |
+| **Verbose Logging** | Detailed debug lines in `app.log` | Off |
+
+Before 2.2.3, request logging recorded every page load, which buried everything else. Those old entries are hidden unless you tick **Page loads**, and **Clear page loads** deletes them.
+
+`app.log` rotates at 10 MB and keeps the previous file as `app.log.1`.
 
 ---
 
@@ -295,6 +299,7 @@ When using the recommended volume mount (`/data`):
 ├── nexup_trailers/     # Downloaded NeX-Up trailers
 │   ├── movies/
 │   └── tv/
+├── logs/               # app.log (2.2.3 and later)
 └── secrets/            # Encrypted credentials
 ```
 
@@ -311,8 +316,9 @@ C:\ProgramData\NeXroll\
 
 ### Logs
 
-- **Docker**: View with `docker logs nexroll` or use the built-in **Log Viewer** in Settings → Logs
+- **Docker**: Use the built-in **Log Viewer** in Settings → Logs, or read `/data/logs/app.log`. `docker logs nexroll` shows the console output. Before 2.2.3, `app.log` was kept inside the container and lost on every update.
 - **Windows**: Use the built-in **Log Viewer** in Settings → Logs, or check `C:\ProgramData\NeXroll\logs\`
+- Set `NEXROLL_LOG_DIR` to keep `app.log` somewhere else.
 
 ---
 

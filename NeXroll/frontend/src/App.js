@@ -74,7 +74,7 @@ import {
     Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, EyeOff, X, User, RefreshCcw, Menu,
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, TrendingUp, Server, Timer, ArrowUp, ArrowDown,
-    Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
+    Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, HelpCircle,
     Music, Wand2, GitCompare, Square, Plug, GripVertical, Maximize2, Copy, GitBranch
   } from 'lucide-react';
 
@@ -87,6 +87,13 @@ const SequenceFlowView = React.lazy(() => import('./components/SequenceFlowView'
 // Focus Enhanced keeps the persisted sm/md/lg vocabulary, but maps it to the
 // concept's 12-column widths: one third, two thirds, and full width. Tile height
 // is content-driven; "large" no longer means an arbitrary two-row card.
+// Areas on the Logs page (LogEntry.category). Any other category the server
+// reports is listed too, under its own name.
+const LOG_CATEGORY_LABELS = {
+  system: 'System', scheduler: 'Scheduler', api: 'API', user: 'User', plex: 'Plex',
+  jellyfin: 'Jellyfin', emby: 'Emby', plugin: 'Plugin', nexup: 'NeX-Up',
+};
+
 const SIZE_SPAN = { sm: 4, md: 8, lg: 12 };
 const SIZE_LABEL = { sm: 'Third', md: 'Two thirds', lg: 'Full' };
 const ALL_SIZE_OPTIONS = ['sm', 'md', 'lg'];
@@ -1826,10 +1833,18 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   
   // Logs Viewer State
   const [logs, setLogs] = useState([]);
+  const [logsTotal, setLogsTotal] = useState(0);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [logFilters, setLogFilters] = useState({ level: '', category: '', search: '', limit: 100 });
+  const [logFilters, setLogFilters] = useState({ level: '', category: '', search: '', limit: 100, includeReads: false });
   const [logStats, setLogStats] = useState(null);
   const [logSettings, setLogSettings] = useState(null);
+  // 'events' is the database event log; 'file' reads app.log itself.
+  const [logView, setLogView] = useState('events');
+  const [logSearchInput, setLogSearchInput] = useState({ events: '', file: '' });
+  const [fileLogs, setFileLogs] = useState(null);
+  const [fileLogsLoading, setFileLogsLoading] = useState(false);
+  const [fileLogFilters, setFileLogFilters] = useState({ level: '', search: '', limit: 300 });
+  const [expandedLogKey, setExpandedLogKey] = useState(null);
   
   // Authentication State
   const [authStatus, setAuthStatus] = useState({
@@ -8625,9 +8640,8 @@ const DashboardTiles = {
             )}
             {activeTab === 'settings/logs' && (
               <>
-                <button type="button" className="button button-secondary" disabled={downloadingDiagnostics} onClick={handleDownloadDiagnostics}>{downloadingDiagnostics ? <Loader2 size={15} className="spin" /> : <Wrench size={15} />} {downloadingDiagnostics ? 'Generating…' : 'Diagnostics bundle'}</button>
-                <button type="button" className="button button-secondary" onClick={() => exportLogs('csv')}><Download size={15} /> Export CSV</button>
-                <button type="button" className="button" onClick={loadLogs}><RefreshCw size={15} /> Refresh</button>
+                <button type="button" className="button button-secondary" disabled={downloadingDiagnostics} onClick={handleDownloadDiagnostics} title="A ZIP of app.log, the event log and system details, with secrets redacted, to attach to a bug report">{downloadingDiagnostics ? <Loader2 size={15} className="spin" /> : <Wrench size={15} />} {downloadingDiagnostics ? 'Generating…' : 'Diagnostics bundle'}</button>
+                <button type="button" className="button" onClick={refreshLogsPage}><RefreshCw size={15} /> Refresh</button>
               </>
             )}
             {activeTab === 'settings/users' && (
@@ -8796,11 +8810,12 @@ const DashboardTiles = {
           { label: 'Used this week', value: apiKeys.filter(key => key.last_used_at || key.last_used).length, tone: 'info' }
         ];
       } else if (activeTab === 'settings/logs') {
+        const day = logStats?.last_24h || {};
         items = [
-          { label: 'Events loaded', value: logs.length },
-          { label: 'Info', value: logStats?.by_level?.INFO || logs.filter(log => log.level === 'INFO').length, tone: 'success' },
-          { label: 'Warnings', value: logStats?.by_level?.WARNING || logs.filter(log => log.level === 'WARNING').length, tone: 'warning' },
-          { label: 'Errors', value: logStats?.by_level?.ERROR || logs.filter(log => log.level === 'ERROR').length, tone: 'danger' }
+          { label: 'Stored events', value: logStats?.total ?? 0 },
+          { label: 'Last 24 hours', value: Object.values(day).reduce((sum, n) => sum + (Number(n) || 0), 0), tone: 'success' },
+          { label: 'Warnings, 24 hours', value: day.WARNING || 0, tone: 'warning' },
+          { label: 'Errors, 24 hours', value: (day.ERROR || 0) + (day.CRITICAL || 0), tone: 'danger' }
         ];
       } else if (activeTab === 'settings/users') {
         items = [
@@ -23187,16 +23202,39 @@ const DashboardTiles = {
       if (logFilters.category) params.append('category', logFilters.category);
       if (logFilters.search) params.append('search', logFilters.search);
       params.append('limit', logFilters.limit || 100);
+      if (!logFilters.includeReads) params.append('include_reads', 'false');
       const res = await fetch(apiUrl('/logs?' + params.toString()));
       const data = await safeJson(res);
+      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
       setLogs(Array.isArray(data?.logs) ? data.logs : []);
+      setLogsTotal(Number(data?.total) || 0);
     } catch (e) {
       console.error('Failed to load logs:', e);
       setLogs([]);
+      setLogsTotal(0);
     } finally {
       setLogsLoading(false);
     }
   }, [logFilters]);
+
+  const loadFileLogs = React.useCallback(async () => {
+    setFileLogsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (fileLogFilters.level) params.append('level', fileLogFilters.level);
+      if (fileLogFilters.search) params.append('search', fileLogFilters.search);
+      params.append('limit', fileLogFilters.limit || 300);
+      const res = await fetch(apiUrl('/logs/file?' + params.toString()));
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+      setFileLogs(data || null);
+    } catch (e) {
+      console.error('Failed to load app.log:', e);
+      setFileLogs({ logs: [], error: e?.message || String(e) });
+    } finally {
+      setFileLogsLoading(false);
+    }
+  }, [fileLogFilters]);
 
   const loadLogStats = React.useCallback(async () => {
     try {
@@ -23237,42 +23275,69 @@ const DashboardTiles = {
     }
   };
 
+  const saveLogDownload = async (path, fallbackName) => {
+    const res = await fetch(apiUrl(path));
+    if (!res.ok) {
+      const data = await safeJson(res);
+      throw new Error(data?.detail || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const named = /filename=([^;]+)/.exec(res.headers.get('Content-Disposition') || '');
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = named ? named[1].trim() : fallbackName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  };
+
   const exportLogs = async (format = 'json') => {
     try {
       const params = new URLSearchParams({ format });
       if (logFilters.level) params.append('level', logFilters.level);
       if (logFilters.category) params.append('category', logFilters.category);
       if (logFilters.search) params.append('search', logFilters.search);
-      const res = await fetch(apiUrl('/logs/export?' + params.toString()));
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `nexroll_logs_${new Date().toISOString().split('T')[0]}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      if (!logFilters.includeReads) params.append('include_reads', 'false');
+      await saveLogDownload('/logs/export?' + params.toString(),
+        `nexroll_logs_${new Date().toISOString().split('T')[0]}.${format}`);
       showAlert(`Logs exported as ${format.toUpperCase()}`, 'success');
     } catch (e) {
       showAlert('Failed to export logs: ' + (e?.message || e), 'error');
     }
   };
 
-  const clearOldLogs = async (days = 30) => {
-    if (!window.confirm(`Delete logs older than ${days} days?`)) return;
+  const downloadAppLog = async (previous = false) => {
     try {
-      const res = await fetch(apiUrl(`/logs?older_than_days=${days}`), { method: 'DELETE' });
-      if (res.ok) {
-        const data = await safeJson(res);
-        showAlert(`Deleted ${data?.deleted || 0} old log entries`, 'success');
-        await loadLogs();
-        await loadLogStats();
-      }
+      await saveLogDownload(`/logs/file/download${previous ? '?backup=true' : ''}`,
+        previous ? 'nexroll_app_log_previous.log' : 'nexroll_app_log.log');
+    } catch (e) {
+      showAlert('Failed to download app.log: ' + (e?.message || e), 'error');
+    }
+  };
+
+  const clearLogsWhere = async (query, question, doneLabel) => {
+    if (!window.confirm(question)) return;
+    try {
+      const res = await fetch(apiUrl(`/logs?${query}`), { method: 'DELETE' });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+      showAlert(`${doneLabel}: ${data?.deleted || 0} log entries`, 'success');
+      await loadLogs();
+      await loadLogStats();
     } catch (e) {
       showAlert('Failed to clear logs: ' + (e?.message || e), 'error');
     }
   };
+
+  const clearOldLogs = (days = 7) => clearLogsWhere(
+    `older_than_days=${days}`, `Delete log entries older than ${days} days?`, 'Deleted');
+
+  const clearRoutineReads = () => clearLogsWhere(
+    'routine_reads=true',
+    'Delete the logged page loads (requests that only read data and worked)? Changes, failures and every other event stay.',
+    'Deleted');
 
   const clearAllLogs = async () => {
     if (!window.confirm('Delete ALL log entries? This wipes the entire log history (including old errors) and cannot be undone.')) return;
@@ -25706,15 +25771,40 @@ const DashboardTiles = {
     }
   }, [activeTab, loadApiKeys]);
 
-  // Auto-load logs when opening Logs tab
+  // Auto-load logs when opening Logs tab. Stats and settings load once per
+  // visit; the list reloads when its filters change.
   React.useEffect(() => {
     if (activeTab === 'settings/logs') {
-      loadLogs();
       loadLogStats();
       loadLogSettings();
       loadVerboseLogging();
     }
-  }, [activeTab, loadLogs, loadLogStats, loadLogSettings, loadVerboseLogging]);
+  }, [activeTab, loadLogStats, loadLogSettings, loadVerboseLogging]);
+
+  React.useEffect(() => {
+    if (activeTab === 'settings/logs' && logView === 'events') loadLogs();
+  }, [activeTab, logView, loadLogs]);
+
+  React.useEffect(() => {
+    if (activeTab === 'settings/logs' && logView === 'file') loadFileLogs();
+  }, [activeTab, logView, loadFileLogs]);
+
+  // Search as you type, but only once typing pauses: each keystroke used to
+  // reload the list, the stats and the settings.
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      const events = logSearchInput.events.trim();
+      const file = logSearchInput.file.trim();
+      setLogFilters(prev => (prev.search === events ? prev : { ...prev, search: events }));
+      setFileLogFilters(prev => (prev.search === file ? prev : { ...prev, search: file }));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [logSearchInput]);
+
+  const refreshLogsPage = () => {
+    loadLogStats();
+    if (logView === 'file') loadFileLogs(); else loadLogs();
+  };
 
   React.useEffect(() => {
     if (activeTab === 'settings/storage') {
@@ -31500,543 +31590,353 @@ const DashboardTiles = {
   );
 
   // Settings - Logs Tab
-  const renderSettingsLogs = () => (
-    <>
-    <div>
-      {/* Log Stats Overview */}
-      {logStats && (
-        <div className="card nx-settings-log-stats" style={{ marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-              <BarChart2 size={20} style={{ color: '#00d4ff' }} /> Log Statistics
-            </h2>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              Last 24 hours
+  const renderSettingsLogs = () => {
+    const isFile = logView === 'file';
+    const filters = isFile ? fileLogFilters : logFilters;
+    const setFilters = isFile ? setFileLogFilters : setLogFilters;
+    const rows = isFile ? (fileLogs?.logs || []) : logs;
+    const loading = isFile ? fileLogsLoading : logsLoading;
+    const matched = isFile ? (fileLogs?.matched ?? rows.length) : logsTotal;
+    const categories = Array.from(new Set([
+      ...Object.keys(LOG_CATEGORY_LABELS),
+      ...Object.keys(logStats?.by_category || {}),
+    ]));
+    const filtered = Boolean(filters.level || filters.search || (!isFile && filters.category));
+    const pad2 = (n) => String(n).padStart(2, '0');
+    // Both logs send times the browser can place (UTC, or local with its
+    // offset); show them in the viewer's own time, like app.log reads.
+    const formatLogTime = (value) => {
+      const date = new Date(value);
+      return isNaN(date.getTime())
+        ? String(value || '')
+        : `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+    };
+    const formatSize = (kb) => (Number(kb) >= 1024 ? `${(Number(kb) / 1024).toFixed(1)} MB` : `${Math.round(Number(kb) || 0)} KB`);
+    const eventDetail = (log) => {
+      const parts = [];
+      if (log.source) parts.push(`Source: ${log.source}`);
+      if (log.request_id) parts.push(`Request: ${log.request_id}`);
+      if (log.duration_ms !== null && log.duration_ms !== undefined) parts.push(`Took: ${log.duration_ms} ms`);
+      if (log.ip_address) parts.push(`Client: ${log.ip_address}`);
+      const details = log.details;
+      if (details && typeof details === 'object') {
+        const { traceback, ...rest } = details;
+        if (Object.keys(rest).length) parts.push(JSON.stringify(rest, null, 2));
+        if (traceback) parts.push(String(traceback));
+      } else if (details) {
+        parts.push(String(details));
+      }
+      return parts.join('\n');
+    };
+    const switchView = (view) => {
+      setLogView(view);
+      setExpandedLogKey(null);
+    };
+    const emptyTitle = filtered
+      ? 'No logs match'
+      : isFile && fileLogs && !fileLogs.file_exists ? 'app.log has not been written yet' : 'Nothing logged yet';
+    const emptyText = filtered
+      ? 'Nothing matches the search and filters above.'
+      : isFile
+        ? 'NeXroll writes app.log as soon as it has something to say.'
+        : 'Events, warnings and errors appear here as NeXroll records them.';
+
+    return (
+      <>
+      <div>
+        <div className="card nx-settings-log-viewer">
+          <div className="nx-log-head">
+            <div className="nx-log-tabs" role="tablist" aria-label="Which log">
+              <button type="button" role="tab" aria-selected={!isFile} className={!isFile ? 'active' : ''} onClick={() => switchView('events')}>
+                <Terminal size={14} aria-hidden="true" /> Events
+              </button>
+              <button type="button" role="tab" aria-selected={isFile} className={isFile ? 'active' : ''} onClick={() => switchView('file')}>
+                <FileText size={14} aria-hidden="true" /> App log
+              </button>
+            </div>
+            <span className="nx-log-count" aria-live="polite">
+              {loading ? 'Loading…' : `${rows.length.toLocaleString()} of ${Number(matched || 0).toLocaleString()}`}
             </span>
-          </div>
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', 
-            gap: '0.75rem' 
-          }}>
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '1rem',
-              backgroundColor: 'rgba(0, 212, 255, 0.08)',
-              borderRadius: '12px',
-              border: '1px solid rgba(0, 212, 255, 0.2)'
-            }}>
-              <div style={{ 
-                fontSize: '2rem', 
-                fontWeight: 700, 
-                color: '#00d4ff',
-                lineHeight: 1
-              }}>
-                {logStats.total || 0}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Events</div>
-            </div>
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '1rem',
-              backgroundColor: 'rgba(239, 68, 68, 0.08)',
-              borderRadius: '12px',
-              border: '1px solid rgba(239, 68, 68, 0.2)'
-            }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                gap: '0.25rem',
-                fontSize: '2rem', 
-                fontWeight: 700, 
-                color: '#ef4444',
-                lineHeight: 1
-              }}>
-                <AlertCircle size={20} />
-                {logStats.by_level?.ERROR || 0}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Errors</div>
-            </div>
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '1rem',
-              backgroundColor: 'rgba(245, 158, 11, 0.08)',
-              borderRadius: '12px',
-              border: '1px solid rgba(245, 158, 11, 0.2)'
-            }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                gap: '0.25rem',
-                fontSize: '2rem', 
-                fontWeight: 700, 
-                color: '#f59e0b',
-                lineHeight: 1
-              }}>
-                <AlertTriangle size={18} />
-                {logStats.by_level?.WARNING || 0}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Warnings</div>
-            </div>
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '1rem',
-              backgroundColor: 'rgba(34, 197, 94, 0.08)',
-              borderRadius: '12px',
-              border: '1px solid rgba(34, 197, 94, 0.2)'
-            }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                gap: '0.25rem',
-                fontSize: '2rem', 
-                fontWeight: 700, 
-                color: '#22c55e',
-                lineHeight: 1
-              }}>
-                <CheckCircle size={18} />
-                {logStats.by_level?.INFO || 0}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Info</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Log Viewer */}
-      <div className="card nx-settings-log-viewer" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)' }}>
-        {/* Terminal-style header */}
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          marginBottom: '1rem',
-          paddingBottom: '1rem',
-          borderBottom: '1px solid var(--border-color)'
-        }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-            <Terminal size={20} style={{ color: '#00d4ff' }} /> 
-            <span>Event Log</span>
-            <span style={{ 
-              fontSize: '0.7rem', 
-              padding: '0.2rem 0.5rem', 
-              backgroundColor: 'rgba(0, 212, 255, 0.15)', 
-              color: '#00d4ff', 
-              borderRadius: '4px',
-              marginLeft: '0.5rem'
-            }}>
-              {logs.length} entries
-            </span>
-          </h2>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button 
-              className="button" 
-              style={{ 
-                backgroundColor: 'transparent', 
-                border: '1px solid var(--border-color)',
-                fontSize: '0.8rem',
-                padding: '0.4rem 0.75rem'
-              }}
-              onClick={() => exportLogs('json')}
-              title="Export as JSON"
-            >
-              <Download size={14} /> JSON
-            </button>
-            <button 
-              className="button" 
-              style={{ 
-                backgroundColor: 'transparent', 
-                border: '1px solid var(--border-color)',
-                fontSize: '0.8rem',
-                padding: '0.4rem 0.75rem'
-              }}
-              onClick={() => exportLogs('csv')}
-              title="Export as CSV"
-            >
-              <Download size={14} /> CSV
-            </button>
-            <button
-              className="button"
-              style={{
-                backgroundColor: 'transparent',
-                border: '1px solid var(--border-color)',
-                fontSize: '0.8rem',
-                padding: '0.4rem 0.75rem'
-              }}
-              onClick={handleDownloadDiagnostics}
-              disabled={downloadingDiagnostics}
-              title="Download a diagnostics bundle (logs + system info, with secrets redacted)"
-            >
-              {downloadingDiagnostics ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />} {downloadingDiagnostics ? 'Generating…' : 'Diagnostics'}
-            </button>
-            <button
-              className="button"
-              style={{
-                backgroundColor: 'rgba(0, 212, 255, 0.1)',
-                border: '1px solid rgba(0, 212, 255, 0.3)',
-                color: '#00d4ff',
-                fontSize: '0.8rem',
-                padding: '0.4rem 0.75rem'
-              }}
-              onClick={loadLogs}
-              title="Refresh logs"
-            >
-              <RefreshCw size={14} /> Refresh
-            </button>
-          </div>
-        </div>
-
-        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0 0 0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <Shield size={13} style={{ color: 'var(--success-color, #28a745)', flexShrink: 0 }} />
-          API keys, tokens, and IP addresses are automatically redacted from logs when viewed, copied, or exported.
-        </p>
-
-        {/* Filters Bar */}
-        <div className="nx-settings-log-toolbar">
-          <label className="nx-settings-log-search">
-            <span aria-hidden="true">/</span>
-            <input
-              type="text"
-              className="input"
-              placeholder="Search messages, sources, or request IDs..."
-              value={logFilters.search}
-              onChange={(e) => setLogFilters(prev => ({ ...prev, search: e.target.value }))}
-            />
-          </label>
-          <select
-            className="input"
-            style={{ 
-              width: '130px',
-              flexShrink: 0,
-              fontSize: '0.85rem',
-              padding: '0.4rem 0.5rem',
-              backgroundColor: 'var(--card-bg)'
-            }}
-            value={logFilters.level}
-            onChange={(e) => setLogFilters(prev => ({ ...prev, level: e.target.value }))}
-          >
-            <option value="">All Levels</option>
-            <option value="DEBUG">Debug</option>
-            <option value="INFO">Info</option>
-            <option value="WARNING">Warning</option>
-            <option value="ERROR">Error</option>
-            <option value="CRITICAL">Critical</option>
-          </select>
-          <select
-            className="input"
-            style={{ 
-              width: '130px',
-              flexShrink: 0,
-              fontSize: '0.85rem',
-              padding: '0.4rem 0.5rem',
-              backgroundColor: 'var(--card-bg)'
-            }}
-            value={logFilters.category}
-            onChange={(e) => setLogFilters(prev => ({ ...prev, category: e.target.value }))}
-          >
-            <option value="">All Sources</option>
-            <option value="system">System</option>
-            <option value="scheduler">Scheduler</option>
-            <option value="api">API</option>
-            <option value="user">User</option>
-            <option value="plex">Plex</option>
-            <option value="jellyfin">Jellyfin</option>
-            <option value="nexup">NeX-Up</option>
-          </select>
-          <select
-            className="input"
-            style={{ 
-              width: '150px',
-              flexShrink: 0,
-              fontSize: '0.85rem',
-              padding: '0.4rem 0.5rem',
-              backgroundColor: 'var(--card-bg)',
-              marginLeft: '200px'
-            }}
-            value={logFilters.limit}
-            onChange={(e) => setLogFilters(prev => ({ ...prev, limit: parseInt(e.target.value) }))}
-          >
-            <option value="50">Last 50</option>
-            <option value="100">Last 100</option>
-            <option value="250">Last 250</option>
-            <option value="500">Last 500</option>
-          </select>
-        </div>
-
-        {/* Log Entries */}
-        {logsLoading ? (
-          <div style={{ 
-            textAlign: 'center', 
-            padding: '3rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
-            <Loader2 size={32} className="spin" style={{ color: '#00d4ff' }} />
-            <p style={{ marginTop: '0.75rem', color: 'var(--text-secondary)' }}>Loading logs...</p>
-          </div>
-        ) : logs.length === 0 ? (
-          <div className="nx-empty">
-            <span className="nx-empty-icon"><Terminal size={48} /></span>
-            <h3 className="nx-empty-title">No logs found</h3>
-            <p className="nx-empty-text">Nothing matches your current filters. Try adjusting the filter settings above.</p>
-          </div>
-        ) : (
-          <div style={{ 
-            maxHeight: '500px', 
-            overflowY: 'auto',
-            backgroundColor: '#0d0d0d',
-            borderRadius: '8px',
-            border: '1px solid #333',
-            fontFamily: "'Consolas', 'Monaco', 'Lucida Console', monospace",
-            padding: '0.5rem 0'
-          }}>
-            {logs.map((log, idx) => {
-              // Format timestamp like app.log: 2026-02-21 14:32:45
-              // Backend sends UTC-marked timestamps; render in the viewer's LOCAL
-              // time. (toISOString() would force it back to UTC — the old bug that
-              // showed log times shifted a few hours ahead.)
-              const logDate = new Date(log.created_at || log.timestamp);
-              const _p2 = (n) => String(n).padStart(2, '0');
-              const timestamp = isNaN(logDate.getTime())
-                ? String(log.created_at || log.timestamp || '')
-                : `${logDate.getFullYear()}-${_p2(logDate.getMonth() + 1)}-${_p2(logDate.getDate())} ${_p2(logDate.getHours())}:${_p2(logDate.getMinutes())}:${_p2(logDate.getSeconds())}`;
-              
-              // Level color matching terminal style
-              const levelColor = 
-                log.level === 'ERROR' || log.level === 'CRITICAL' ? '#ff5555' :
-                log.level === 'WARNING' ? '#ffb86c' :
-                log.level === 'INFO' ? '#50fa7b' :
-                log.level === 'DEBUG' ? '#bd93f9' :
-                '#f8f8f2';
-              
-              // Format single line: [timestamp] LEVEL - message
-              return (
-                <div
-                  key={log.id || idx}
-                  style={{
-                    padding: '0.15rem 0.75rem',
-                    fontSize: '0.75rem',
-                    lineHeight: '1.6',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    color: '#f8f8f2'
-                  }}
-                >
-                  <span style={{ color: '#6272a4' }}>[{timestamp}]</span>
-                  {' '}
-                  <span style={{ 
-                    color: levelColor, 
-                    fontWeight: 600,
-                    minWidth: '50px',
-                    display: 'inline-block'
-                  }}>
-                    {log.level.padEnd(8)}
-                  </span>
-                  {log.category && (
-                    <>
-                      <span style={{ color: '#8be9fd' }}>[{log.category}]</span>
-                      {' '}
-                    </>
+            <div className="nx-log-actions">
+              {isFile ? (
+                <>
+                  <button type="button" className="button button-secondary" disabled={!fileLogs?.file_exists} onClick={() => downloadAppLog(false)} title="Download app.log with secrets redacted">
+                    <Download size={14} /> app.log
+                  </button>
+                  {fileLogs?.backup && (
+                    <button type="button" className="button button-secondary" onClick={() => downloadAppLog(true)} title="The previous 10 MB, kept as app.log.1 when the log rotates">
+                      <Download size={14} /> Previous
+                    </button>
                   )}
-                  <span style={{ color: '#f8f8f2' }}>{log.message}</span>
-                </div>
-              );
-            })}
+                </>
+              ) : (
+                <>
+                  <button type="button" className="button button-secondary" onClick={() => exportLogs('json')} title="Export the events matching the filters as JSON">
+                    <Download size={14} /> JSON
+                  </button>
+                  <button type="button" className="button button-secondary" onClick={() => exportLogs('csv')} title="Export the events matching the filters as CSV">
+                    <Download size={14} /> CSV
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          <p className="nx-log-note">
+            <Shield size={13} aria-hidden="true" />
+            <span>
+              {isFile
+                ? 'Everything NeXroll writes to app.log: scheduler detail, connection attempts and full error traces. '
+                : 'What NeXroll did and what went wrong: prerolls applied, settings changed, warnings and errors. '}
+              API keys, tokens and IP addresses are redacted when logs are viewed, copied or exported.
+            </span>
+          </p>
+
+          <div className="nx-settings-log-toolbar">
+            <label className="nx-settings-log-search">
+              <span aria-hidden="true">/</span>
+              <input
+                type="text"
+                className="input"
+                aria-label={isFile ? 'Search app.log' : 'Search events'}
+                placeholder={isFile ? 'Search app.log...' : 'Search messages, sources, request IDs...'}
+                value={logSearchInput[logView] || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setLogSearchInput(prev => ({ ...prev, [logView]: value }));
+                }}
+              />
+            </label>
+            <select
+              className="input"
+              aria-label="Level"
+              value={filters.level}
+              onChange={(e) => setFilters(prev => ({ ...prev, level: e.target.value }))}
+            >
+              <option value="">All levels</option>
+              <option value="DEBUG">Debug</option>
+              <option value="INFO">Info</option>
+              <option value="WARNING">Warning</option>
+              <option value="ERROR">Error</option>
+              <option value="CRITICAL">Critical</option>
+            </select>
+            {!isFile && (
+              <select
+                className="input"
+                aria-label="Area"
+                value={logFilters.category}
+                onChange={(e) => setLogFilters(prev => ({ ...prev, category: e.target.value }))}
+              >
+                <option value="">All areas</option>
+                {categories.map(category => (
+                  <option key={category} value={category}>{LOG_CATEGORY_LABELS[category] || category}</option>
+                ))}
+              </select>
+            )}
+            <select
+              className="input"
+              aria-label="How many"
+              value={filters.limit}
+              onChange={(e) => setFilters(prev => ({ ...prev, limit: parseInt(e.target.value, 10) }))}
+            >
+              {(isFile ? [100, 300, 1000, 2000] : [50, 100, 250, 500, 1000]).map(n => (
+                <option key={n} value={n}>Last {n}</option>
+              ))}
+            </select>
+            {!isFile && (
+              <label className="nx-log-reads" title="Logged requests that only read data and worked. Before 2.2.3 NeXroll recorded one for every dashboard refresh.">
+                <input
+                  type="checkbox"
+                  checked={logFilters.includeReads}
+                  onChange={(e) => setLogFilters(prev => ({ ...prev, includeReads: e.target.checked }))}
+                />
+                <span>Page loads</span>
+              </label>
+            )}
+          </div>
+
+          {loading && !rows.length ? (
+            <div className="nx-log-loading">
+              <Loader2 size={28} className="spin" />
+              <p>Loading logs…</p>
+            </div>
+          ) : isFile && fileLogs?.error ? (
+            <div className="nx-empty">
+              <span className="nx-empty-icon"><FileText size={48} /></span>
+              <h3 className="nx-empty-title">Couldn't read app.log</h3>
+              <p className="nx-empty-text">{fileLogs.error}</p>
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="nx-empty">
+              <span className="nx-empty-icon"><Terminal size={48} /></span>
+              <h3 className="nx-empty-title">{emptyTitle}</h3>
+              <p className="nx-empty-text">{emptyText}</p>
+            </div>
+          ) : (
+            <div className={`nx-log-list${loading ? ' is-refreshing' : ''}`} role="list">
+              {rows.map((log, idx) => {
+                const key = isFile ? `f${idx}-${log.timestamp}` : `e${log.id ?? idx}`;
+                const level = String(log.level || 'INFO').toUpperCase();
+                const area = isFile ? (log.source === 'scheduler' ? 'scheduler' : '') : (log.category || '');
+                const message = isFile && area === 'scheduler'
+                  ? String(log.message || '').replace(/^SCHEDULER:\s*/, '')
+                  : String(log.message || '');
+                const detail = isFile ? (log.detail || '') : eventDetail(log);
+                const open = expandedLogKey === key;
+                const line = (
+                  <>
+                    <span className="nx-log-time">{formatLogTime(log.timestamp)}</span>
+                    <span className={`nx-log-level is-${level.toLowerCase()}`}>{level}</span>
+                    {area && <span className="nx-log-area">{LOG_CATEGORY_LABELS[area] || area}</span>}
+                    <span className="nx-log-msg">{message}</span>
+                  </>
+                );
+                return (
+                  <div key={key} role="listitem" className={`nx-log-row${detail ? ' has-more' : ''}${open ? ' is-open' : ''}`}>
+                    {detail ? (
+                      <button type="button" className="nx-log-line" aria-expanded={open} onClick={() => setExpandedLogKey(open ? null : key)}>
+                        {line}
+                        <ChevronDown size={13} className="nx-log-caret" aria-hidden="true" />
+                      </button>
+                    ) : (
+                      <div className="nx-log-line">{line}</div>
+                    )}
+                    {open && <pre className="nx-log-detail">{detail}</pre>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {isFile && fileLogs?.file_exists && (
+            <p className="nx-log-file-meta">
+              <span>{fileLogs.file_path}</span>
+              <span>{formatSize(fileLogs.file_size_kb)}, {Number(fileLogs.total_entries || 0).toLocaleString()} entries</span>
+              {fileLogs.backup && <span>Previous file {formatSize(fileLogs.backup.size_kb)}</span>}
+            </p>
+          )}
+        </div>
+
+        {/* Log Settings */}
+        {logSettings && (
+          <div className="card nx-settings-log-options">
+            <h2 className="nx-log-options-title">
+              <Settings size={18} aria-hidden="true" /> Log configuration
+            </h2>
+
+            <div className="nx-log-options-grid">
+              <div className="nx-setting-row">
+                <label htmlFor="nx-log-level">Minimum level</label>
+                <select
+                  id="nx-log-level"
+                  className="input"
+                  value={logSettings.log_level || 'INFO'}
+                  onChange={(e) => updateLogSettings({ log_level: e.target.value })}
+                >
+                  <option value="DEBUG">Debug: everything</option>
+                  <option value="INFO">Info: standard events</option>
+                  <option value="WARNING">Warning: problems only</option>
+                  <option value="ERROR">Error: errors only</option>
+                </select>
+                <p>Events below this level aren't recorded. Debug also records Verbose Logging's detail.</p>
+              </div>
+              <div className="nx-setting-row">
+                <label htmlFor="nx-log-retention">Keep events for</label>
+                <select
+                  id="nx-log-retention"
+                  className="input"
+                  value={logSettings.log_retention_days || 30}
+                  onChange={(e) => updateLogSettings({ log_retention_days: parseInt(e.target.value, 10) })}
+                >
+                  <option value="7">7 days</option>
+                  <option value="14">14 days</option>
+                  <option value="30">30 days (recommended)</option>
+                  <option value="60">60 days</option>
+                  <option value="90">90 days</option>
+                  <option value="180">180 days</option>
+                  <option value="365">1 year</option>
+                </select>
+                <p>Older events are removed once a day. A shorter period applies straight away.</p>
+              </div>
+            </div>
+
+            <div className="nx-log-switches">
+              <label className="nx-log-switch">
+                <input
+                  type="checkbox"
+                  checked={logSettings.log_request_logging || false}
+                  onChange={(e) => updateLogSettings({ log_request_logging: e.target.checked })}
+                />
+                <span>
+                  <strong>Log API changes and failures</strong>
+                  <small>Settings changes, uploads and deletes, failed requests and anything slower than 5 seconds. Page loads aren't recorded.</small>
+                </span>
+              </label>
+              <label className="nx-log-switch">
+                <input
+                  type="checkbox"
+                  checked={logSettings.log_scheduler_logging !== false}
+                  onChange={(e) => updateLogSettings({ log_scheduler_logging: e.target.checked })}
+                />
+                <span>
+                  <strong>Log scheduler activity</strong>
+                  <small>Prerolls applied or cleared, changes held while something plays, and scheduler warnings.</small>
+                </span>
+              </label>
+            </div>
+
+            {/* Verbose Logging — mirrored from General settings so it's available
+                alongside the other log controls. Same backend toggle. */}
+            <div className="nx-log-verbose">
+              <div className="nx-setting-row-head">
+                <Terminal size={16} style={{ color: '#a78bfa' }} />
+                <h3>Verbose Logging</h3>
+                <span className="nx-log-beta">BETA</span>
+              </div>
+              <p className="nx-setting-row-desc">
+                Writes detailed debug information to app.log. Set the minimum level to Debug to see it under Events too.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <label className="nx-rockerswitch">
+                  <input
+                    type="checkbox"
+                    checked={verboseLogging}
+                    onChange={(e) => updateVerboseLogging(e.target.checked)}
+                    disabled={verboseLoggingLoading}
+                  />
+                  <span className="nx-rockerswitch-slider"></span>
+                </label>
+                <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
+                  {verboseLogging ? 'Verbose Logging Enabled' : 'Verbose Logging Disabled'}
+                </span>
+              </div>
+            </div>
+
+            <div className="nx-log-maintenance">
+              <span>
+                {(logStats?.total || 0).toLocaleString()} events stored
+                {logStats?.oldest ? `, oldest from ${formatLogTime(logStats.oldest).slice(0, 10)}` : ''}
+              </span>
+              <div>
+                {logStats?.routine_reads > 0 && (
+                  <button type="button" className="button button-secondary" onClick={clearRoutineReads} title="Delete the logged requests that only read data and worked. Every other event stays.">
+                    <Trash2 size={14} /> Clear {Number(logStats.routine_reads).toLocaleString()} page loads
+                  </button>
+                )}
+                <button type="button" className="button button-secondary" onClick={() => clearOldLogs(7)}>
+                  <Trash2 size={14} /> Clear older than 7 days
+                </button>
+                <button type="button" className="button button-danger" onClick={clearAllLogs} title="Delete every stored event, including old errors">
+                  <Trash2 size={14} /> Clear all
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
-
-      {/* Log Settings */}
-      {logSettings && (
-        <div className="card nx-settings-log-options" style={{ marginTop: '1rem' }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <Settings size={20} style={{ color: '#00d4ff' }} /> Log Configuration
-          </h2>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-            <div className="nx-setting-row">
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Minimum Log Level
-              </label>
-              <select
-                className="input"
-                style={{ width: '100%' }}
-                value={logSettings.log_level || 'INFO'}
-                onChange={(e) => updateLogSettings({ log_level: e.target.value })}
-              >
-                <option value="DEBUG">Debug - All events</option>
-                <option value="INFO">Info - Standard events</option>
-                <option value="WARNING">Warning - Issues only</option>
-                <option value="ERROR">Error - Errors only</option>
-              </select>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem', marginBottom: 0 }}>
-                Events below this level won't be logged
-              </p>
-            </div>
-            
-            <div className="nx-setting-row">
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Log Retention
-              </label>
-              <select
-                className="input"
-                style={{ width: '100%' }}
-                value={logSettings.log_retention_days || 30}
-                onChange={(e) => updateLogSettings({ log_retention_days: parseInt(e.target.value) })}
-              >
-                <option value="7">7 days</option>
-                <option value="14">14 days</option>
-                <option value="30">30 days (recommended)</option>
-                <option value="60">60 days</option>
-                <option value="90">90 days</option>
-                <option value="180">180 days</option>
-                <option value="365">1 year</option>
-              </select>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem', marginBottom: 0 }}>
-                Automatically purge logs older than this
-              </p>
-            </div>
-          </div>
-          
-          <div style={{ 
-            display: 'flex', 
-            gap: '1rem', 
-            marginTop: '1rem', 
-            flexWrap: 'wrap',
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
-            <label style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '0.5rem', 
-              cursor: 'pointer',
-              padding: '0.5rem 0.75rem',
-              borderRadius: '6px',
-              backgroundColor: logSettings.log_request_logging ? 'rgba(0, 212, 255, 0.1)' : 'transparent',
-              border: `1px solid ${logSettings.log_request_logging ? 'rgba(0, 212, 255, 0.3)' : 'transparent'}`,
-              transition: 'all 0.15s'
-            }}>
-              <input
-                type="checkbox"
-                checked={logSettings.log_request_logging || false}
-                onChange={(e) => updateLogSettings({ log_request_logging: e.target.checked })}
-                style={{ accentColor: '#00d4ff' }}
-              />
-              <span style={{ fontWeight: 500 }}>Log API Requests</span>
-            </label>
-            <label style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '0.5rem', 
-              cursor: 'pointer',
-              padding: '0.5rem 0.75rem',
-              borderRadius: '6px',
-              backgroundColor: logSettings.log_scheduler_logging !== false ? 'rgba(0, 212, 255, 0.1)' : 'transparent',
-              border: `1px solid ${logSettings.log_scheduler_logging !== false ? 'rgba(0, 212, 255, 0.3)' : 'transparent'}`,
-              transition: 'all 0.15s'
-            }}>
-              <input
-                type="checkbox"
-                checked={logSettings.log_scheduler_logging !== false}
-                onChange={(e) => updateLogSettings({ log_scheduler_logging: e.target.checked })}
-                style={{ accentColor: '#00d4ff' }}
-              />
-              <span style={{ fontWeight: 500 }}>Log Scheduler Activity</span>
-            </label>
-          </div>
-
-          {/* Verbose Logging — mirrored from General settings so it's available
-              alongside the other log controls. Same backend toggle. */}
-          <div style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
-            <div className="nx-setting-row-head">
-              <Terminal size={16} style={{ color: '#a78bfa' }} />
-              <h3>Verbose Logging</h3>
-              <span style={{
-                fontSize: '0.65rem', padding: '0.15rem 0.4rem',
-                backgroundColor: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa',
-                borderRadius: '4px', fontWeight: 600
-              }}>
-                BETA
-              </span>
-            </div>
-            <p className="nx-setting-row-desc">
-              Enable verbose logging to see detailed debug information in the console and logs.
-            </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <label className="nx-rockerswitch">
-                <input
-                  type="checkbox"
-                  checked={verboseLogging}
-                  onChange={(e) => updateVerboseLogging(e.target.checked)}
-                  disabled={verboseLoggingLoading}
-                />
-                <span className="nx-rockerswitch-slider"></span>
-              </label>
-              <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
-                {verboseLogging ? 'Verbose Logging Enabled' : 'Verbose Logging Disabled'}
-              </span>
-            </div>
-          </div>
-
-          <div style={{
-            marginTop: '1rem',
-            paddingTop: '1rem',
-            borderTop: '1px solid var(--border-color)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '0.5rem'
-          }}>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              {logStats?.total || 0} total log entries stored
-            </span>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <button
-                className="button"
-                style={{
-                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
-                  color: '#ef4444',
-                  fontSize: '0.85rem'
-                }}
-                onClick={() => clearOldLogs(30)}
-              >
-                <Trash2 size={14} /> Clear Logs Older Than 30 Days
-              </button>
-              <button
-                className="button"
-                style={{
-                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                  border: '1px solid rgba(239, 68, 68, 0.5)',
-                  color: '#ef4444',
-                  fontSize: '0.85rem'
-                }}
-                onClick={clearAllLogs}
-                title="Delete every log entry, including old historical errors"
-              >
-                <Trash2 size={14} /> Clear All Logs
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-    </>
-  );
+      </>
+    );
+  };
 
   // Settings - Users Tab
   const renderSettingsUsers = () => (

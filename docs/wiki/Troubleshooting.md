@@ -430,9 +430,9 @@ To walk through setup again *without* resetting anything, use **Run Setup Wizard
 
 ### Check the Logs
 
-The built-in log viewer (**Settings → Logs**) shows detailed error messages, API request timings, and scheduler activity. This is the best first step for any troubleshooting.
+The built-in log viewer (**Settings → Logs**) is the best first step for any troubleshooting. **Events** lists what NeXroll did and every warning and error; click one for its details. **App log** shows `app.log` itself, with scheduler detail and full error traces. **Diagnostics bundle** downloads both, with secrets redacted, ready to attach to an issue.
 
-**Docker logs:**
+**Docker logs:** `app.log` is in `/data/logs` (2.2.3 and later). For the console output:
 ```bash
 docker logs nexroll > nexroll-logs.txt 2>&1
 ```

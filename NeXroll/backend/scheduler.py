@@ -16,6 +16,7 @@ from sqlalchemy import or_, func
 import backend.models as models
 from backend.plex_connector import PlexConnector
 from backend import path_mapping
+from backend import app_log
 from backend.jellyfin_connector import JellyfinConnector
 from backend.database import SessionLocal
 from backend.shuffle_bag import shuffle_bag_sample
@@ -108,72 +109,58 @@ def _generated_preroll_path(storage: str, template: str, theme: str) -> str:
     return os.path.join(gen_dir, f"{template}_preroll.mp4")
 
 
-def _get_log_path():
-    """Get the log file path.
-
-    Mirrors main._ensure_log_dir's fallback chain so the scheduler writes to the
-    SAME app.log as the FastAPI app (can't import main here — circular import).
-    Historically this used /var/log/nexroll on Linux while the app wrote to
-    <cwd>/logs, so Docker diagnostics bundles were missing every SCHEDULER line.
-    """
-    candidates = []
-    if sys.platform == "win32":
-        base = os.environ.get("PROGRAMDATA")
-        if base:
-            candidates.append(os.path.join(base, "NeXroll", "logs"))
-        la = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-        if la:
-            candidates.append(os.path.join(la, "NeXroll", "logs"))
-    candidates.append(os.path.join(os.getcwd(), "logs"))
-    for log_dir in candidates:
-        try:
-            os.makedirs(log_dir, exist_ok=True)
-            return os.path.join(log_dir, "app.log")
-        except Exception:
-            continue
-    return os.path.join(os.getcwd(), "app.log")
-
-_scheduler_rotation_cache = {"last_check": 0}
-
-def _scheduler_check_rotation():
-    """Rotate log if over 10 MB (checked at most once per 60s)"""
+def _category_label(db, category_id) -> str:
+    """'Name' for log lines, or "category <id>" when it can't be looked up."""
     try:
-        now = time.time()
-        if now - _scheduler_rotation_cache["last_check"] < 60:
-            return
-        _scheduler_rotation_cache["last_check"] = now
-        log_path = _get_log_path()
-        if os.path.exists(log_path) and os.path.getsize(log_path) > 10 * 1024 * 1024:
-            bk = log_path + ".1"
-            if os.path.exists(bk):
-                os.remove(bk)
-            os.rename(log_path, bk)
+        cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+        if cat and cat.name:
+            return f"'{cat.name}'"
     except Exception:
         pass
+    return f"category {category_id}"
 
-def _scheduler_log(msg: str, level: str = "INFO"):
-    """Log scheduler messages with consistent formatting"""
-    try:
-        _scheduler_check_rotation()
-        log_path = _get_log_path()
-        with open(log_path, "a", encoding="utf-8") as f:
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"[{ts}] [{level}] SCHEDULER: {msg}\n")
-    except Exception as e:
-        # Fallback to print if logging fails
-        print(f"[SCHEDULER] [{level}] {msg} (log error: {e})")
+
+def _get_log_path():
+    """The app.log the FastAPI app writes too (backend/app_log.py). It used to
+    be resolved here separately and drifted: Docker bundles once missed every
+    SCHEDULER line."""
+    return app_log.log_path()
+
+
+def _scheduler_log(msg: str, level: str = "INFO", event: bool = False):
+    """Log scheduler messages with consistent formatting.
+
+    Warnings and errors also go to the Logs page, and so do lines marked
+    event=True: what the scheduler did (prerolls set or cleared, a change held
+    back for playback). The page used to show only schedule edits; everything
+    the scheduler actually did was in app.log alone.
+    """
+    level = (level or "INFO").upper()
+    app_log.write_line(level, f"SCHEDULER: {msg}")
+    if event or level in ("WARNING", "ERROR", "CRITICAL"):
+        app_log.forward(level, "scheduler", msg, source=app_log.caller_name())
+
+
+# Verbose lines are asked for many times a minute; read the setting at most
+# every few seconds instead of on every line.
+_verbose_cache = {"enabled": False, "checked": None}
+
 
 def _scheduler_verbose(msg: str):
     """Log verbose scheduler messages (only if verbose logging enabled)"""
     try:
-        # Check if verbose logging is enabled by querying database
-        db = SessionLocal()
-        try:
-            setting = db.query(models.Setting).first()
-            if setting and getattr(setting, 'verbose_logging', False):
-                _scheduler_log(msg, level="DEBUG")
-        finally:
-            db.close()
+        now = time.monotonic()
+        if _verbose_cache["checked"] is None or now - _verbose_cache["checked"] >= 5:
+            db = SessionLocal()
+            try:
+                setting = db.query(models.Setting).first()
+                _verbose_cache["enabled"] = bool(setting and getattr(setting, 'verbose_logging', False))
+                _verbose_cache["checked"] = now
+            finally:
+                db.close()
+        if _verbose_cache["enabled"]:
+            app_log.write_line("DEBUG", f"SCHEDULER: {msg}")
+            app_log.forward("DEBUG", "scheduler", msg, source=app_log.caller_name())
     except Exception:
         pass
 
@@ -1993,7 +1980,8 @@ class Scheduler:
                 waited = (datetime.datetime.now() - self._deferred_write_since).total_seconds()
                 _scheduler_log(
                     f"Playback finished; applying deferred preroll change ({context}) "
-                    f"after waiting {int(waited)}s"
+                    f"after waiting {int(waited)}s",
+                    event=True,
                 )
                 self._deferred_write_since = None
                 self._deferred_write_context = None
@@ -2005,7 +1993,8 @@ class Scheduler:
             _scheduler_log(
                 f"Deferring preroll change ({context}): {count} Plex video session(s) started in the "
                 f"last {int(self._preroll_window_seconds // 60)} minutes may still be in their prerolls. "
-                f"Changing prerolls now would make Plex hang on its next preroll."
+                f"Changing prerolls now would make Plex hang on its next preroll.",
+                event=True,
             )
         else:
             _scheduler_verbose(f"Still deferring preroll change ({context}); {count} session(s) playing")
@@ -2689,7 +2678,15 @@ class Scheduler:
             setting = db.query(models.Setting).first()
             if not setting:
                 return
-            
+
+            # Nothing to compare without Plex. Jellyfin/Emby read prerolls from
+            # NeXroll on every playback; this check still asked an unconfigured
+            # Plex, found its preroll field empty and logged a failed reapply
+            # every five minutes.
+            if not str(getattr(setting, "plex_url", None) or "").strip():
+                self._last_verification_time = now
+                return
+
             # Skip verification in passive mode when no active schedules
             # (Let other preroll managers control prerolls outside scheduled times)
             passive_mode = getattr(setting, "passive_mode", False)
@@ -2836,9 +2833,9 @@ class Scheduler:
             
             # Update last verification time
             self._last_verification_time = now
-            
+
         except Exception as e:
-            print(f"Verification error: {e}")
+            _scheduler_log(f"VERIFICATION: check failed: {e}", level="ERROR")
         finally:
             db.close()
 
@@ -3111,7 +3108,10 @@ class Scheduler:
             mismatches = []
 
         if mismatches:
-            _scheduler_log(f"Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
+            _scheduler_log(
+                f"Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}. "
+                f"Plex can't play these paths; add a path mapping in Settings > Path Mappings.",
+                level="WARNING")
             return ApplyResult(plex=False, plugin=plugin)
 
         combined = delimiter.join(preroll_paths_plex)
@@ -3125,7 +3125,12 @@ class Scheduler:
         ok = connector.set_preroll(combined)
         if ok:
             self._applied_local_paths = {os.path.abspath(p) for p in preroll_paths_local}
-        _scheduler_log(f"{'SUCCESS' if ok else 'FAIL'} setting multi-preroll (mode={mode_str}).")
+        if ok:
+            _scheduler_log(f"SUCCESS setting multi-preroll (mode={mode_str}): {_category_label(db, category_id)}, "
+                           f"{len(prerolls)} prerolls", event=True)
+        else:
+            _scheduler_log(f"FAIL setting multi-preroll (mode={mode_str}): Plex didn't accept the preroll list "
+                           f"for {_category_label(db, category_id)}", level="WARNING")
         if ok:
             # Clear blend mode tracking since we're in normal mode now
             self._blend_mode_active = False
@@ -3175,7 +3180,11 @@ class Scheduler:
         connector = PlexConnector(setting.plex_url, setting.plex_token)
         _scheduler_log("Clearing Plex preroll field (no active schedules, clear_when_inactive enabled)…")
         ok = connector.set_preroll("")  # Empty string clears prerolls
-        _scheduler_log(f"{'SUCCESS' if ok else 'FAIL'} clearing Plex preroll field.")
+        if ok:
+            _scheduler_log("SUCCESS clearing Plex preroll field (no active schedules, clear_when_inactive enabled).",
+                           event=True)
+        else:
+            _scheduler_log("FAIL clearing Plex preroll field.", level="WARNING")
         if ok:
             # Clear blend mode tracking
             self._blend_mode_active = False
@@ -3306,7 +3315,10 @@ class Scheduler:
             mismatches = []
 
         if mismatches:
-            _scheduler_log(f"Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
+            _scheduler_log(
+                f"Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}. "
+                f"Plex can't play these paths; add a path mapping in Settings > Path Mappings.",
+                level="WARNING")
             return ApplyResult(plex=False, plugin=plugin)
 
         combined = delimiter.join(paths_plex)
@@ -3318,7 +3330,12 @@ class Scheduler:
         ok = connector.set_preroll(combined)
         if ok:
             self._applied_local_paths = {os.path.abspath(p) for p in paths}
-        _scheduler_log(f"{'SUCCESS' if ok else 'FAIL'} setting sequence preroll list.")
+        if ok:
+            _scheduler_log(f"SUCCESS setting sequence preroll list: schedule '{getattr(schedule, 'name', '?')}', "
+                           f"{len(paths)} items ({mode})", event=True)
+        else:
+            _scheduler_log(f"FAIL setting sequence preroll list for schedule '{getattr(schedule, 'name', '?')}'",
+                           level="WARNING")
         if ok:
             # Mirror manual "Apply to Plex" behavior: mark schedule's category as applied
             try:
@@ -3453,7 +3470,8 @@ class Scheduler:
         if ok:
             self._applied_local_paths = {os.path.abspath(p) for p in paths}
         if ok:
-            _scheduler_log(f"BLEND: Blended preroll list applied successfully to Plex")
+            _scheduler_log(f"BLEND: Blended preroll list applied successfully to Plex "
+                           f"({len(schedules)} schedules, {len(paths_plex)} prerolls)", event=True)
             # Track blend mode for verification
             self._blend_mode_active = True
             self._blend_expected_preroll = combined

@@ -172,6 +172,7 @@ Build arg:
 - Health check: GET /health
 - FFmpeg info: GET /system/ffmpeg-info or from the Dashboard
 - Logs and resolved paths are visible in the container logs on startup
+- app.log is written to /data/logs (2.2.3 and later; earlier versions kept it inside the container, so an update lost it). Read it under Settings > Logs > App log, or set NEXROLL_LOG_DIR to move it
 
 
 ## 11) Upgrades

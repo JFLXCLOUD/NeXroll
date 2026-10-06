@@ -958,6 +958,25 @@ class VerificationModeTests(unittest.TestCase):
         self.assertEqual(apply_category.call_args.args[0], self.category_id)
         self.assertTrue(apply_category.call_args.kwargs["schedule"].playlist)
 
+    def test_verification_skips_installs_without_plex(self):
+        # Jellyfin/Emby only: there is no Plex preroll field to check, so no
+        # "mismatch", no reapply and no warning every five minutes.
+        with self.Session() as db:
+            db.query(models.Setting).first().plex_url = None
+            db.commit()
+        connector = MagicMock()
+        log = MagicMock()
+        scheduler = scheduler_module.Scheduler()
+
+        with self._patch_verification(connector), patch.object(scheduler_module, "_scheduler_log", log), \
+                patch.object(scheduler, "_apply_category_to_plex", return_value=True) as apply_category:
+            scheduler._verify_and_reapply_if_needed()
+
+        apply_category.assert_not_called()
+        connector.get_preroll.assert_not_called()
+        log.assert_not_called()
+        self.assertEqual(scheduler._last_verification_time, self.now)
+
 
 if __name__ == "__main__":
     unittest.main()

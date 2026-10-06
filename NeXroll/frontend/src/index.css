@@ -10051,8 +10051,7 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
 .nx-settings-logs > div,
 .nx-settings-users > div { gap: 11px !important; }
 .nx-settings-api-list > div:first-child,
-.nx-settings-user-list > div:first-child,
-.nx-settings-log-viewer > div:first-child {
+.nx-settings-user-list > div:first-child {
   min-height: 42px;
   margin-bottom: 10px !important;
   padding-bottom: 10px !important;
@@ -10062,34 +10061,219 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
 .nx-settings-user-list > div:not(:first-child) { gap: 6px !important; }
 .nx-settings-api-list > div:not(:first-child) > div,
 .nx-settings-user-list > div:not(:first-child) > div { min-height: 58px; padding: 8px 10px !important; border-radius: 8px !important; }
-.nx-settings-log-stats { display: none; }
+/* Settings > Logs. The list keeps its terminal look in both themes. */
 .nx-settings-log-viewer { padding: 0 !important; overflow: hidden; }
-.nx-settings-log-viewer > div:first-child { margin: 0 !important; padding: 11px 13px !important; background: var(--raised-bg); }
-.nx-settings-log-viewer > div:nth-child(2) { margin: 0 !important; padding: 10px 13px !important; border-bottom: 1px solid var(--border-color); }
-.nx-settings-log-viewer > div:last-child { max-height: 390px !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+.nx-log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--raised-bg);
+}
+.nx-log-tabs { display: inline-flex; overflow: hidden; border: 1px solid var(--border-color); border-radius: 8px; }
+.nx-content .nx-log-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  min-height: 30px;
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.nx-content .nx-log-tabs button:first-child { border-left: 0; }
+.nx-content .nx-log-tabs button.active { background: rgba(0, 212, 255, .13); color: var(--text-color); }
+.nx-content .nx-log-tabs button:focus-visible { outline: 2px solid #00d4ff; outline-offset: -2px; }
+.nx-log-count { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.nx-log-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.nx-content .nx-log-actions .button { min-height: 30px; padding: 0 10px; font-size: 12px; }
+.nx-log-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 9px 13px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.nx-log-note svg { flex-shrink: 0; margin-top: 2px; color: var(--success-color, #28a745); }
 .nx-settings-log-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
-  margin: 0 0 12px !important;
+  margin: 0 13px 12px !important;
   padding: 10px !important;
   border: 1px solid var(--border-color) !important;
   border-radius: 11px !important;
   background: var(--card-bg) !important;
 }
-.nx-settings-log-search { position: relative; flex: 1 1 380px; min-width: 180px; }
-.nx-settings-log-search > span { position: absolute; z-index: 1; left: 11px; top: 9px; color: var(--text-muted); font-size: 10px; font-weight: 800; }
-.nx-settings-log-search > input { width: 100% !important; height: 34px !important; min-height: 34px !important; padding: 0 11px 0 31px !important; font-size: 10px !important; }
-.nx-settings-log-toolbar > select { flex: 0 0 auto !important; height: 34px !important; min-height: 34px !important; margin: 0 !important; padding: 0 28px 0 10px !important; font-size: 10px !important; }
-.nx-settings-log-toolbar > select:nth-of-type(1) { width: 110px !important; }
-.nx-settings-log-toolbar > select:nth-of-type(2) { width: 108px !important; }
-.nx-settings-log-toolbar > select:nth-of-type(3) { width: 98px !important; }
-@media (max-width: 760px) {
-  .nx-settings-log-toolbar { flex-wrap: wrap; }
-  .nx-settings-log-search { flex: 1 1 100%; }
-  .nx-settings-log-toolbar > select { flex: 1 1 calc(33.333% - 7px) !important; width: auto !important; min-width: 0; }
+.nx-settings-log-search { position: relative; flex: 1 1 320px; min-width: 180px; }
+.nx-settings-log-search > span {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 11px;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  pointer-events: none;
 }
-.nx-settings-log-options > div[style*="gridTemplateColumns"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; }
+/* Specific enough to beat the site-wide phone rule that resets search padding
+   (it slid the "/" glyph over the text). */
+body .nx-settings-log-viewer .nx-settings-log-toolbar .nx-settings-log-search > input {
+  width: 100% !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 11px 0 28px !important;
+  font-size: 12px !important;
+}
+body .nx-settings-log-viewer .nx-settings-log-toolbar > select {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 0 !important;
+  padding: 0 28px 0 10px !important;
+  font-size: 12px !important;
+}
+.nx-log-reads { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.nx-log-reads input { width: 15px; height: 15px; margin: 0; accent-color: #00d4ff; }
+.nx-log-list {
+  max-height: 520px;
+  overflow-y: auto;
+  margin: 0 13px 13px;
+  padding: 4px 0;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #0d0d0d;
+  font-family: Consolas, Monaco, 'Lucida Console', monospace;
+  font-size: 12px;
+}
+.nx-log-list.is-refreshing { opacity: .6; }
+.nx-log-row + .nx-log-row { border-top: 1px solid rgba(255, 255, 255, .035); }
+.nx-log-line { display: block; padding: 3px 12px; color: #f8f8f2; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.nx-content .nx-log-list button.nx-log-line {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 3px 30px 3px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #f8f8f2;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.nx-content .nx-log-list button.nx-log-line:hover,
+.nx-content .nx-log-row.is-open button.nx-log-line { background: rgba(255, 255, 255, .05); }
+.nx-content .nx-log-list button.nx-log-line:focus-visible { outline: 2px solid #00d4ff; outline-offset: -2px; }
+.nx-log-time { margin-right: 8px; color: #6272a4; }
+.nx-log-level { display: inline-block; min-width: 62px; margin-right: 6px; font-weight: 700; color: #f8f8f2; }
+.nx-log-level.is-error,
+.nx-log-level.is-critical { color: #ff5555; }
+.nx-log-level.is-warning { color: #ffb86c; }
+.nx-log-level.is-info { color: #50fa7b; }
+.nx-log-level.is-debug { color: #bd93f9; }
+.nx-log-area { margin-right: 8px; color: #8be9fd; }
+.nx-log-area::before { content: '['; }
+.nx-log-area::after { content: ']'; }
+.nx-log-caret { position: absolute; top: 6px; right: 10px; color: #6272a4; transition: transform .15s; }
+.nx-log-row.is-open .nx-log-caret { transform: rotate(180deg); }
+.nx-log-detail {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0 12px 6px;
+  padding: 8px 10px;
+  border-left: 2px solid #44475a;
+  background: #161616;
+  color: #cfcfcf;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.nx-log-loading { display: grid; justify-items: center; gap: 8px; margin: 0 13px 13px; padding: 2.5rem 1rem; color: #00d4ff; }
+.nx-log-loading p { margin: 0; color: var(--text-secondary); }
+.nx-settings-log-viewer > .nx-empty { margin: 0 13px 13px; }
+.nx-log-file-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: -4px 13px 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.nx-log-options-title { display: flex; align-items: center; gap: .5rem; margin: 0 0 1rem; }
+.nx-log-options-title svg { color: #00d4ff; }
+.nx-log-options-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.nx-log-options-grid label { display: block; margin-bottom: .5rem; color: var(--text-secondary); font-size: .85rem; font-weight: 600; }
+.nx-log-options-grid select { width: 100%; }
+.nx-log-options-grid p { margin: .5rem 0 0; color: var(--text-secondary); font-size: .75rem; }
+.nx-log-switches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 1rem; }
+.nx-log-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  padding: .75rem .85rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-color);
+  cursor: pointer;
+}
+.nx-log-switch:has(input:checked) { border-color: rgba(0, 212, 255, .35); background: rgba(0, 212, 255, .07); }
+.nx-log-switch input { flex-shrink: 0; width: 16px; height: 16px; margin: 2px 0 0; accent-color: #00d4ff; }
+.nx-log-switch span { display: grid; gap: 3px; }
+.nx-log-switch strong { color: var(--text-color); font-size: .88rem; }
+.nx-log-switch small { color: var(--text-secondary); font-size: .75rem; line-height: 1.4; }
+.nx-log-verbose { margin-top: 1rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-color); }
+.nx-log-beta { padding: .15rem .4rem; border-radius: 4px; background: rgba(139, 92, 246, .2); color: #a78bfa; font-size: .65rem; font-weight: 600; }
+.nx-log-maintenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: .85rem;
+}
+.nx-log-maintenance > div { display: flex; flex-wrap: wrap; gap: .5rem; }
+@media (max-width: 760px) {
+  .nx-log-actions { width: 100%; margin-left: 0; }
+  .nx-settings-log-search { flex: 1 1 100%; }
+  /* Two per row. No calc() here: the minifier splits a calc() flex into
+     longhands and drops the !important. */
+  body .nx-settings-log-viewer .nx-settings-log-toolbar > select { flex: 1 1 40% !important; min-width: 0; }
+  .nx-log-options-grid,
+  .nx-log-switches { grid-template-columns: 1fr; }
+  .nx-log-level { min-width: 0; }
+  .nx-log-time { display: block; margin-right: 0; }
+}
+/* 16px on phones so iOS doesn't zoom into the field. */
+@media (max-width: 768px) {
+  body .nx-settings-log-viewer .nx-settings-log-toolbar .nx-settings-log-search > input,
+  body .nx-settings-log-viewer .nx-settings-log-toolbar > select,
+  body .nx-settings-log-options select { font-size: 16px !important; }
+}
 .nx-settings-auth-guide > div { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 8px !important; }
 
 .nx-settings-system > div {
@@ -10196,7 +10380,6 @@ body.light .nx-settings-path-rules > .nx-setting-row > div:nth-child(2) > div { 
   .nx-settings-system > div { grid-template-columns: 1fr !important; }
   .nx-settings-storage { grid-template-areas: "usage" "monitor" "folder"; }
   .nx-settings-system > div > .card { grid-column: 1 !important; grid-row: auto !important; }
-  .nx-settings-log-options > div[style*="gridTemplateColumns"],
   .nx-settings-auth-guide > div { grid-template-columns: 1fr !important; }
 }
 
