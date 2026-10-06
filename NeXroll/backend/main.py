@@ -11638,6 +11638,14 @@ def list_library_genres(db: Session = Depends(get_db)):
     return {"genres": library_genres(db)}
 
 
+@app.get("/sequences/tags")
+def list_library_tags(db: Session = Depends(get_db)):
+    """Tag names from the connected Jellyfin/Emby libraries, for the tag
+    rule's picker. Plex is not asked: tag rules can't run on Plex."""
+    from backend.media_genres import library_tags
+    return {"tags": library_tags(db)}
+
+
 @app.get("/sequences/{sequence_id}")
 def get_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
     """Get a specific saved sequence by ID"""
@@ -25622,6 +25630,8 @@ def evaluate_sequence_conditions(
     db: Session = Depends(get_db),
     audio_format: Optional[str] = Query(None, description="Simulated stored audio codec for preview only"),
     server: Optional[str] = Query(None, description="Media server to evaluate as (plex, jellyfin, emby); omit for unknown"),
+    tags: Optional[str] = Query(None, description="Comma-separated tags to evaluate as; omit for unknown, as on Plex"),
+    file_path: Optional[str] = Query(None, description="File path to evaluate as; omit for unknown, as on Plex"),
 ):
     """Say, for each block, what would play in its slot right now.
 
@@ -25643,6 +25653,8 @@ def evaluate_sequence_conditions(
         server_type=server,
         genres=[g.strip() for g in genres.split(",") if g.strip()] if genres else None,
         audio_format=audio_format,
+        tags=[t.strip() for t in tags.split(",") if t.strip()] if tags else None,
+        file_path=file_path.strip() if file_path and file_path.strip() else None,
     )
     results = []
     for block_index, block in enumerate(blocks):

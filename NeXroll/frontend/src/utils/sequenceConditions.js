@@ -18,6 +18,8 @@ export const RULE_KINDS = [
   { value: 'trailers_available', label: 'Trailers are available', short: 'Trailers available', playback: false },
   { value: 'time_window', label: 'Time of day', short: 'Time of day', playback: false },
   { value: 'genre', label: 'Genre of what is playing (Jellyfin & Emby)', short: 'Genre (Jellyfin & Emby)', playback: true },
+  { value: 'tag', label: 'Tag of what is playing (Jellyfin & Emby)', short: 'Tag (Jellyfin & Emby)', playback: true },
+  { value: 'file_name', label: 'File path contains (Jellyfin & Emby)', short: 'File path (Jellyfin & Emby)', playback: true },
   { value: 'audio_format', label: 'Stored audio format (Jellyfin & Emby)', short: 'Audio format (Jellyfin & Emby)', playback: true },
   { value: 'media_type', label: 'Movie or episode (Jellyfin & Emby)', short: 'Media type (Jellyfin & Emby)', playback: true },
   { value: 'server', label: 'Media server', short: 'Media server', playback: false },
@@ -54,7 +56,7 @@ const SOURCE_WORDS = { both: 'movie or TV', movies: 'movie', tv: 'TV' };
 
 export const defaultRule = (kind = 'trailers_available') => {
   if (kind === 'media_type') return { kind, value: 'movie' };
-  if (kind === 'genre') return { kind, values: [] };
+  if (kind === 'genre' || kind === 'tag' || kind === 'file_name') return { kind, values: [] };
   if (kind === 'server') return { kind, values: ['jellyfin'] };
   if (kind === 'audio_format') return { kind, track: 'default', values: [] };
   if (kind === 'time_window') return { kind, start: '18:00', end: '23:00', days: [] };
@@ -139,6 +141,16 @@ export const describeRule = (rule) => {
       const values = Array.isArray(rule.values) ? rule.values : [];
       if (!values.length) return 'a genre is chosen';
       return `the genre is ${not ? 'not ' : ''}${values.join(' or ')}`;
+    }
+    case 'tag': {
+      const values = Array.isArray(rule.values) ? rule.values : [];
+      if (!values.length) return 'a tag is chosen';
+      return `the tag is ${not ? 'not ' : ''}${values.join(' or ')}`;
+    }
+    case 'file_name': {
+      const values = Array.isArray(rule.values) ? rule.values : [];
+      if (!values.length) return 'text to look for is chosen';
+      return `the file path ${not ? "doesn't contain" : 'contains'} ${values.map(v => `"${v}"`).join(' or ')}`;
     }
     case 'server': {
       const values = Array.isArray(rule.values) ? rule.values : [];
@@ -285,15 +297,38 @@ export const useLibraryGenres = () => {
   return genres;
 };
 
-/** Genres named anywhere in a sequence's genre rules, for the preview picker. */
-export const genresInSequence = (blocks) => {
+// Tag names from the connected Jellyfin/Emby libraries, the same way.
+let libraryTagsPromise = null;
+
+export const useLibraryTags = () => {
+  const [tags, setTags] = useState([]);
+  useEffect(() => {
+    let active = true;
+    if (!libraryTagsPromise) {
+      if (typeof fetch !== 'function') return undefined;
+      libraryTagsPromise = fetch('/sequences/tags')
+        .then(res => (res.ok ? res.json() : { tags: [] }))
+        .then(data => data.tags || [])
+        .catch(() => { libraryTagsPromise = null; return []; });
+    }
+    libraryTagsPromise.then(list => { if (active) setTags(list); });
+    return () => { active = false; };
+  }, []);
+  return tags;
+};
+
+/** Values named anywhere in a sequence's rules of one kind, for the preview pickers. */
+export const ruleValuesInSequence = (blocks, kind) => {
   const seen = new Map();
   (blocks || []).forEach(block => {
     ((block && block.condition && block.condition.rules) || []).forEach(rule => {
-      if (rule && rule.kind === 'genre') {
+      if (rule && rule.kind === kind) {
         (rule.values || []).forEach(v => { if (!seen.has(String(v).toLowerCase())) seen.set(String(v).toLowerCase(), v); });
       }
     });
   });
   return [...seen.values()];
 };
+
+/** Genres named anywhere in a sequence's genre rules, for the preview picker. */
+export const genresInSequence = (blocks) => ruleValuesInSequence(blocks, 'genre');

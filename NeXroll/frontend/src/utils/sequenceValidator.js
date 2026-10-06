@@ -205,6 +205,13 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
     block.condition.rules.filter(rule => rule?.kind === 'server').forEach(rule => {
       if (!Array.isArray(rule.values) || !rule.values.length || rule.values.some(v => !['plex', 'jellyfin', 'emby'].includes(v))) errors.push('Choose at least one media server');
     });
+    // An empty tag or file path rule could never be met, so its block would never play.
+    block.condition.rules.filter(rule => rule?.kind === 'tag').forEach(rule => {
+      if (!Array.isArray(rule.values) || !rule.values.some(v => String(v).trim())) errors.push('Add at least one tag');
+    });
+    block.condition.rules.filter(rule => rule?.kind === 'file_name').forEach(rule => {
+      if (!Array.isArray(rule.values) || !rule.values.some(v => String(v).trim())) errors.push('Add some text for the file path to contain');
+    });
   }
   return errors;
 };

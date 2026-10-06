@@ -32,7 +32,7 @@ hold plays nothing while the chain goes on, so only the last member's
 ignore the flag and check every block on its own.
 
 A rule NeXroll cannot answer counts as not met. That matters for the rules
-that depend on what is about to play (genre, media type, stored audio): Jellyfin and Emby
+that depend on what is about to play (genre, tag, file path, media type, stored audio): Jellyfin and Emby
 say, Plex cannot, so on Plex such a block plays its ``otherwise`` rather than
 playing before every movie.
 
@@ -50,6 +50,10 @@ Rule kinds:
                       days: optional list of weekday names the window opens on
   genre               values: list of genre names; met when the item has any
                       of them (Jellyfin/Emby only)
+  tag                 values: list of tag names; met when the item (or an
+                      episode's series) has any of them (Jellyfin/Emby only)
+  file_name           values: list of text snippets; met when the item's file
+                      path contains any of them, e.g. "IMAX" (Jellyfin/Emby only)
   audio_format        values: supported stored codecs; track: default|any.
                       Unknown metadata stays unknown even when negated.
 Any rule may set ``"negate": true`` to mean "not".
@@ -61,7 +65,7 @@ import datetime
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
-RULE_KINDS = ("trailers_available", "media_type", "time_window", "genre", "audio_format", "server")
+RULE_KINDS = ("trailers_available", "media_type", "time_window", "genre", "tag", "file_name", "audio_format", "server")
 
 # The media servers a "server" rule can name. Plex is known from its apply
 # paths, Jellyfin and Emby from the X-Plugin-Server-Type header their plugins send.
@@ -75,7 +79,7 @@ def normalize_server(value) -> Optional[str]:
 
 # Rules that need to know what is about to play. Only the Jellyfin/Emby plugin
 # can tell NeXroll that; Plex applies one list to every movie.
-PLAYBACK_RULES = ("media_type", "genre", "audio_format")
+PLAYBACK_RULES = ("media_type", "genre", "tag", "file_name", "audio_format")
 
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
@@ -104,6 +108,8 @@ class PlaybackContext:
     availability_block: Optional[dict] = None
     condition_block: Optional[dict] = None
     genre_lookup: Optional[Callable[[], Optional[list]]] = None
+    tag_lookup: Optional[Callable[[], Optional[list]]] = None
+    path_lookup: Optional[Callable[[], Optional[str]]] = None
     tmdb_lookup: Optional[Callable[[], Optional[str]]] = None
     audio_lookup: Optional[Callable[[], Optional[dict]]] = None
     # Where the block being checked, and its this/next trailer block, sit in
@@ -119,6 +125,10 @@ class PlaybackContext:
     _trailer_cache: dict = field(default_factory=dict, repr=False)
     _genres: Optional[list] = field(default=None, repr=False)
     _genres_known: bool = field(default=False, repr=False)
+    _tags: Optional[list] = field(default=None, repr=False)
+    _tags_known: bool = field(default=False, repr=False)
+    _path: Optional[str] = field(default=None, repr=False)
+    _path_known: bool = field(default=False, repr=False)
 
     def audio(self) -> Optional[dict]:
         if not self._audio_known:
@@ -137,6 +147,29 @@ class PlaybackContext:
             found = self.genre_lookup() if self.genre_lookup else None
             self._genres = None if found is None else [str(g).strip().lower() for g in found if str(g).strip()]
         return self._genres
+
+    def tags(self) -> Optional[list]:
+        """Lower-cased tags of what is about to play, or None if unknown."""
+        if not self._tags_known:
+            self._tags_known = True
+            try:
+                found = self.tag_lookup() if self.tag_lookup else None
+            except Exception:
+                found = None
+            self._tags = None if found is None else [str(t).strip().lower() for t in found if str(t).strip()]
+        return self._tags
+
+    def file_path(self) -> Optional[str]:
+        """Lower-cased file path of what is about to play, with forward
+        slashes, or None if unknown."""
+        if not self._path_known:
+            self._path_known = True
+            try:
+                found = self.path_lookup() if self.path_lookup else None
+            except Exception:
+                found = None
+            self._path = str(found).replace("\\", "/").lower() if found else None
+        return self._path
 
     def tmdb_id(self) -> Optional[str]:
         """TMDB id of what is about to play, when the server reports one."""
@@ -246,6 +279,16 @@ def evaluate_rule(rule: dict, ctx: PlaybackContext) -> Optional[bool]:
         wanted = {str(v).strip().lower() for v in (rule.get("values") or []) if str(v).strip()}
         have = ctx.genres() if wanted else None
         result = None if have is None else bool(wanted.intersection(have))
+    elif kind == "tag":
+        wanted = {str(v).strip().lower() for v in (rule.get("values") or []) if str(v).strip()}
+        have = ctx.tags() if wanted else None
+        result = None if have is None else bool(wanted.intersection(have))
+    elif kind == "file_name":
+        # Plain text, not a pattern: "IMAX" matches "Dune (2021) - IMAX.mkv"
+        # and a folder named "IMAX". Slashes are compared as forward slashes.
+        wanted = [str(v).strip().replace("\\", "/").lower() for v in (rule.get("values") or []) if str(v).strip()]
+        have = ctx.file_path() if wanted else None
+        result = None if have is None else any(w in have for w in wanted)
     elif kind == "server":
         # An unknown server (a plugin too old to say) is not met either way,
         # so it falls to the Otherwise along with whatever it was not chosen for.
@@ -348,6 +391,12 @@ def describe_condition(condition) -> str:
         elif kind == "genre":
             values = [str(v) for v in (rule.get("values") or [])]
             text = ("genre is " + " or ".join(values)) if values else "genre is (none chosen)"
+        elif kind == "tag":
+            values = [str(v) for v in (rule.get("values") or [])]
+            text = ("tag is " + " or ".join(values)) if values else "tag is (none chosen)"
+        elif kind == "file_name":
+            values = [f'"{v}"' for v in (rule.get("values") or [])]
+            text = ("file path contains " + " or ".join(values)) if values else "file path contains (nothing chosen)"
         elif kind == "server":
             names = {"plex": "Plex", "jellyfin": "Jellyfin", "emby": "Emby"}
             values = [names.get(normalize_server(v) or "", str(v)) for v in (rule.get("values") or [])]

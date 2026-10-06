@@ -101,6 +101,8 @@ Things to know:
 | **Time of day** | The time is inside a window, optionally only on chosen days | Plex, Jellyfin, Emby |
 | **Stored audio format** | The default/only track or any stored track has a selected format | Jellyfin, Emby |
 | **Genre** | What is about to play has any of the chosen genres | Jellyfin, Emby |
+| **Tag** | What is about to play has any of the chosen tags | Jellyfin, Emby |
+| **File path contains** | The file path of what is about to play contains any of the chosen text | Jellyfin, Emby |
 | **Movie or episode** | What is about to play is a movie, or a TV episode | Jellyfin, Emby (on Plex it is always a movie) |
 | **Media server** | The prerolls are for one of the chosen servers | Plex, Jellyfin, Emby |
 
@@ -133,6 +135,27 @@ Add one or more genres. The block plays when the title about to start has **any*
 - Suggestions come from your connected Jellyfin and Emby libraries, so they use the same names your server does. You can also type any name.
 - A TV episode uses its series' genres.
 - Choose **unless** to play a block for everything *except* those genres.
+
+### Tag (Jellyfin & Emby)
+
+> **New in 2.2.3.**
+
+Add one or more tags. The block plays when the title about to start has **any** of them. Matching ignores capitals.
+
+- Tags are the ones you add in Jellyfin or Emby under **Edit metadata**. Use them to mark titles that have nothing in common NeXroll could otherwise see, such as IMAX releases or a family favorites list.
+- Suggestions come from your connected Jellyfin and Emby libraries. You can also type any tag.
+- A TV episode without tags of its own uses its series' tags.
+- Unlike a made-up genre, a tag doesn't show up in your server's genre browsing.
+
+### File path contains (Jellyfin & Emby)
+
+> **New in 2.2.3.**
+
+Add one or more pieces of text. The block plays when the file path of the title about to start contains **any** of them. Matching ignores capitals and treats `\` and `/` the same.
+
+- The whole path counts, folders included: **IMAX** matches `Dune (2021) - IMAX.mkv`, Radarr's `Dune (2021) {edition-IMAX}.mkv`, and a file inside a folder named `IMAX`.
+- It is plain text, not a pattern. Choose text that only appears where you mean it: **4K** would also match a library folder called `Movies 4K`.
+- When a movie has several versions grouped together, NeXroll sees the main version's path. The intro request doesn't say which version the viewer picked.
 
 ### Stored audio format (Jellyfin & Emby)
 
@@ -171,12 +194,12 @@ NeXroll knows Plex from applying the schedule to it, and the Jellyfin and Emby p
 
 In Advanced mode, the builder shows a **What each server can check** panel. Here is what it means.
 
-**Jellyfin and Emby** ask NeXroll what to play at the moment playback starts, through the NeXroll Intros plugin. The plugin says which title is starting, so NeXroll can check its genre and whether it is a movie or an episode. Stored audio rules can also query that title's file metadata. Audio metadata is cached for up to 60 seconds; the intro request does not identify the client-selected track or transcoded output.
+**Jellyfin and Emby** ask NeXroll what to play at the moment playback starts, through the NeXroll Intros plugin. The plugin says which title is starting, so NeXroll can check its genre, tags and file path, and whether it is a movie or an episode. Stored audio rules can also query that title's file metadata. Audio metadata is cached for up to 60 seconds; the intro request does not identify the client-selected track or transcoded output.
 
 **Plex** works differently. NeXroll gives Plex one preroll list in advance, and Plex plays it before every movie. Plex never tells NeXroll which movie is starting, so:
 
 - **Trailers available** and **Time of day** work. NeXroll re-checks them every 10 minutes and updates Plex when the answer changes.
-- **Genre** and **Stored audio format** are unknown on Plex, so the block plays its **Otherwise**, even for **unless**.
+- **Genre**, **Tag**, **File path contains** and **Stored audio format** are unknown on Plex, so the block plays its **Otherwise**, even for **unless**.
 - **Movie or episode** always sees a movie.
 - **Media server** always knows it is Plex.
 
@@ -233,6 +256,8 @@ Click **Preview** to play the sequence as a viewer would see it right now.
 - A panel lists each conditional block and whether it **plays**, **plays its alternative** or **is skipped**, and why. In an Else if chain it also says when a block is skipped because an earlier block in the chain already played.
 - For a sequence with genre rules, **Preview as** switches between **Plex (genre unknown)** and each genre the sequence uses. For example, **A Horror movie on Jellyfin or Emby**. Use it to check what both kinds of viewer will get.
 - For a sequence with **Media server** rules, **Preview for** picks the server: Plex, Jellyfin or Emby.
+- For a sequence with **Tag** rules, **Preview with tag** picks one of the tags the sequence uses, or **Unknown / Plex**.
+- For a sequence with **File path contains** rules, type a file path into **Preview with file path** and press Enter, for example `Dune (2021) - IMAX.mkv`. Leave it empty to preview as Plex.
 
 ---
 
@@ -281,6 +306,21 @@ Use **Preview** with **Preview as** to check each genre.
 3. Set **Otherwise** to **Play prerolls from a category**: your usual intros
 
 Horror on Jellyfin and Emby opens with a Halloween preroll. Everything else, and every movie on Plex, gets your usual intro.
+
+### An IMAX preroll before IMAX movies (Jellyfin & Emby)
+
+Jellyfin and Emby don't mark a movie as IMAX, so tell NeXroll which ones are, in one of two ways:
+
+- **By file name:** if your IMAX files have IMAX in their name (for example `Oppenheimer (2023) - IMAX.mkv` or Radarr's `{edition-IMAX}`), use **File path contains** IMAX. Nothing else to set up.
+- **By tag:** otherwise, add the tag **IMAX** to each IMAX movie in Jellyfin or Emby (**Edit metadata**, then **Tags**) and use **Tag** IMAX.
+
+Then:
+
+1. Put your IMAX preroll in its own category, or use a **Fixed preroll** block
+2. Add the block and give it the condition from above
+3. Set **Otherwise** to your usual intro, or to **Skip this block** if the IMAX preroll is an extra
+
+IMAX movies open with the IMAX preroll; every other movie, and every movie on Plex, gets the Otherwise. To combine it with genre prerolls, make it the first block of an [Else if chain](#else-if-first-match-wins).
 
 ### Different prerolls on Plex and Jellyfin
 

@@ -11,7 +11,7 @@ import {
   otherwiseForChoice,
   withRules,
 } from '../utils/sequenceConditions';
-import GenrePicker from './GenrePicker';
+import GenrePicker, { FilePathPicker, TagPicker } from './GenrePicker';
 import TrailerRatingFilter from './TrailerRatingFilter';
 import AudioFormatRule from './AudioFormatRule';
 import ServerRule from './ServerRule';
@@ -116,6 +116,20 @@ const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [
                 <GenrePicker values={rule.values || []} onChange={values => updateRule(i, { values })} />
               </div>
               <p className="nx-server-note"><strong>Jellyfin &amp; Emby only.</strong> They tell NeXroll which movie is about to play. Plex uses one preroll list for every movie, so on Plex this rule is never met and the Otherwise plays.</p>
+            </>}
+            {rule.kind === 'tag' && <>
+              <div className="nx-draft-field"><span>{rule.negate ? 'Not any of these tags' : 'Any of these tags'}</span>
+                <TagPicker values={rule.values || []} onChange={values => updateRule(i, { values })} />
+              </div>
+              <p className="nx-draft-field-hint">Tags are the ones you add in Jellyfin or Emby under Edit metadata, such as IMAX. An episode without tags uses its show's.</p>
+              <p className="nx-server-note"><strong>Jellyfin &amp; Emby only.</strong> On Plex this rule is never met and the Otherwise plays.</p>
+            </>}
+            {rule.kind === 'file_name' && <>
+              <div className="nx-draft-field"><span>{rule.negate ? "File path doesn't contain any of" : 'File path contains any of'}</span>
+                <FilePathPicker values={rule.values || []} onChange={values => updateRule(i, { values })} />
+              </div>
+              <p className="nx-draft-field-hint">Checks the movie's file and folder names, ignoring capitals: IMAX matches "Dune (2021) - IMAX.mkv" and "Dune {'{edition-IMAX}'}.mkv". When a movie has several versions, NeXroll sees the main version's path, not the one picked to play.</p>
+              <p className="nx-server-note"><strong>Jellyfin &amp; Emby only.</strong> On Plex this rule is never met and the Otherwise plays.</p>
             </>}
 
             {rule.kind === 'media_type' && <>

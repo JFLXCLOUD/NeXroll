@@ -310,7 +310,8 @@ def playback_context(db, media_type: Optional[str] = None,
                      now: Optional[datetime.datetime] = None,
                      item_id: Optional[str] = None,
                      server_type: Optional[str] = None,
-                     genres: Optional[list] = None, audio_format: Optional[str] = None) -> PlaybackContext:
+                     genres: Optional[list] = None, audio_format: Optional[str] = None,
+                     tags: Optional[list] = None, file_path: Optional[str] = None) -> PlaybackContext:
     """The facts a block condition may ask about, for one resolution pass.
 
     ``media_type`` is what is about to play when the caller knows it: the
@@ -320,7 +321,8 @@ def playback_context(db, media_type: Optional[str] = None,
     Genres come from ``genres`` when the caller already has them (a preview),
     or are looked up from the playing Jellyfin/Emby server by ``item_id`` - and
     only if a genre rule actually asks. Plex callers pass neither, so genre
-    rules are unknown there and count as not met.
+    rules are unknown there and count as not met. ``tags`` and ``file_path``
+    work the same way for tag and file path rules.
     """
     looked_up = {}
 
@@ -339,6 +341,17 @@ def playback_context(db, media_type: Optional[str] = None,
         found = details()
         return None if found is None else found.get("genres")
 
+    def tag_lookup():
+        if tags is not None:
+            return list(tags)
+        found = details()
+        return None if found is None else (found.get("tags") or [])
+
+    def path_lookup():
+        if file_path is not None:
+            return file_path
+        return (details() or {}).get("path")
+
     audio_found = {}
     def audio_lookup():
         from backend.media_audio import item_audio, FORMATS
@@ -353,6 +366,8 @@ def playback_context(db, media_type: Optional[str] = None,
         server=normalize_server(server_type),
         trailer_count=lambda source: len(eligible_nexup_trailers(db, source)),
         genre_lookup=genre_lookup,
+        tag_lookup=tag_lookup,
+        path_lookup=path_lookup,
         tmdb_lookup=lambda: (details() or {}).get("tmdb"),
         audio_lookup=audio_lookup,
     )

@@ -12,7 +12,7 @@ import {
   otherwiseForChoice,
   withRules,
 } from '../utils/sequenceConditions';
-import GenrePicker from './GenrePicker';
+import GenrePicker, { FilePathPicker, TagPicker } from './GenrePicker';
 import AudioFormatRule from './AudioFormatRule';
 import ServerRule from './ServerRule';
 
@@ -223,6 +223,27 @@ const RuleRow = ({ rule, index, onChange, onRemove, canRemove }) => {
           <small style={hintStyle}>
             <strong>Jellyfin &amp; Emby only.</strong> They tell NeXroll which movie is about to play. Plex uses one
             preroll list for every movie, so on Plex this rule is never met and the Otherwise plays.
+          </small>
+        </div>
+      )}
+
+      {rule.kind === 'tag' && (
+        <div style={{ marginTop: '8px' }}>
+          <TagPicker values={rule.values || []} onChange={values => set({ values })} />
+          <small style={hintStyle}>
+            Tags you add in Jellyfin or Emby under Edit metadata, such as IMAX. An episode without tags uses its
+            show's. <strong>Jellyfin &amp; Emby only:</strong> on Plex this rule is never met and the Otherwise plays.
+          </small>
+        </div>
+      )}
+
+      {rule.kind === 'file_name' && (
+        <div style={{ marginTop: '8px' }}>
+          <FilePathPicker values={rule.values || []} onChange={values => set({ values })} />
+          <small style={hintStyle}>
+            Checks the movie's file and folder names, ignoring capitals: IMAX matches "Dune (2021) - IMAX.mkv".
+            With several versions, NeXroll sees the main version's path. <strong>Jellyfin &amp; Emby only:</strong> on
+            Plex this rule is never met and the Otherwise plays.
           </small>
         </div>
       )}

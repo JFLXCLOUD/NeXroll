@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Film, Inbox, X } from 'lucide-react';
 import { lockBodyScroll } from '../utils/modalBehavior';
-import { SERVER_CHOICES, blocksHaveConditions, describeCondition, genresInSequence, needsPlaybackInfo, serverLabel } from '../utils/sequenceConditions';
+import { SERVER_CHOICES, blocksHaveConditions, describeCondition, genresInSequence, needsPlaybackInfo, ruleValuesInSequence, serverLabel } from '../utils/sequenceConditions';
 import { AUDIO_FORMATS } from '../utils/audioFormats';
 // eslint-disable-next-line no-unused-vars
 import SequenceTimeline from './SequenceTimeline';
@@ -62,6 +62,13 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   const [previewServer, setPreviewServer] = useState('plex');
   const hasServerRules = blocks.some(block => block.condition?.rules?.some(rule => rule.kind === 'server'));
   const sequenceGenres = genresInSequence(blocks);
+  // Tag and file path to preview tag and file path rules as; '' is unknown, as on Plex.
+  const [previewTag, setPreviewTag] = useState('');
+  const [previewPath, setPreviewPath] = useState('');
+  // Typed here, applied on Enter or blur so the preview doesn't rebuild per keystroke.
+  const [pathDraft, setPathDraft] = useState('');
+  const sequenceTags = ruleValuesInSequence(blocks, 'tag');
+  const hasPathRules = blocks.some(block => block.condition?.rules?.some(rule => rule.kind === 'file_name'));
   const videoRef = React.useRef(null);
   const overlayRef = React.useRef(null);
   const isTransitioningRef = React.useRef(false);
@@ -282,6 +289,8 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     if (previewGenre) params.set('genres', previewGenre);
     if (previewAudio) params.set('audio_format', previewAudio);
     if (hasServerRules) params.set('server', previewServer);
+    if (previewTag) params.set('tags', previewTag);
+    if (previewPath.trim()) params.set('file_path', previewPath.trim());
     const genreQuery = params.size ? `?${params}` : '';
     fetch(`/sequences/evaluate-conditions${genreQuery}`, {
       method: 'POST',
@@ -336,7 +345,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       controller.abort();
       if (innerCleanup) innerCleanup();
     };
-  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre, previewAudio, previewServer, hasServerRules]);
+  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre, previewAudio, previewServer, hasServerRules, previewTag, previewPath]);
 
   // Start playback
   const startPlayback = () => {
@@ -628,6 +637,19 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               {SERVER_CHOICES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>}
+          {sequenceTags.length > 0 && <label style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            Preview with tag
+            <select aria-label="Preview tag" value={previewTag} onChange={event => setPreviewTag(event.target.value)}>
+              <option value="">Unknown / Plex</option>
+              {sequenceTags.map(tag => <option key={tag} value={tag}>{tag} (Jellyfin or Emby)</option>)}
+            </select>
+          </label>}
+          {hasPathRules && <label style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            Preview with file path
+            <input aria-label="Preview file path" value={pathDraft} placeholder="Unknown / Plex, or e.g. Dune (2021) - IMAX.mkv"
+              onChange={event => setPathDraft(event.target.value)} onBlur={() => setPreviewPath(pathDraft)}
+              onKeyDown={event => { if (event.key === 'Enter') setPreviewPath(pathDraft); }} style={{ minWidth: 260 }} />
+          </label>}
           {hasAudioRules && <label style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             Simulate stored audio
             <select aria-label="Preview audio format" value={previewAudio} onChange={event => setPreviewAudio(event.target.value)}>
@@ -661,7 +683,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
                       ? <>is skipped, because block {note.winner + 1} in its Else if chain already played.</>
                     : <>
                       {note.outcome === 'skipped' ? 'is skipped' : 'plays its alternative'}
-                      {!previewGenre && !previewAudio && needsPlaybackInfo(note.condition)
+                      {!previewGenre && !previewAudio && !previewTag && !previewPath.trim() && needsPlaybackInfo(note.condition)
                         ? ', because the required playback metadata is unknown, as on Plex.'
                         : <>{' '}because this is not true: {describeCondition(note.condition)}.</>}
                     </>}
