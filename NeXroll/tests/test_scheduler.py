@@ -288,12 +288,12 @@ class DeferredWriteReportingTests(unittest.TestCase):
     def test_the_guard_records_and_clears_its_context(self):
         setting = SimpleNamespace()
 
-        with patch.object(self.scheduler, "_plex_active_session_count", return_value=1):
+        with patch.object(self.scheduler, "_plex_blocking_session_count", return_value=1):
             self.assertTrue(self.scheduler._defer_preroll_write(setting, "sequence schedule 32"))
         self.assertEqual(self.scheduler.deferred_write_state()["context"], "sequence schedule 32")
 
         # Playback stops: the wait is over and nothing is left advertised.
-        with patch.object(self.scheduler, "_plex_active_session_count", return_value=0):
+        with patch.object(self.scheduler, "_plex_blocking_session_count", return_value=0):
             self.assertFalse(self.scheduler._defer_preroll_write(setting, "sequence schedule 32"))
         self.assertIsNone(self.scheduler.deferred_write_state())
 

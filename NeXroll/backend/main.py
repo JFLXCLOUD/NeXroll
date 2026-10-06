@@ -2681,7 +2681,15 @@ async def _reject_url_in_static_path(request, call_next):
 # Start scheduler on app startup
 @app.on_event("startup")
 def startup_event():
-    # First: Ensure database schema is up-to-date (adds missing columns to legacy DBs)
+    # Random rotation survives restarts: kept beside the database, so on Docker
+    # it lives in the data volume.
+    try:
+        from backend.shuffle_bag import configure_persistence
+        configure_persistence(os.path.join(os.path.dirname(DB_PATH), "rotation_state.json"))
+    except Exception as e:
+        _file_log(f"Rotation state not loaded: {e}", level="WARNING")
+
+    # Ensure the database schema is up-to-date (adds missing columns to legacy DBs)
     try:
         ensure_schema()
     except Exception as e:
@@ -30316,18 +30324,23 @@ def _plugin_random_count(setting) -> int:
     return max(1, min(value, PLUGIN_RANDOM_COUNT_MAX))
 
 
-def _plugin_play_list(setting, paths: list, mode: str) -> list:
+def _plugin_play_list(setting, paths: list, mode: str, rotation=None) -> list:
     """The prerolls a plugin should play, in order.
 
     A random ("shuffle") list is a pool to pick from: NeXroll picks the
     configured number with the no-repeat rotation random sequence blocks use,
     so the whole category is heard before anything repeats. Everything else
     (sequences, in-order categories, single filler videos) plays in full.
+
+    ``rotation`` names where the pool came from, e.g. ("category", 4), so each
+    category keeps its own rotation. They used to share one, which started
+    over every time the active category changed.
     """
     if mode != "shuffle" or not paths:
         return list(paths)
     pool = list(dict.fromkeys(paths))
-    return shuffle_bag_sample(("plugin", "random-category"), pool, _plugin_random_count(setting))
+    key = ("plugin", "random-category", *rotation) if rotation else ("plugin", "random-category")
+    return shuffle_bag_sample(key, pool, _plugin_random_count(setting))
 
 
 @app.get("/plugin/intros")
@@ -30388,7 +30401,7 @@ def plugin_get_intros(
         # everything", so a Max Intros of 1 cut every sequence to its first block.
         whole_pool = (whole or "").strip().lower() in ("1", "true", "yes") or (item_id or "").strip() == "0"
         if not whole_pool:
-            paths = _plugin_play_list(db.query(models.Setting).first(), paths, mode)
+            paths = _plugin_play_list(db.query(models.Setting).first(), paths, mode, result.get("rotation"))
 
         base_url = str(request.base_url).rstrip("/")
         items = []
@@ -31049,6 +31062,7 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
                         return {
                             "paths": [os.path.abspath(p.path) for p in prerolls],
                             "mode": mode,
+                            "rotation": ("filler", cat_id),
                         }
                 except (ValueError, TypeError):
                     pass
@@ -31090,6 +31104,7 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
             return {
                 "paths": [os.path.abspath(p.path) for p in prerolls],
                 "mode": mode,
+                "rotation": ("category", category_id),
             }
 
     # --- 4. Pure category blend (active_category=None, active_schedule_id=None) ---
@@ -31121,7 +31136,8 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
                         if i < len(pl):
                             interleaved.append(pl[i])
                 if interleaved:
-                    return {"paths": interleaved, "mode": "shuffle"}
+                    return {"paths": interleaved, "mode": "shuffle",
+                            "rotation": ("blend", *sorted(s.id for s in blend_candidates))}
     except Exception:
         pass
 

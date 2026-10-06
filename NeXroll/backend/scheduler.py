@@ -744,6 +744,11 @@ class Scheduler:
         self._session_probe_at: Optional[datetime.datetime] = None
         self._session_probe_count: Optional[int] = None
         self._session_probe_ttl_seconds: float = 15.0
+        # Video sessions by key -> when NeXroll first saw them. A rewrite waits
+        # only for sessions seen within the window (see _count_sessions_in_preroll_window).
+        self._session_first_seen: dict = {}
+        self._session_probe_blocking: Optional[int] = None
+        self._preroll_window_seconds: float = 20 * 60.0
         self._deferred_write_since: Optional[datetime.datetime] = None
         self._deferred_write_context: Optional[str] = None
         # Paths currently published to Plex, so retention never deletes a file
@@ -1901,6 +1906,7 @@ class Scheduler:
             return self._session_probe_count
 
         count = None
+        blocking = None
         try:
             plex_url = getattr(setting, "plex_url", None)
             token = getattr(setting, "plex_token", None)
@@ -1919,13 +1925,46 @@ class Scheduler:
                     # child elements if the attribute is missing.
                     size = root.get("size")
                     count = int(size) if size is not None else len(list(root))
+                    blocking = self._count_sessions_in_preroll_window(root, now)
         except Exception as exc:
             _scheduler_verbose(f"Session probe failed: {exc}")
             count = None
+            blocking = None
 
         self._session_probe_at = now
         self._session_probe_count = count
+        self._session_probe_blocking = blocking
         return count
+
+    def _count_sessions_in_preroll_window(self, root, now) -> int:
+        """Sessions that may still be playing their prerolls.
+
+        Plex only plays prerolls before video, so music and photo sessions never
+        count. A video session counts until NeXroll has seen it for
+        ``_preroll_window_seconds``, longer than any preroll-and-trailer run, so
+        a movie well under way no longer holds up a rotation. How Plex shows a
+        preroll in /status/sessions doesn't matter here: whether the preroll is
+        its own session or the movie's, it is within the window.
+        """
+        seen = {}
+        for element in list(root):
+            if element.tag in ("Track", "Photo"):
+                continue
+            session = element.find("Session")
+            player = element.find("Player")
+            key = (element.get("sessionKey")
+                   or (session.get("id") if session is not None else None)
+                   or f"{element.get('ratingKey')}:{player.get('machineIdentifier') if player is not None else ''}")
+            seen[key] = self._session_first_seen.get(key, now)
+        # Forget sessions that ended, so a reused key starts a new window.
+        self._session_first_seen = seen
+        return sum(1 for first in seen.values()
+                   if (now - first).total_seconds() < self._preroll_window_seconds)
+
+    def _plex_blocking_session_count(self, setting) -> Optional[int]:
+        """Sessions a preroll-list rewrite could disturb, or None if unknown."""
+        self._plex_active_session_count(setting)
+        return self._session_probe_blocking
 
     def _defer_preroll_write(self, setting, context: str) -> bool:
         """True when a preroll-setting write must wait for playback to finish.
@@ -1948,7 +1987,7 @@ class Scheduler:
         if os.environ.get("NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES") == "1":
             return False
 
-        count = self._plex_active_session_count(setting)
+        count = self._plex_blocking_session_count(setting)
         if not count:
             if self._deferred_write_since is not None:
                 waited = (datetime.datetime.now() - self._deferred_write_since).total_seconds()
@@ -1964,7 +2003,8 @@ class Scheduler:
         if self._deferred_write_since is None:
             self._deferred_write_since = datetime.datetime.now()
             _scheduler_log(
-                f"Deferring preroll change ({context}): {count} Plex session(s) playing. "
+                f"Deferring preroll change ({context}): {count} Plex video session(s) started in the "
+                f"last {int(self._preroll_window_seconds // 60)} minutes may still be in their prerolls. "
                 f"Changing prerolls now would make Plex hang on its next preroll."
             )
         else:

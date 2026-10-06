@@ -53,6 +53,17 @@ def test_sequences_and_in_order_lists_play_in_full(mode):
     assert play(SimpleNamespace(plugin_random_count=1), seq, mode) == seq
 
 
+def test_each_category_keeps_its_own_rotation():
+    # They used to share one, so switching categories started it over.
+    _, play = helpers()
+    setting = SimpleNamespace(plugin_random_count=1)
+    other = [f"/q/{c}.mp4" for c in "xyz"]
+    heard = [play(setting, POOL, "shuffle", ("category", 1))[0] for _ in range(3)]
+    play(setting, other, "shuffle", ("category", 2))
+    heard += [play(setting, POOL, "shuffle", ("category", 1))[0] for _ in range(3)]
+    assert sorted(heard) == sorted(POOL)
+
+
 def test_an_empty_list_stays_empty():
     _, play = helpers()
     assert play(SimpleNamespace(plugin_random_count=1), [], "shuffle") == []

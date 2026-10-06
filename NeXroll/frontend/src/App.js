@@ -7239,15 +7239,15 @@ const DashboardTiles = {
             </div>
             <h3>{title || (waiting ? 'Waiting for playback' : 'Nothing applied')}</h3>
             <p>{title ? subtitle : (waiting
-              ? 'A preroll change is queued until playback finishes.'
+              ? 'A preroll change is queued until a movie that just started is past its prerolls.'
               : 'No category or sequence is currently active.')}</p>
             {waiting && (
               <p className="nx-schedule-waiting">
                 <Clock size={13} />
                 <span>
-                  The next preroll change is held until playback finishes
-                  {waitedFor ? ` (waiting ${waitedFor})` : ''}. Changing it mid-playback
-                  makes Plex hang.
+                  The next preroll change is held while a Plex movie that started in the last
+                  20 minutes may still be playing its prerolls{waitedFor ? ` (waiting ${waitedFor})` : ''}.
+                  Changing it then makes Plex hang. Music and movies already under way don't hold it up.
                 </span>
               </p>
             )}

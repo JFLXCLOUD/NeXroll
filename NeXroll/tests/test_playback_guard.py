@@ -106,6 +106,44 @@ class DeferPrerollWriteTests(unittest.TestCase):
             self.assertFalse(self.scheduler._defer_preroll_write(self.setting, "rotation"))
         self.assertIsNone(self.scheduler._deferred_write_since)
 
+    def test_music_and_photos_never_hold_up_a_rewrite(self):
+        xml = (b'<MediaContainer size="2">'
+               b'<Track sessionKey="1" type="track" title="A Song"/>'
+               b'<Photo sessionKey="2" type="photo"/>'
+               b'</MediaContainer>')
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=xml)):
+            self.assertFalse(self.scheduler._defer_preroll_write(self.setting, "rotation"))
+
+    def test_a_movie_well_under_way_stops_holding_up_a_rewrite(self):
+        # Prerolls only run at the start, so once NeXroll has watched a video
+        # session for the whole window, rewriting the list can't disturb it.
+        xml = b'<MediaContainer size="1"><Video sessionKey="7" type="movie"/></MediaContainer>'
+        self.scheduler._session_probe_ttl_seconds = 0
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=xml)):
+            self.assertTrue(self.scheduler._defer_preroll_write(self.setting, "rotation"))
+            self.scheduler._session_first_seen["7"] -= datetime.timedelta(minutes=21)
+            self.assertFalse(self.scheduler._defer_preroll_write(self.setting, "rotation"))
+
+    def test_a_new_movie_starts_its_own_window(self):
+        old = b'<MediaContainer size="1"><Video sessionKey="7" type="movie"/></MediaContainer>'
+        both = (b'<MediaContainer size="2"><Video sessionKey="7" type="movie"/>'
+                b'<Video sessionKey="8" type="movie"/></MediaContainer>')
+        self.scheduler._session_probe_ttl_seconds = 0
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=old)):
+            self.scheduler._defer_preroll_write(self.setting, "rotation")
+        self.scheduler._session_first_seen["7"] -= datetime.timedelta(minutes=30)
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=both)):
+            self.assertTrue(self.scheduler._defer_preroll_write(self.setting, "rotation"))
+
+    def test_an_ended_session_is_forgotten(self):
+        self.scheduler._session_probe_ttl_seconds = 0
+        with mock.patch("backend.scheduler.requests.get",
+                        return_value=response(content=b'<MediaContainer size="1"><Video sessionKey="7"/></MediaContainer>')):
+            self.scheduler._defer_preroll_write(self.setting, "rotation")
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=IDLE_XML)):
+            self.scheduler._defer_preroll_write(self.setting, "rotation")
+        self.assertEqual(self.scheduler._session_first_seen, {})
+
     def test_escape_hatch_env_var_disables_the_guard(self):
         original = os.environ.get("NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES")
         os.environ["NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES"] = "1"

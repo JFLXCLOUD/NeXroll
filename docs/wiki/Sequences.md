@@ -201,6 +201,18 @@ Example:
 /prerolls/logo.mp4,/prerolls/christmas/snow.mp4,/prerolls/christmas/tree.mp4
 ```
 
+## How often random picks change
+
+| | Plex | Jellyfin and Emby |
+|---|---|---|
+| **Random category schedule** | Plex gets the whole category and picks one itself before each movie. Plex's own pick can repeat. | NeXroll picks before each movie (or episode). |
+| **Sequence** | NeXroll picks and gives Plex a fixed list, then picks again every 10 minutes. Movies started within those 10 minutes get the same picks. | NeXroll picks before each movie (or episode). |
+| **In-order category** | Every preroll in the category plays, in order. | The same. |
+
+Wherever NeXroll picks, it doesn't repeat a preroll until every other one in the pool has played. Each random block, each category and each server keeps its own rotation. Adding, removing or disabling a preroll doesn't start the rotation over, and a restart picks up where it left off.
+
+**While Plex is playing:** Plex reads its preroll list as it goes, so changing the list while a movie's prerolls are playing makes Plex hang. NeXroll waits until every Plex movie started in the last 20 minutes is past its prerolls before it picks again. Music, photos and movies already under way don't hold it up.
+
 ## Example Sequences
 
 ### Holiday Mix
@@ -258,8 +270,9 @@ Example:
 
 ### Random Blocks Always Same
 
-- Plex caches prerolls — wait or restart Plex
-- Re-apply the schedule to refresh
+- On Plex, random blocks change every 10 minutes, not with every movie; see [How often random picks change](#how-often-random-picks-change)
+- A Plex movie started in the last 20 minutes holds the change back until it is past its prerolls
+- A random block can't vary if its category has only as many prerolls as the block plays
 
 ### Empty Sequence Error
 
