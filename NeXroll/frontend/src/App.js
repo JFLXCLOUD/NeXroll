@@ -74,7 +74,7 @@ import {
     Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, EyeOff, X, User, RefreshCcw, Menu,
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, TrendingUp, Server, Timer, ArrowUp, ArrowDown,
-    Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, HelpCircle,
+    Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, HelpCircle, MoreVertical,
     Music, Wand2, GitCompare, Square, Plug, GripVertical, Maximize2, Copy, GitBranch
   } from 'lucide-react';
 
@@ -4084,17 +4084,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  const handleCategorySortChange = (field) => {
-    if (categorySortField === field) {
-      // Toggle direction if clicking the same field
-      setCategorySortDirection(categorySortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      // New field, default to ascending
-      setCategorySortField(field);
-      setCategorySortDirection('asc');
-    }
-  };
-
   const handleApplyCategoryToPlex = async (categoryId, categoryName) => {
     const message = `Apply category "${categoryName}" to Plex?\n\nThis will send ALL prerolls from this category to Plex.`;
     if (!await showConfirm(message, { title: 'Apply to Plex', type: 'info', confirmText: 'Apply' })) return;
@@ -4306,8 +4295,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       return sum + (p.duration || 0);
     }, 0);
     
-    // Check if category has active schedules
-    const activeSchedules = schedules.filter(s => s.category_id === category.id);
+    // Schedules that use this category. Only enabled ones make it scheduled,
+    // matching the page's Scheduled count; disabled ones are named separately.
+    const usingSchedules = schedules.filter(s => s.category_id === category.id);
+    const activeSchedules = usingSchedules.filter(s => s.is_active);
     const hasActiveSchedules = activeSchedules.length > 0;
     
     // Last used (most recent schedule start_date)
@@ -4321,7 +4312,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       activeSchedules: activeSchedules.length,
       hasActiveSchedules,
       lastUsed,
-      scheduleNames: activeSchedules.map(s => s.name)
+      scheduleNames: activeSchedules.map(s => s.name),
+      disabledScheduleNames: usingSchedules.filter(s => !s.is_active).map(s => s.name)
     };
   };
 
@@ -5283,17 +5275,20 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   // Bulk selection handlers
+  // System categories can't be deleted, which is all a selection is for, so
+  // they can't be selected either.
   const toggleSelectCategory = (categoryId) => {
-    setSelectedCategoryIds(prev => 
-      prev.includes(categoryId) 
+    if (categories.some(c => c.id === categoryId && c.is_system)) return;
+    setSelectedCategoryIds(prev =>
+      prev.includes(categoryId)
         ? prev.filter(id => id !== categoryId)
         : [...prev, categoryId]
     );
   };
 
   const toggleSelectAll = () => {
-    const filteredIds = getFilteredCategories().map(c => c.id);
-    if (selectedCategoryIds.length === filteredIds.length) {
+    const filteredIds = getFilteredCategories().filter(c => !c.is_system).map(c => c.id);
+    if (filteredIds.length > 0 && filteredIds.every(id => selectedCategoryIds.includes(id))) {
       setSelectedCategoryIds([]);
     } else {
       setSelectedCategoryIds(filteredIds);
@@ -5309,57 +5304,21 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     const confirmMsg = `Delete ${selectedCategoryIds.length} selected categories?\n\nThis will also remove all associated schedules and preroll assignments.`;
     if (!await showConfirm(confirmMsg, { title: 'Delete Categories', type: 'danger', confirmText: 'Delete' })) return;
     
-    try {
-      await Promise.all(
-        selectedCategoryIds.map(id => 
-          fetch(apiUrl(`categories/${id}`), { method: 'DELETE' })
-        )
-      );
-      alert(`Successfully deleted ${selectedCategoryIds.length} categories!`);
-      setSelectedCategoryIds([]);
-      setBulkActionMode(false);
-      fetchData();
-    } catch (error) {
-      alert('Failed to delete some categories: ' + error.message);
-    }
-  };
-
-  const handleBulkApplyToPlex = async () => {
-    if (selectedCategoryIds.length === 0) {
-      alert('No categories selected');
-      return;
-    }
-    
-    const servers = getConnectedServers();
-    if (!servers.length) {
-      alert('No media server connected. Connect to Plex, Jellyfin, or Emby first.');
-      return;
-    }
-
-    const confirmMsg = `Apply ${selectedCategoryIds.length} selected categories to ${describeServers(servers)}?`;
-    if (!await showConfirm(confirmMsg, { title: 'Apply Categories', type: 'info', confirmText: 'Apply' })) return;
-    
-    try {
-      // One request per server that needs a push. Emby takes none - its plugin
-      // reads the active category these calls set.
-      const endpoints = [];
-      if (servers.includes('plex')) endpoints.push('apply-to-plex');
-      if (servers.includes('jellyfin')) endpoints.push('apply-to-jellyfin');
-      if (!endpoints.length) endpoints.push('apply-to-jellyfin'); // Emby-only: sets the active category
-      await Promise.all(
-        selectedCategoryIds.flatMap(id =>
-          endpoints.map(endpoint =>
-            fetch(apiUrl(`categories/${id}/${endpoint}`), { method: 'POST' })
-          )
-        )
-      );
-      alert(`Successfully applied ${selectedCategoryIds.length} categories to ${describeServers(servers)}!`);
-      setSelectedCategoryIds([]);
-      setBulkActionMode(false);
-      fetchData();
-    } catch (error) {
-      alert('Failed to apply some categories: ' + error.message);
-    }
+    // fetch() doesn't throw on a refusal (a system category answers 403), so
+    // count the responses rather than reporting every request as a deletion.
+    const results = await Promise.all(
+      selectedCategoryIds.map(id =>
+        fetch(apiUrl(`categories/${id}`), { method: 'DELETE' }).then(res => res.ok).catch(() => false)
+      )
+    );
+    const deleted = results.filter(Boolean).length;
+    const failed = results.length - deleted;
+    showAlert(failed
+      ? `Deleted ${deleted} categor${deleted === 1 ? 'y' : 'ies'}; ${failed} could not be deleted`
+      : `Deleted ${deleted} categor${deleted === 1 ? 'y' : 'ies'}`, failed ? 'error' : 'success');
+    setSelectedCategoryIds([]);
+    setBulkActionMode(false);
+    fetchData();
   };
 
   // Get filtered categories based on active filter
@@ -5369,10 +5328,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // Apply category filter
     switch (categoryFilter) {
       case 'active':
-        filtered = filtered.filter(c => {
-          const hasSchedules = schedules.some(s => s.category_id === c.id);
-          return hasSchedules;
-        });
+        filtered = filtered.filter(c => getCategoryStats(c).hasActiveSchedules);
         break;
       case 'hasPrerolls':
         filtered = filtered.filter(c => {
@@ -5403,6 +5359,29 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
     
     return filtered;
+  };
+
+  // Categories in the order the sort menu asks for, with their stats. The grid
+  // used to ignore the sort; both views use this now.
+  const sortCategoryList = (list) => {
+    const direction = categorySortDirection === 'desc' ? -1 : 1;
+    const byName = (a, b) => a.category.name.localeCompare(b.category.name, undefined, { sensitivity: 'base' });
+    return list
+      .map(category => ({ category, stats: getCategoryStats(category) }))
+      .sort((a, b) => {
+        if (categorySortField === 'prerolls') return (a.stats.totalPrerolls - b.stats.totalPrerolls) * direction || byName(a, b);
+        if (categorySortField === 'status') return (a.stats.activeSchedules - b.stats.activeSchedules) * direction || byName(a, b);
+        return byName(a, b) * direction;
+      });
+  };
+
+  // The library, filtered to one category. NeX-Up's own items show there even
+  // while they're hidden from the rest of the library.
+  const viewCategoryInLibrary = (category) => {
+    setFilterCategory(String(category.id));
+    setFilterMatchStatus('');
+    setCurrentPage(1);
+    setActiveTab('library');
   };
 
   // Format duration helper
@@ -6363,6 +6342,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   const handleEditCategory = (category) => {
+    if (!category || category.is_system) return;
     setEditingCategory(category);
     setNewCategory({ name: category.name, description: category.description || '' });
     try { loadCategoryPrerolls(category.id); } catch (e) {}
@@ -20776,34 +20756,6 @@ const DashboardTiles = {
           >
             <RefreshCw size={15} /> Refresh Holiday Dates
           </button>
-          <button
-            type="button"
-            onClick={() => setBulkActionMode(!bulkActionMode)}
-            className={`button ${bulkActionMode ? 'button-warn' : 'button-outline'}`}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-          >
-            <ListChecks size={15} /> {bulkActionMode ? 'Exit Bulk Select' : 'Bulk Select'}
-          </button>
-          {bulkActionMode && selectedCategoryIds.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={handleBulkApplyToPlex}
-                className="button button-info"
-                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-              >
-                <Upload size={15} /> Apply Selected ({selectedCategoryIds.length})
-              </button>
-              <button
-                type="button"
-                onClick={handleBulkDelete}
-                className="button button-danger"
-                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-              >
-                <Trash size={15} /> Delete Selected ({selectedCategoryIds.length})
-              </button>
-            </>
-          )}
         </div>
         
         {/* Search, Filter and View Controls */}
@@ -20812,6 +20764,7 @@ const DashboardTiles = {
             type="text"
             className="nx-cat-search"
             placeholder="Search categories by name or description..."
+            aria-label="Search categories"
             value={categorySearchQuery}
             onChange={(e) => setCategorySearchQuery(e.target.value)}
           />
@@ -20820,10 +20773,11 @@ const DashboardTiles = {
             className="nx-cat-filter"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
+            aria-label="Show"
           >
-            <option value="all">All Categories</option>
-            <option value="active">Active Only</option>
-            <option value="hasPrerolls">Has Prerolls</option>
+            <option value="all">All categories</option>
+            <option value="active">Scheduled</option>
+            <option value="hasPrerolls">Has prerolls</option>
             <option value="empty">Empty</option>
             <option value="system">System</option>
           </select>
@@ -20842,7 +20796,18 @@ const DashboardTiles = {
             <option value="name:desc">Name Z-A</option>
             <option value="prerolls:desc">Most prerolls</option>
             <option value="prerolls:asc">Fewest prerolls</option>
+            <option value="status:desc">Most schedules</option>
           </select>
+
+          <button
+            type="button"
+            className={`nx-cat-select-toggle${bulkActionMode ? ' is-active' : ''}`}
+            onClick={() => { setBulkActionMode(!bulkActionMode); setSelectedCategoryIds([]); setCategoryMenuOpen(null); }}
+            aria-pressed={bulkActionMode}
+            title="Select categories to delete several at once"
+          >
+            <ListChecks size={15} /> {bulkActionMode ? 'Done' : 'Select'}
+          </button>
 
           {/* View Toggle */}
           <div className="view-toggle">
@@ -20851,6 +20816,7 @@ const DashboardTiles = {
                 className={`view-btn ${categoryView === 'grid' ? 'active' : ''}`}
                 onClick={() => setCategoryView('grid')}
                 title="Grid view"
+                aria-pressed={categoryView === 'grid'}
               >
                 <span className="view-icon" style={{ display: 'inline-flex' }}><LayoutGrid size={15} /></span>
                 Grid
@@ -20860,731 +20826,290 @@ const DashboardTiles = {
                 className={`view-btn ${categoryView === 'list' ? 'active' : ''}`}
                 onClick={() => setCategoryView('list')}
                 title="List view"
+                aria-pressed={categoryView === 'list'}
               >
                 <span className="view-icon" style={{ display: 'inline-flex' }}><List size={15} /></span>
                 List
               </button>
             </div>
         </div>
-        
-        {/* Bulk Selection Info */}
+
+        {/* Bulk selection */}
         {bulkActionMode && (
           <div className="nx-cat-bulkbar">
-            <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <Lightbulb size={16} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              <span><strong>Bulk Selection Mode:</strong> Click categories to select them, then use the action buttons above.
-              {selectedCategoryIds.length > 0 && ` (${selectedCategoryIds.length} selected)`}</span>
+            <span>
+              {selectedCategoryIds.length
+                ? `${selectedCategoryIds.length} selected`
+                : 'Click categories to select them. System categories can\'t be selected.'}
             </span>
-            {getFilteredCategories().length > 0 && (
-              <button
-                type="button"
-                onClick={toggleSelectAll}
-                className="button button-secondary"
-                style={{ padding: '0.3rem 0.75rem', fontSize: '0.82rem' }}
-              >
-                {selectedCategoryIds.length === getFilteredCategories().length ? 'Deselect All' : 'Select All'}
+            {getFilteredCategories().some(c => !c.is_system) && (
+              <button type="button" className="button button-secondary" onClick={toggleSelectAll}>
+                {getFilteredCategories().filter(c => !c.is_system).every(c => selectedCategoryIds.includes(c.id))
+                  ? 'Deselect all'
+                  : 'Select all'}
               </button>
             )}
+            <button
+              type="button"
+              className="button button-danger"
+              onClick={handleBulkDelete}
+              disabled={selectedCategoryIds.length === 0}
+            >
+              <Trash size={14} /> Delete{selectedCategoryIds.length ? ` ${selectedCategoryIds.length}` : ''}
+            </button>
           </div>
         )}
 
-        {/* Quick Stats Bar */}
-        {categoryView === 'grid' && (
-          <div className="nx-category-legacy-stats" style={{
-            display: 'flex',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '0.5rem 1.5rem',
-            padding: '0.75rem 1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '0.5rem',
-            border: '1px solid var(--border-color)',
-            marginBottom: '1rem',
-            fontSize: '0.9rem',
-            color: 'var(--text-secondary)'
-          }}>
-            {(() => {
-              const all = getFilteredCategories();
-              const scheduled = all.filter(c => schedules.some(s => s.is_active && s.category_id === c.id));
-              const withPrerolls = all.filter(c => {
-                const stats = getCategoryStats(c);
-                return stats.totalPrerolls > 0;
-              });
-              const empty = all.filter(c => {
-                const stats = getCategoryStats(c);
-                return stats.totalPrerolls === 0;
-              });
-              return (
-                <>
-                  <span><strong>{all.length}</strong> categories</span>
-                  <span style={{ color: '#22c55e' }}><Calendar size={14} style={{ marginRight: '0.35rem', verticalAlign: 'middle' }} /><strong>{scheduled.length}</strong> scheduled</span>
-                  <span style={{ color: '#3b82f6' }}><Video size={14} style={{ marginRight: '0.35rem', verticalAlign: 'middle' }} /><strong>{withPrerolls.length}</strong> with prerolls</span>
-                  <span style={{ color: '#6b7280' }}><Folder size={14} style={{ marginRight: '0.35rem', verticalAlign: 'middle' }} /><strong>{empty.length}</strong> empty</span>
-                </>
-              );
-            })()}
-          </div>
-        )}
-        
-        {/* Grid View */}
-        <div className="nx-cat-gridview" style={{ display: categoryView === 'grid' ? 'block' : 'none' }}>
-          {(() => {
-            const filtered = getFilteredCategories();
-            
-            if (filtered.length === 0) {
-              return (
-                <div className="nx-empty">
-                  {categorySearchQuery ? (
+        {(() => {
+          const sorted = sortCategoryList(getFilteredCategories());
+          if (sorted.length === 0) {
+            return (
+              <div className="nx-empty">
+                {categorySearchQuery ? (
+                  <>
+                    <span className="nx-empty-icon"><Search size={48} /></span>
+                    <h3 className="nx-empty-title">No categories found</h3>
+                    <p className="nx-empty-text">Nothing matches "{categorySearchQuery}". Try a different search.</p>
+                  </>
+                ) : categoryFilter !== 'all' ? (
+                  <>
+                    <span className="nx-empty-icon"><Folder size={48} /></span>
+                    <h3 className="nx-empty-title">No categories here</h3>
+                    <p className="nx-empty-text">No category matches this filter. Choose All categories to see them all.</p>
+                  </>
+                ) : (
+                  <>
+                    <span className="nx-empty-icon"><Folder size={48} /></span>
+                    <h3 className="nx-empty-title">No categories yet</h3>
+                    <p className="nx-empty-text">Create a category to organize your prerolls.</p>
+                  </>
+                )}
+              </div>
+            );
+          }
+
+          // Your categories first, then the ones NeX-Up creates and fills.
+          // They used to be split into Scheduled / With prerolls / Empty, and a
+          // scheduled category with no prerolls showed up twice.
+          const groups = [
+            { key: 'yours', title: 'Your categories', items: sorted.filter(row => !row.category.is_system) },
+            {
+              key: 'system',
+              title: 'System categories',
+              hint: 'Created and filled automatically by NeX-Up. You can view and apply them, but not edit or delete them.',
+              items: sorted.filter(row => row.category.is_system),
+            },
+          ].filter(group => group.items.length);
+
+          const openCategory = (category) => {
+            if (bulkActionMode) { toggleSelectCategory(category.id); return; }
+            if (category.is_system) viewCategoryInLibrary(category);
+            else handleEditCategory(category);
+          };
+
+          const prerollLabel = (n) => `${n} preroll${n === 1 ? '' : 's'}`;
+          const scheduleTitle = (stats) => [
+            stats.scheduleNames.length ? `Scheduled by: ${stats.scheduleNames.join(', ')}` : '',
+            stats.disabledScheduleNames.length ? `Disabled: ${stats.disabledScheduleNames.join(', ')}` : '',
+          ].filter(Boolean).join('\n') || undefined;
+          const renderStatus = (stats) => {
+            if (stats.hasActiveSchedules) {
+              const label = `${stats.activeSchedules} schedule${stats.activeSchedules === 1 ? '' : 's'}`;
+              return stats.totalPrerolls === 0
+                ? <span className="nx-cat-status is-warn" title={`${scheduleTitle(stats)}\nThere is nothing in it to play.`}><AlertTriangle size={12} /> {label}, empty</span>
+                : <span className="nx-cat-status is-scheduled" title={scheduleTitle(stats)}><Calendar size={12} /> {label}</span>;
+            }
+            if (stats.totalPrerolls === 0) return <span className="nx-cat-status is-empty" title={scheduleTitle(stats)}>Empty</span>;
+            return <span className="nx-cat-status" title={scheduleTitle(stats)}>Not scheduled</span>;
+          };
+
+          const renderMenu = (category) => (
+            <div className="nx-cat-menu-wrap">
+              <button
+                type="button"
+                className="nx-cat-iconbtn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCategoryMenuOpen(categoryMenuOpen === category.id ? null : category.id);
+                }}
+                aria-haspopup="menu"
+                aria-expanded={categoryMenuOpen === category.id}
+                aria-label={`More actions for ${category.name}`}
+                title="More actions"
+              >
+                <MoreVertical size={15} />
+              </button>
+              {categoryMenuOpen === category.id && (
+                <div className="nx-cat-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                  {!category.is_system && (
+                    <button type="button" role="menuitem" onClick={() => { setCategoryMenuOpen(null); handleEditCategory(category); }}>
+                      <Edit size={14} /> Edit
+                    </button>
+                  )}
+                  <button type="button" role="menuitem" onClick={() => { setCategoryMenuOpen(null); viewCategoryInLibrary(category); }}>
+                    <Library size={14} /> View in Library
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={getConnectedServers().length === 0 || applyingToServer}
+                    onClick={() => { setCategoryMenuOpen(null); handleApplyCategoryToActiveServer(category.id, category.name); }}
+                    title="Send this category to your media server now. A running schedule replaces it on its next check."
+                  >
+                    <Upload size={14} /> Apply to server now
+                  </button>
+                  {!category.is_system && (
                     <>
-                      <span className="nx-empty-icon"><Search size={48} /></span>
-                      <h3 className="nx-empty-title">No categories found</h3>
-                      <p className="nx-empty-text">Nothing matches "{categorySearchQuery}". Try a different search, or create a new category below.</p>
-                    </>
-                  ) : (
-                    <>
-                      <span className="nx-empty-icon"><Folder size={48} /></span>
-                      <h3 className="nx-empty-title">No categories yet</h3>
-                      <p className="nx-empty-text">Create your first category below to organize your prerolls.</p>
+                      <span className="nx-cat-menu-sep" role="separator" />
+                      <button type="button" role="menuitem" className="is-danger" onClick={() => { setCategoryMenuOpen(null); handleDeleteCategory(category.id); }}>
+                        <Trash size={14} /> Delete
+                      </button>
                     </>
                   )}
                 </div>
-              );
-            }
-
-            // Split categories into groups
-            const scheduledCategories = filtered.filter(c => schedules.some(s => s.is_active && s.category_id === c.id));
-            const withPrerollsCategories = filtered.filter(c => {
-              const stats = getCategoryStats(c);
-              return stats.totalPrerolls > 0 && !schedules.some(s => s.is_active && s.category_id === c.id);
-            });
-            const emptyCategories = filtered.filter(c => {
-              const stats = getCategoryStats(c);
-              return stats.totalPrerolls === 0;
-            });
-
-            // Section header helper
-            const renderCategorySectionHeader = (title, icon, count, bgColor, borderColor) => (
-              <div className="nx-category-section-head" style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.75rem 1rem',
-                background: bgColor,
-                borderRadius: '0.5rem',
-                border: `1px solid ${borderColor}`,
-                marginTop: '1.5rem',
-                marginBottom: '0.75rem'
-              }}>
-                {icon}
-                <span style={{ fontWeight: 600, fontSize: '1rem' }}>{title}</span>
-                <span style={{
-                  backgroundColor: borderColor,
-                  color: 'white',
-                  padding: '0.15rem 0.6rem',
-                  borderRadius: '1rem',
-                  fontSize: '0.8rem',
-                  fontWeight: 600
-                }}>
-                  {count}
-                </span>
-              </div>
-            );
-
-            // Card renderer with accent border - condensed version
-            const renderCategoryCard = (category, accentColor) => {
-            // Calculate statistics for this category
-            const stats = getCategoryStats(category);
-            const isSelected = selectedCategoryIds.includes(category.id);
-            
-            return (
-            <article
-              className="nx-category-card"
-              key={category.id} 
-              onClick={() => bulkActionMode ? toggleSelectCategory(category.id) : handleEditCategory(category)}
-              style={{ 
-                border: `2px solid ${isSelected && bulkActionMode ? '#ffc107' : 'var(--border-color)'}`, 
-                borderLeft: `4px solid ${accentColor}`,
-                padding: '0.75rem 1rem', 
-                borderRadius: '8px', 
-                backgroundColor: isSelected && bulkActionMode ? 'rgba(255, 193, 7, 0.1)' : 'var(--card-bg)',
-                boxShadow: isSelected && bulkActionMode ? '0 4px 12px rgba(255, 193, 7, 0.3)' : '0 1px 3px rgba(0,0,0,0.08)',
-                transition: 'all 0.2s',
-                cursor: 'pointer',
-                position: 'relative',
-                zIndex: categoryMenuOpen === category.id ? 100 : 1
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 3px 6px rgba(0,0,0,0.12)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
-              }}
-            >
-              {/* Bulk Selection Checkbox */}
-              {bulkActionMode && (
-                <div style={{
-                  position: 'absolute',
-                  top: '0.4rem',
-                  left: '0.4rem',
-                  width: '1.25rem',
-                  height: '1.25rem',
-                  borderRadius: '4px',
-                  backgroundColor: isSelected ? '#ffc107' : 'var(--bg-color)',
-                  border: '2px solid ' + (isSelected ? '#ffc107' : 'var(--border-color)'),
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '0.8rem',
-                  fontWeight: 'bold',
-                  color: isSelected ? 'white' : 'transparent'
-                }}>
-                  
-                </div>
               )}
-              
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {/* Name and preroll count inline */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
-                    <h3 style={{ 
-                      margin: 0, 
-                      fontSize: '1rem', 
-                      color: 'var(--text-color)',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis'
-                    }}>{category.name}</h3>
-                    <span style={{ 
-                      fontSize: '0.7rem', 
-                      padding: '0.15rem 0.4rem',
-                      borderRadius: '10px',
-                      backgroundColor: stats.totalPrerolls > 0 ? '#28a745' : '#6c757d',
-                      color: 'white',
-                      fontWeight: '600',
-                      flexShrink: 0
-                    }}>
-                      {stats.totalPrerolls}
+            </div>
+          );
+
+          const renderSelectBox = (category, isSelected) => (
+            bulkActionMode && !category.is_system
+              ? <span className={`nx-cat-check${isSelected ? ' is-on' : ''}`} aria-hidden="true">{isSelected && <Check size={12} />}</span>
+              : null
+          );
+
+          const mainLabel = (category) => (
+            bulkActionMode
+              ? (category.is_system ? `${category.name} (system category, can't be selected)` : `Select ${category.name}`)
+              : category.is_system ? `View ${category.name} in the library` : `Edit ${category.name}`
+          );
+
+          const renderCard = ({ category, stats }) => {
+            const isSelected = selectedCategoryIds.includes(category.id);
+            return (
+              <article
+                key={category.id}
+                className={`nx-cat-card${category.is_system ? ' is-system' : ''}${isSelected ? ' is-selected' : ''}${categoryMenuOpen === category.id ? ' has-menu' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="nx-cat-card-main"
+                  onClick={() => openCategory(category)}
+                  aria-label={mainLabel(category)}
+                  aria-pressed={bulkActionMode && !category.is_system ? isSelected : undefined}
+                  disabled={bulkActionMode && category.is_system}
+                >
+                  <span className="nx-cat-card-title">
+                    {renderSelectBox(category, isSelected)}
+                    <span className="nx-cat-name">{category.name}</span>
+                    {category.is_system && <span className="nx-cat-badge" title="Managed by NeX-Up; can't be edited or deleted"><Lock size={10} /> System</span>}
+                  </span>
+                  {category.description && <span className="nx-cat-desc">{category.description}</span>}
+                  <span className="nx-cat-card-foot">
+                    <span className="nx-cat-meta"><Film size={13} /> {prerollLabel(stats.totalPrerolls)}</span>
+                    {stats.totalDuration > 0 && <span className="nx-cat-meta"><Clock size={13} /> {formatDuration(stats.totalDuration)}</span>}
+                    {renderStatus(stats)}
+                  </span>
+                </button>
+                {!bulkActionMode && renderMenu(category)}
+              </article>
+            );
+          };
+
+          const sortHeader = (field, label, defaultDirection = 'asc') => {
+            const active = categorySortField === field;
+            return (
+              <button
+                type="button"
+                className={`nx-cats-sort${active ? ' is-active' : ''}`}
+                onClick={() => {
+                  if (active) setCategorySortDirection(categorySortDirection === 'asc' ? 'desc' : 'asc');
+                  else { setCategorySortField(field); setCategorySortDirection(defaultDirection); }
+                }}
+                aria-label={`Sort by ${label.toLowerCase()}`}
+              >
+                {label}
+                {active && (categorySortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+              </button>
+            );
+          };
+
+          const renderRow = ({ category, stats }) => {
+            const isSelected = selectedCategoryIds.includes(category.id);
+            return (
+              <article
+                key={category.id}
+                className={`nx-cats-row${category.is_system ? ' is-system' : ''}${isSelected ? ' is-selected' : ''}${categoryMenuOpen === category.id ? ' has-menu' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="nx-cats-row-main"
+                  onClick={() => openCategory(category)}
+                  aria-label={mainLabel(category)}
+                  aria-pressed={bulkActionMode && !category.is_system ? isSelected : undefined}
+                  disabled={bulkActionMode && category.is_system}
+                >
+                  <span className="nx-cats-row-name">
+                    <span className="nx-cat-card-title">
+                      {renderSelectBox(category, isSelected)}
+                      <span className="nx-cat-name">{category.name}</span>
+                      {category.is_system && <span className="nx-cat-badge" title="Managed by NeX-Up; can't be edited or deleted"><Lock size={10} /> System</span>}
                     </span>
-                    {category.is_system && (
-                      <span
-                        style={{
-                          fontSize: '0.7rem',
-                          padding: '0.1rem 0.4rem',
-                          borderRadius: '999px',
-                          border: '1px solid var(--border-color)',
-                          color: 'var(--text-secondary)',
-                          fontWeight: '600',
-                          flexShrink: 0
-                        }}
-                        title="Managed automatically by NeXroll; cannot be edited or deleted"
-                      >
-                        System
-                      </span>
-                    )}
-                  </div>
-
-                  <p style={{
-                    margin: '0 0 0.5rem',
-                    fontSize: '0.8rem',
-                    color: 'var(--text-secondary)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical'
-                  }}>
-                    {category.description || <em style={{ opacity: 0.6 }}>No description</em>}
-                  </p>
-
-                  {/* Secondary info badges */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                    {stats.totalDuration > 0 && (
-                      <span style={{ 
-                        fontSize: '0.7rem', 
-                        padding: '0.1rem 0.35rem',
-                        borderRadius: '8px',
-                        backgroundColor: 'rgba(23, 162, 184, 0.15)',
-                        color: '#17a2b8',
-                        fontWeight: '500'
-                      }}>
-                        {formatDuration(stats.totalDuration)}
-                      </span>
-                    )}
-                    {stats.hasActiveSchedules && (
-                      <span style={{ 
-                        fontSize: '0.7rem', 
-                        padding: '0.1rem 0.35rem',
-                        borderRadius: '8px',
-                        backgroundColor: 'rgba(255, 193, 7, 0.15)',
-                        color: '#d97706',
-                        fontWeight: '500'
-                      }}
-                      title={`Active Schedules: ${stats.scheduleNames.join(', ')}`}
-                      >
-                        <Calendar size={10} style={{ marginRight: '0.2rem', verticalAlign: 'middle' }} />
-                        {stats.activeSchedules}
-                      </span>
-                    )}
-                  </div>
+                    {category.description && <span className="nx-cat-desc">{category.description}</span>}
+                  </span>
+                  <span className="nx-cats-row-cell is-num">
+                    <Film size={13} className="nx-cats-cell-icon" /> {stats.totalPrerolls}<span className="nx-cats-unit"> preroll{stats.totalPrerolls === 1 ? '' : 's'}</span>
+                  </span>
+                  <span className="nx-cats-row-cell is-num">
+                    {stats.totalDuration > 0
+                      ? <><Clock size={13} className="nx-cats-cell-icon" /> {formatDuration(stats.totalDuration)}</>
+                      : <span className="nx-cats-dash">—</span>}
+                  </span>
+                  <span className="nx-cats-row-cell">{renderStatus(stats)}</span>
+                </button>
+                <div className="nx-cats-row-actions">
+                  {!bulkActionMode && !category.is_system && (
+                    <>
+                      <button type="button" className="nx-cat-iconbtn" onClick={() => handleEditCategory(category)} title="Edit category" aria-label={`Edit ${category.name}`}>
+                        <Edit size={14} />
+                      </button>
+                      <button type="button" className="nx-cat-iconbtn is-danger" onClick={() => handleDeleteCategory(category.id)} title="Delete category" aria-label={`Delete ${category.name}`}>
+                        <Trash size={14} />
+                      </button>
+                    </>
+                  )}
+                  {!bulkActionMode && renderMenu(category)}
                 </div>
-                
-                {/* Quick Actions Menu */}
-                {!bulkActionMode && (
-                  <div style={{ position: 'relative', flexShrink: 0 }}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCategoryMenuOpen(categoryMenuOpen === category.id ? null : category.id);
-                      }}
-                      className="nx-iconbtn"
-                      title="More actions"
-                      style={{ fontSize: '1.1rem', padding: '0.25rem' }}
-                    >
-                      ⋮
-                    </button>
-                    
-                    {/* Dropdown Menu */}
-                    {categoryMenuOpen === category.id && (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          right: 0,
-                          top: '100%',
-                          marginTop: '0.25rem',
-                          backgroundColor: 'var(--card-bg)',
-                          border: '2px solid var(--border-color)',
-                          borderRadius: '8px',
-                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                          zIndex: 1000,
-                          minWidth: '160px',
-                          overflow: 'hidden'
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          onClick={() => {
-                            handleEditCategory(category);
-                            setCategoryMenuOpen(null);
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '0.6rem 0.85rem',
-                            border: 'none',
-                            backgroundColor: 'transparent',
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                            fontSize: '0.85rem',
-                            color: 'var(--text-color)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem'
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
-                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                        >
-                          <Edit size={14} /> Edit
-                        </button>
-                        <button
-                          onClick={() => {
-                            handleApplyCategoryToActiveServer(category.id, category.name);
-                            setCategoryMenuOpen(null);
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '0.6rem 0.85rem',
-                            border: 'none',
-                            backgroundColor: 'transparent',
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                            fontSize: '0.85rem',
-                            color: 'var(--text-color)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem'
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
-                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                        >
-                          <Film size={14} /> Apply to Server
-                        </button>
-                        <div style={{ borderTop: '1px solid var(--border-color)', margin: '0.2rem 0' }} />
-                        <button
-                          onClick={() => {
-                            handleDeleteCategory(category.id);
-                            setCategoryMenuOpen(null);
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '0.6rem 0.85rem',
-                            border: 'none',
-                            backgroundColor: 'transparent',
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                            fontSize: '0.85rem',
-                            color: '#dc3545',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem'
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(220, 53, 69, 0.1)'}
-                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                        >
-                          <Trash size={14} /> Delete
-                        </button>
+              </article>
+            );
+          };
+
+          return (
+            <div className={`nx-cats is-${categoryView}`}>
+              {groups.map(group => (
+                <section key={group.key} className="nx-cats-group" aria-label={group.title}>
+                  <header className="nx-cats-group-head">
+                    <h3>{group.title} <span className="nx-cats-count">{group.items.length}</span></h3>
+                    {group.hint && <p>{group.hint}</p>}
+                  </header>
+                  {categoryView === 'grid'
+                    ? <div className="nx-cats-grid">{group.items.map(renderCard)}</div>
+                    : (
+                      <div className="nx-cats-list">
+                        <div className="nx-cats-head">
+                          <span>{sortHeader('name', 'Name')}</span>
+                          <span>{sortHeader('prerolls', 'Prerolls', 'desc')}</span>
+                          <span>Length</span>
+                          <span>{sortHeader('status', 'Schedules', 'desc')}</span>
+                          <span />
+                        </div>
+                        {group.items.map(renderRow)}
                       </div>
                     )}
-                  </div>
-                )}
-              </div>
-            </article>
+                </section>
+              ))}
+            </div>
           );
-            };
-
-            return (
-              <>
-                {/* Scheduled Categories Section */}
-                {scheduledCategories.length > 0 && (
-                  <>
-                    {renderCategorySectionHeader(
-                      'Scheduled Categories',
-                      <Calendar size={18} style={{ color: '#22c55e' }} />,
-                      scheduledCategories.length,
-                      'rgba(34, 197, 94, 0.1)',
-                      '#22c55e'
-                    )}
-                    <div className="nx-category-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
-                      {scheduledCategories.map(category => renderCategoryCard(category, '#22c55e'))}
-                    </div>
-                  </>
-                )}
-
-                {/* With Prerolls Section */}
-                {withPrerollsCategories.length > 0 && (
-                  <>
-                    {renderCategorySectionHeader(
-                      'Categories with Prerolls',
-                      <Video size={18} style={{ color: '#3b82f6' }} />,
-                      withPrerollsCategories.length,
-                      'rgba(59, 130, 246, 0.1)',
-                      '#3b82f6'
-                    )}
-                    <div className="nx-category-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
-                      {withPrerollsCategories.map(category => renderCategoryCard(category, '#3b82f6'))}
-                    </div>
-                  </>
-                )}
-
-                {/* Empty Categories Section */}
-                {emptyCategories.length > 0 && (
-                  <>
-                    {renderCategorySectionHeader(
-                      'Empty Categories',
-                      <Folder size={18} style={{ color: '#6b7280' }} />,
-                      emptyCategories.length,
-                      'rgba(107, 114, 128, 0.1)',
-                      '#6b7280'
-                    )}
-                    <div className="nx-category-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
-                      {emptyCategories.map(category => renderCategoryCard(category, '#6b7280'))}
-                    </div>
-                  </>
-                )}
-              </>
-            );
-          })()}
-        </div>
-        
-        {/* List View. Below 768px the .preroll-table CSS converts this to a
-            stacked-card layout (no horizontal scroll). The .nx-cat-tablewrap
-            scroll container is a safety net for the in-between widths. Do NOT
-            set a table min-width here — it overrides that mobile card-stack and
-            forces horizontal overflow on phones. */}
-        <div className="nx-cat-tablewrap" style={{ display: categoryView === 'list' ? 'block' : 'none' }}>
-          <table className="preroll-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                {bulkActionMode && (
-                  <th style={{ textAlign: 'center', padding: '0.75rem', borderBottom: '2px solid var(--border-color)', width: '50px' }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedCategoryIds.length === getFilteredCategories().length && getFilteredCategories().length > 0}
-                      onChange={toggleSelectAll}
-                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                    />
-                  </th>
-                )}
-                <th 
-                  style={{ 
-                    textAlign: 'left', 
-                    padding: '0.75rem', 
-                    borderBottom: '2px solid var(--border-color)',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
-                  onClick={() => handleCategorySortChange('name')}
-                  title="Click to sort by name"
-                >
-                  Name {categorySortField === 'name' && (categorySortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-                <th style={{ textAlign: 'left', padding: '0.75rem', borderBottom: '2px solid var(--border-color)' }}>Description</th>
-                <th 
-                  style={{ 
-                    textAlign: 'center', 
-                    padding: '0.75rem', 
-                    borderBottom: '2px solid var(--border-color)',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
-                  onClick={() => handleCategorySortChange('prerolls')}
-                  title="Click to sort by preroll count"
-                >
-                  Prerolls {categorySortField === 'prerolls' && (categorySortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-                <th style={{ textAlign: 'center', padding: '0.75rem', borderBottom: '2px solid var(--border-color)' }}>Duration</th>
-                <th 
-                  style={{ 
-                    textAlign: 'center', 
-                    padding: '0.75rem', 
-                    borderBottom: '2px solid var(--border-color)',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
-                  onClick={() => handleCategorySortChange('status')}
-                  title="Click to sort by status"
-                >
-                  Status {categorySortField === 'status' && (categorySortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-                <th style={{ textAlign: 'center', padding: '0.75rem', borderBottom: '2px solid var(--border-color)' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(() => {
-                let filtered = getFilteredCategories();
-                
-                // Apply sorting
-                filtered = filtered.sort((a, b) => {
-                  let compareA, compareB;
-                  
-                  switch(categorySortField) {
-                    case 'name':
-                      compareA = a.name.toLowerCase();
-                      compareB = b.name.toLowerCase();
-                      break;
-                    case 'prerolls':
-                      // Calculate actual preroll counts including primary and secondary associations
-                      const aPrimaryCount = prerolls.filter(p => p.category_id === a.id).length;
-                      const aSecondaryCount = prerolls.filter(p => 
-                        p.categories && 
-                        p.categories.some(c => c.id === a.id) &&
-                        p.category_id !== a.id
-                      ).length;
-                      compareA = aPrimaryCount + aSecondaryCount;
-                      
-                      const bPrimaryCount = prerolls.filter(p => p.category_id === b.id).length;
-                      const bSecondaryCount = prerolls.filter(p => 
-                        p.categories && 
-                        p.categories.some(c => c.id === b.id) &&
-                        p.category_id !== b.id
-                      ).length;
-                      compareB = bPrimaryCount + bSecondaryCount;
-                      break;
-                    case 'status':
-                      // Sort by active status (has schedules)
-                      const aHasSchedule = schedules.some(s => s.category_id === a.id);
-                      const bHasSchedule = schedules.some(s => s.category_id === b.id);
-                      compareA = aHasSchedule ? 1 : 0;
-                      compareB = bHasSchedule ? 1 : 0;
-                      break;
-                    default:
-                      return 0;
-                  }
-                  
-                  if (compareA < compareB) return categorySortDirection === 'asc' ? -1 : 1;
-                  if (compareA > compareB) return categorySortDirection === 'asc' ? 1 : -1;
-                  return 0;
-                });
-                
-                if (filtered.length === 0) {
-                  return (
-                    <tr>
-                      <td colSpan="5" style={{ padding: 0, border: 'none' }}>
-                        <div className="nx-empty">
-                          {categorySearchQuery ? (
-                            <>
-                              <span className="nx-empty-icon"><Search size={48} /></span>
-                              <h3 className="nx-empty-title">No categories found</h3>
-                              <p className="nx-empty-text">Nothing matches "{categorySearchQuery}". Try a different search, or create a new category below.</p>
-                            </>
-                          ) : (
-                            <>
-                              <span className="nx-empty-icon"><Folder size={48} /></span>
-                              <h3 className="nx-empty-title">No categories yet</h3>
-                              <p className="nx-empty-text">Create your first category below to organize your prerolls.</p>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                }
-                
-                return filtered.map(category => {
-                // Calculate statistics for this category
-                const stats = getCategoryStats(category);
-                const isSelected = selectedCategoryIds.includes(category.id);
-                
-                return (
-                  <tr 
-                    key={category.id} 
-                    onClick={() => bulkActionMode && toggleSelectCategory(category.id)}
-                    style={{ 
-                      borderBottom: '1px solid var(--border-color)',
-                      backgroundColor: isSelected && bulkActionMode ? 'rgba(255, 193, 7, 0.1)' : 'transparent',
-                      cursor: bulkActionMode ? 'pointer' : 'default'
-                    }}
-                  >
-                    {bulkActionMode && (
-                      <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelectCategory(category.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                        />
-                      </td>
-                    )}
-                    <td style={{ padding: '0.75rem', fontWeight: '600', color: 'var(--text-color)' }}>
-                      {category.name}
-                      {category.is_system && (
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            marginLeft: '0.5rem',
-                            fontSize: '0.7rem',
-                            padding: '0.1rem 0.4rem',
-                            borderRadius: '999px',
-                            border: '1px solid var(--border-color)',
-                            color: 'var(--text-secondary)',
-                            fontWeight: '600',
-                            fontStyle: 'normal',
-                            verticalAlign: 'middle'
-                          }}
-                          title="Managed automatically by NeXroll; cannot be edited or deleted"
-                        >
-                          System
-                        </span>
-                      )}
-                      {stats.hasActiveSchedules && (
-                        <span 
-                          style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}
-                          title={`Active Schedules: ${stats.scheduleNames.join(', ')}`}
-                        >
-                          
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem', color: 'var(--text-secondary)' }}>
-                      {category.description || <em style={{ opacity: 0.6 }}>No description</em>}
-                    </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                      <span style={{ 
-                        display: 'inline-block',
-                        fontSize: '0.75rem', 
-                        padding: '0.2rem 0.5rem',
-                        borderRadius: '12px',
-                        backgroundColor: stats.totalPrerolls > 0 ? '#28a745' : '#6c757d',
-                        color: 'white',
-                        fontWeight: '600'
-                      }}>
-                        <Video size={14} style={{marginRight: '0.35rem'}} /> {stats.totalPrerolls}
-                      </span>
-                    </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                      {stats.totalDuration > 0 ? (
-                        <span style={{ 
-                          display: 'inline-block',
-                          fontSize: '0.75rem', 
-                          padding: '0.2rem 0.5rem',
-                          borderRadius: '12px',
-                          backgroundColor: '#17a2b8',
-                          color: 'white',
-                          fontWeight: '600'
-                        }}>
-                          ⏱️ {formatDuration(stats.totalDuration)}
-                        </span>
-                      ) : '-'}
-                    </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                      {stats.hasActiveSchedules ? (
-                        <span style={{ 
-                          display: 'inline-block',
-                          fontSize: '0.75rem', 
-                          padding: '0.2rem 0.5rem',
-                          borderRadius: '12px',
-                          backgroundColor: '#ffc107',
-                          color: '#000',
-                          fontWeight: '600'
-                        }}
-                        title={stats.scheduleNames.join(', ')}
-                        >
-                          {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Inactive</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                      {!bulkActionMode && (
-                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-start', flexWrap: 'nowrap' }}>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleApplyCategoryToActiveServer(category.id, category.name);
-                            }}
-                            className="button"
-                            style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
-                            disabled={getConnectedServers().length === 0 || applyingToServer}
-                            title="Apply to Server"
-                          >
-                            <Film size={14} />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (!category.is_system) handleEditCategory(category);
-                            }}
-                            className="nx-iconbtn"
-                            title={category.is_system ? 'System categories cannot be edited' : 'Edit category'}
-                            style={{ fontSize: '0.9rem' }}
-                            disabled={category.is_system}
-                          >
-                            <Edit size={14} />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (!category.is_system) handleDeleteCategory(category.id);
-                            }}
-                            className="nx-iconbtn nx-iconbtn--danger"
-                            title={category.is_system ? 'System categories cannot be deleted' : 'Delete category'}
-                            style={{ fontSize: '0.9rem' }}
-                            disabled={category.is_system}
-                          >
-                            <Trash size={14} />
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-                });
-              })()}
-            </tbody>
-          </table>
-        </div>
+        })()}
       </div>
 
       {/* Create Category Modal */}

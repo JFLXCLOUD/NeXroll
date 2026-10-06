@@ -67,6 +67,17 @@ Each category has:
 
 Categories created by NeXroll itself — *NeX-Up Movie Trailers*, *NeX-Up TV Trailers*, *NeX-Up Prerolls*, *Coming Soon Lists* — are marked as system categories. You can schedule them like any other, but NeXroll manages their membership.
 
+### The Categories page
+
+The page lists **Your categories** first, then **System categories**, as a grid or a list (the toggle beside the search). Each category shows how many prerolls it holds, how long they run together, and how many enabled schedules use it. A category a schedule uses but that holds nothing is flagged, for example **1 schedule, empty**, because that schedule has nothing to play. The sort menu (or the list's column headings) orders both views.
+
+- **Click one of your categories** to edit it. The name and description sit at the top, the category's prerolls on the left and a picker for adding more on the right. Adding and removing prerolls saves straight away; **Save** keeps a changed name or description.
+- **Click a system category** to see its prerolls in the Library. System categories can't be edited or deleted.
+- **The ⋮ menu** has **View in Library**, **Apply to server now**, and for your own categories **Edit** and **Delete**. **Apply to server now** sends the category to your media server immediately, but a running schedule puts its own category back on its next check, within a minute. It is mainly useful in passive mode, or when no schedule, fallback or filler is set up.
+- **Select** lets you pick several of your categories and delete them together.
+
+New in 2.2.3: the editor's **Save & Apply to Server** button is gone, for the reason above. System categories no longer open in the editor from the grid view.
+
 ---
 
 ## Video scaling

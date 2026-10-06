@@ -227,7 +227,7 @@ Each category has these settings (configured in the Categories page):
 | **Description** | Optional description |
 | **Plex Mode** | How Plex plays multiple prerolls: **Random** (shuffled) or **Sequential** (in order) |
 
-Categories are organized into three sections: Scheduled Categories, Categories with Prerolls, and Empty Categories.
+The Categories page lists your categories, then the system categories NeX-Up manages, in a grid or a list. See [The Categories page](Preroll-Library#the-categories-page).
 
 ---
 
