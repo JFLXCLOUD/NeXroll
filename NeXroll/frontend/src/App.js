@@ -4237,10 +4237,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     return connected;
   };
 
-  // A single server to point the UI at - which tab to open, whose details to
-  // show in a one-server tile. Never a gate on whether work can happen.
-  const getActiveConnectedServer = () => getConnectedServers()[0] || null;
-
   const SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
   const describeServers = (ids) => ids.map(id => SERVER_LABELS[id] || id).join(' and ');
 
@@ -6398,9 +6394,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         throw new Error(msg);
       }
 
-      alert('Category updated successfully!');
+      showAlert(`Saved "${name}"`, 'success');
       setEditingCategory(null);
       setNewCategory({ name: '', description: '' });
+      setCategoryAddSelectedIds([]);
+      setCategoryAddSearch('');
+      setCategoryAddFolder('');
 
       if (data && data.id) {
         setCategories(prev => prev.map(c => c.id === data.id ? data : c));
@@ -6410,71 +6409,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     } catch (error) {
       console.error('Update category error:', error);
       alert(error.message.includes('already exists') ? 'Category name already exists' : 'Failed to update category: ' + error.message);
-    }
-  };
-
-  const handleUpdateCategoryAndApply = async (e) => {
-    e.preventDefault();
-    if (!editingCategory) return;
-
-    const name = (newCategory.name || '').trim();
-    const description = (newCategory.description || '').trim();
-    if (!name) {
-      alert('Category name is required');
-      return;
-    }
-
-    try {
-      const res = await fetch(apiUrl(`categories/${editingCategory.id}`), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description })
-      });
-      const text = await res.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch {}
-
-      if (!res.ok) {
-        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-
-      if (data && data.id) {
-        setCategories(prev => prev.map(c => (c.id === data.id ? data : c)));
-      }
-
-      const idToApply = (data && data.id) || editingCategory.id;
-      const nameToApply = (data && data.name) || name;
-
-      const server = getActiveConnectedServer();
-      if (server === 'plex') {
-        const resApply = await fetch(apiUrl(`categories/${idToApply}/apply-to-plex`), { method: 'POST' });
-        const applyText = await resApply.text();
-        let applyData = null;
-        try { applyData = applyText ? JSON.parse(applyText) : null; } catch {}
-
-        if (!resApply.ok) {
-          const msg = (applyData && (applyData.detail || applyData.message)) || applyText || `HTTP ${resApply.status}`;
-          throw new Error(`Saved but failed to apply to Plex: ${msg}`);
-        }
-
-        alert(`Saved and applied "${nameToApply}" to Plex!`);
-        setEditingCategory(null);
-        setNewCategory({ name: '', description: '' });
-        fetchData();
-      } else if (server === 'jellyfin') {
-        await handleApplyCategoryToJellyfin(idToApply, nameToApply);
-        setEditingCategory(null);
-        setNewCategory({ name: '', description: '' });
-        try { fetchData(); } catch {}
-      } else {
-        alert('Saved. No media server is connected. Connect on the Connect tab, then use "Apply to Server" on the category.');
-        setEditingCategory(null);
-        setNewCategory({ name: '', description: '' });
-      }
-    } catch (error) {
-      console.error('Save & Apply category error:', error);
-      alert(error.message || 'Failed to save/apply category');
     }
   };
 
@@ -6546,9 +6480,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       loadCategoryPrerolls(categoryId);
       fetchData();
       if (failCount === 0) {
-        alert(`${successCount} preroll${successCount !== 1 ? 's' : ''} tagged with this category!`);
+        showAlert(`Added ${successCount} preroll${successCount !== 1 ? 's' : ''} to this category`, 'success');
       } else {
-        alert(`Tagged ${successCount}, failed ${failCount}`);
+        showAlert(`Added ${successCount}; ${failCount} failed`, 'error');
       }
     } catch (e) {
       console.error('Add preroll to category error:', e);
@@ -8728,7 +8662,7 @@ const DashboardTiles = {
       ];
     } else if (activeTab === 'connect') {
       // "Active server" / "Connection" describe NeXroll's actual integration
-      // state (getActiveConnectedServer), not just whichever card the user
+      // state (getConnectedServers), not just whichever card the user
       // happens to be previewing below (activeServer) — those are independent.
       // Several servers connected is a supported setup, not a warning state.
       const connectedServers = getConnectedServers();
@@ -20554,345 +20488,238 @@ const DashboardTiles = {
   const renderCategories = () => (
     <div className="nx-library-categories">
 
-      {editingCategory && (
-        <Modal
-          title="Edit Category"
-          onClose={() => { setEditingCategory(null); setNewCategory({ name: '', description: '' }); }}
-          width={820}
-          zIndex={1000}
-          allowBackgroundInteraction={!!editingPreroll}
-        >          <form onSubmit={handleUpdateCategory}>
-            <div className="nx-form-grid">
-              <div className="nx-field nx-span-2">
-                <label className="nx-label">Category Name</label>
-                <input
-                  className="nx-input"
-                  type="text"
-                  placeholder="Category Name"
-                  value={newCategory.name}
-                  onChange={(e) => setNewCategory({...newCategory, name: e.target.value})}
-                  required
-                />
+      {editingCategory && (() => {
+        const categoryId = editingCategory.id;
+        const assigned = categoryPrerolls[categoryId] || [];
+        const closeEditor = () => {
+          setEditingCategory(null);
+          setNewCategory({ name: '', description: '' });
+          setCategoryAddSelectedIds([]);
+          setCategoryAddSearch('');
+          setCategoryAddFolder('');
+        };
+        // The picker filters by each file's folder on disk, so a whole folder
+        // can be grabbed at once (v1.13.12).
+        const extractFolder = (path) => {
+          if (!path) return '';
+          const parts = String(path).replace(/\\/g, '/').split('/').filter(Boolean);
+          return parts.length < 2 ? '' : parts[parts.length - 2];
+        };
+        const allAvailable = availablePrerollsForCategory(categoryId);
+        const folderCounts = {};
+        for (const p of allAvailable) {
+          const f = extractFolder(p.path) || '(root)';
+          folderCounts[f] = (folderCounts[f] || 0) + 1;
+        }
+        const folderOptions = Object.keys(folderCounts).sort((a, b) => a.localeCompare(b));
+        const search = categoryAddSearch.trim().toLowerCase();
+        const filtered = allAvailable.filter(p => {
+          if (categoryAddFolder && (extractFolder(p.path) || '(root)') !== categoryAddFolder) return false;
+          if (!search) return true;
+          return (p.display_name || '').toLowerCase().includes(search) || (p.filename || '').toLowerCase().includes(search);
+        });
+        const visibleIds = filtered.map(p => p.id);
+        const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => categoryAddSelectedIds.includes(id));
+        const selectedCount = categoryAddSelectedIds.length;
+        const emptyReason = categoryAddSearch && categoryAddFolder
+          ? ` matching that search in "${categoryAddFolder}"`
+          : categoryAddSearch ? ' matching that search'
+          : categoryAddFolder ? ` in "${categoryAddFolder}"`
+          : '';
+
+        return (
+          <Modal
+            title="Edit Category"
+            onClose={closeEditor}
+            width={1040}
+            className="nx-category-modal"
+            bodyClassName="nx-category-modal-body"
+            zIndex={1000}
+            allowBackgroundInteraction={!!editingPreroll}
+          >
+            <form onSubmit={handleUpdateCategory} className="nx-category-edit">
+              <div className="nx-category-edit-fields">
+                <label className="nx-field">
+                  <span className="nx-label">Name</span>
+                  <input
+                    className="nx-input"
+                    type="text"
+                    placeholder="Category name"
+                    value={newCategory.name}
+                    onChange={(e) => setNewCategory({ ...newCategory, name: e.target.value })}
+                    required
+                  />
+                </label>
+                <label className="nx-field">
+                  <span className="nx-label">Description</span>
+                  <input
+                    className="nx-input"
+                    type="text"
+                    placeholder="Optional"
+                    value={newCategory.description}
+                    onChange={(e) => setNewCategory({ ...newCategory, description: e.target.value })}
+                  />
+                </label>
               </div>
-              <div className="nx-field nx-span-2">
-                <label className="nx-label">Description</label>
-                <input
-                  className="nx-input"
-                  type="text"
-                  placeholder="Optional description"
-                  value={newCategory.description}
-                  onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
-                />
-              </div>
-            </div>
 
-          <div style={{ borderTop: '1px solid var(--border-color)', margin: '1rem 0' }} />
-
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <h3 className="nx-modal-title" style={{ fontSize: '1rem', margin: 0 }}>Assigned Prerolls</h3>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => { try { loadCategoryPrerolls(editingCategory.id); } catch (e) {} }}
-                title="Refresh list"
-              >
-                Refresh
-              </button>
-            </div>
-
-            {categoryPrerollsLoading[editingCategory.id] ? (
-              <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Loader2 size={16} className="spin" /> Loading prerolls…</div>
-            ) : (
-              <>
-                <div className="nx-field nx-span-2" style={{ marginBottom: '0.5rem' }}>
-                  {(categoryPrerolls[editingCategory.id] || []).length === 0 ? (
-                    <p style={{ fontSize: '0.9rem', color: '#666', fontStyle: 'italic' }}>No prerolls assigned</p>
-                  ) : (
-                    <div style={{ display: 'grid', gap: '0.4rem' }}>
-                      {(categoryPrerolls[editingCategory.id] || []).map(p => (
-                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.4rem 0.6rem' }}>
-                          <span style={{ fontSize: '0.9rem' }}>
-                            {p.display_name || p.filename}
-                          </span>
-                          <div>
-                            <button
-                              type="button"
-                              onClick={() => handleEditPreroll(p)}
-                              className="nx-iconbtn"
-                              style={{ marginRight: '0.25rem' }}
-                              title="Edit preroll"
-                            >
-                              <Edit size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleCategoryRemovePreroll(editingCategory.id, p)}
-                              className="nx-iconbtn nx-iconbtn--danger"
-                              title="Remove from this category"
-                            >
-                              <Trash size={14} style={{marginRight: '0.35rem'}} /> Remove
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ marginTop: '0.75rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                    <label className="nx-label" style={{ margin: 0 }}>Add Prerolls to this Category</label>
-                    {categoryAddSelectedIds.length > 0 && (
-                      <span style={{ fontSize: '0.85rem', color: 'var(--accent-color)', fontWeight: 500 }}>
-                        {categoryAddSelectedIds.length} selected
-                      </span>
+              <div className="nx-category-edit-panes">
+                <section className="nx-category-pane" aria-label="Prerolls in this category">
+                  <header>
+                    <h4>In this category <span className="nx-category-pane-count">{assigned.length}</span></h4>
+                    <button
+                      type="button"
+                      className="nx-iconbtn"
+                      onClick={() => { try { loadCategoryPrerolls(categoryId); } catch (e) {} }}
+                      title="Refresh the list"
+                      aria-label="Refresh the list"
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                  </header>
+                  <div className="nx-category-pane-scroll">
+                    {categoryPrerollsLoading[categoryId] ? (
+                      <p className="nx-category-pane-empty"><Loader2 size={15} className="spin" /> Loading prerolls…</p>
+                    ) : assigned.length === 0 ? (
+                      <p className="nx-category-pane-empty">No prerolls yet. Pick some on the right to add them.</p>
+                    ) : (
+                      <ul className="nx-category-assigned">
+                        {assigned.map(p => {
+                          const name = p.display_name || p.filename;
+                          return (
+                            <li key={p.id}>
+                              <span className="nx-category-thumb" aria-hidden="true">
+                                {p.thumbnail ? <img src={thumbnailUrl(p.thumbnail)} alt="" loading="lazy" /> : <Film size={14} />}
+                              </span>
+                              <span className="nx-category-name" title={name}>{name}</span>
+                              <button
+                                type="button"
+                                className="nx-iconbtn"
+                                onClick={() => handleEditPreroll(p)}
+                                title="Edit preroll"
+                                aria-label={`Edit ${name}`}
+                              >
+                                <Edit size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                className="nx-iconbtn nx-iconbtn--danger"
+                                onClick={() => handleCategoryRemovePreroll(categoryId, p)}
+                                title="Remove from this category"
+                                aria-label={`Remove ${name} from this category`}
+                              >
+                                <X size={14} />
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     )}
                   </div>
+                </section>
 
-                  {(() => {
-                    // Compute the folder list once from available prerolls' paths. The picker
-                    // used to be a flat "sea of thumbnails" — user feedback asked for folder
-                    // structure so they can grab a whole folder at once. v1.13.12: pick the
-                    // parent folder name from each preroll's path and let the user filter by it.
-                    const extractFolder = (path) => {
-                      if (!path) return '';
-                      const norm = String(path).replace(/\\/g, '/');
-                      const parts = norm.split('/').filter(Boolean);
-                      // file is last; its parent is parts[length-2]
-                      if (parts.length < 2) return '';
-                      return parts[parts.length - 2];
-                    };
-                    const allAvailable = availablePrerollsForCategory(editingCategory.id);
-                    const folderCounts = {};
-                    for (const p of allAvailable) {
-                      const f = extractFolder(p.path) || '(root)';
-                      folderCounts[f] = (folderCounts[f] || 0) + 1;
-                    }
-                    const folderOptions = Object.keys(folderCounts).sort((a, b) => a.localeCompare(b));
-                    const filtered = allAvailable.filter(p => {
-                      if (categoryAddFolder) {
-                        const f = extractFolder(p.path) || '(root)';
-                        if (f !== categoryAddFolder) return false;
-                      }
-                      if (!categoryAddSearch.trim()) return true;
-                      const search = categoryAddSearch.toLowerCase();
-                      return (p.display_name || '').toLowerCase().includes(search) ||
-                             (p.filename || '').toLowerCase().includes(search);
-                    });
-                    const visibleIds = filtered.map(p => p.id);
-                    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => categoryAddSelectedIds.includes(id));
-
-                    return (
-                      <>
-                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                          <select
-                            className="nx-input"
-                            value={categoryAddFolder}
-                            onChange={(e) => setCategoryAddFolder(e.target.value)}
-                            style={{ flex: '0 0 200px', fontSize: '0.85rem' }}
-                            aria-label="Filter by source folder"
-                            title="Filter the picker by the file's source folder on disk"
-                          >
-                            <option value="">All folders ({allAvailable.length})</option>
-                            {folderOptions.map(f => (
-                              <option key={f} value={f}>{f} ({folderCounts[f]})</option>
-                            ))}
-                          </select>
-                          <input
-                            type="text"
-                            className="nx-input"
-                            placeholder="Search by name..."
-                            value={categoryAddSearch}
-                            onChange={(e) => setCategoryAddSearch(e.target.value)}
-                            style={{ flex: '1 1 200px', fontSize: '0.85rem' }}
-                          />
-                          <button
-                            type="button"
-                            className="button"
-                            onClick={() => {
-                              if (allVisibleSelected) {
-                                // Deselect everything currently visible
-                                setCategoryAddSelectedIds(prev => prev.filter(id => !visibleIds.includes(id)));
-                              } else {
-                                // Select all currently visible
-                                setCategoryAddSelectedIds(prev => Array.from(new Set([...prev, ...visibleIds])));
-                              }
-                            }}
-                            disabled={visibleIds.length === 0}
-                            style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
-                            title={allVisibleSelected ? 'Deselect all currently visible prerolls' : 'Select every preroll matching the current filter'}
-                          >
-                            {allVisibleSelected ? 'Deselect All' : `Select All (${visibleIds.length})`}
-                          </button>
-                        </div>
-                        <div style={{
-                          maxHeight: '240px',
-                          overflowY: 'auto',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '8px',
-                          padding: '0.5rem',
-                          background: 'var(--bg-secondary)'
-                        }}>
-                          {(() => {
-                            if (filtered.length === 0) {
-                              const reason = categoryAddSearch && categoryAddFolder
-                                ? ` matching search in folder "${categoryAddFolder}"`
-                                : categoryAddSearch ? ' matching search'
-                                : categoryAddFolder ? ` in folder "${categoryAddFolder}"`
-                                : '';
-                              return <p style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic', margin: '0.5rem 0' }}>No available prerolls{reason}</p>;
-                            }
-                            return (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.5rem' }}>
-                          {filtered.map(p => {
-                            const isSelected = categoryAddSelectedIds.includes(p.id);
-                            const folderName = extractFolder(p.path) || '(root)';
-                            return (
-                              <div
-                                key={p.id}
-                                onClick={() => {
-                                  setCategoryAddSelectedIds(prev =>
-                                    prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
-                                  );
-                                }}
-                                style={{
-                                  cursor: 'pointer',
-                                  border: isSelected ? '2px solid var(--accent-color)' : '1px solid var(--border-color)',
-                                  borderRadius: '8px',
-                                  padding: '0.35rem',
-                                  background: isSelected ? 'rgba(var(--accent-rgb), 0.1)' : 'var(--card-bg)',
-                                  transition: 'all 0.15s ease'
-                                }}
-                              >
-                                <div style={{ position: 'relative', paddingBottom: '56.25%', marginBottom: '0.35rem' }}>
-                                  {p.thumbnail ? (
-                                    <img
-                                      src={thumbnailUrl(p.thumbnail)}
-                                      alt=""
-                                      style={{
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        width: '100%',
-                                        height: '100%',
-                                        objectFit: 'cover',
-                                        borderRadius: '4px'
-                                      }}
-                                    />
-                                  ) : (
-                                    <div style={{
-                                      position: 'absolute',
-                                      top: 0,
-                                      left: 0,
-                                      width: '100%',
-                                      height: '100%',
-                                      background: 'linear-gradient(135deg, #333 0%, #555 100%)',
-                                      borderRadius: '4px',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center'
-                                    }}>
-                                      <Film size={20} style={{ color: '#888' }} />
-                                    </div>
-                                  )}
-                                  {isSelected && (
-                                    <div style={{
-                                      position: 'absolute',
-                                      top: '4px',
-                                      right: '4px',
-                                      width: '20px',
-                                      height: '20px',
-                                      borderRadius: '50%',
-                                      background: 'var(--accent-color)',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center'
-                                    }}>
-                                      <Check size={12} style={{ color: 'white' }} />
-                                    </div>
-                                  )}
-                                </div>
-                                <div
-                                  style={{
-                                    fontSize: '0.75rem',
-                                    lineHeight: 1.25,
-                                    // Allow up to 2 lines so long filenames stay readable in the
-                                    // picker (previous single-line ellipsis hid most of the title
-                                    // until the preroll was already added). Hover for the full name.
-                                    display: '-webkit-box',
-                                    WebkitLineClamp: 2,
-                                    WebkitBoxOrient: 'vertical',
-                                    overflow: 'hidden',
-                                    wordBreak: 'break-word',
-                                    minHeight: '2.5em'
-                                  }}
-                                  title={p.display_name || p.filename}
-                                >
-                                  {p.display_name || p.filename}
-                                </div>
-                                <div style={{ fontSize: '0.65rem', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Folder: ${folderName}`}>
-                                  {folderName}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                          })()}
-                        </div>
-                      </>
-                    );
-                  })()}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      {categoryAddSelectedIds.length > 0 && (
-                        <button
-                          type="button"
-                          className="button-secondary"
-                          onClick={() => setCategoryAddSelectedIds([])}
-                        >
-                          Clear
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="button"
-                        disabled={categoryAddSelectedIds.length === 0}
-                        onClick={() => handleCategoryAddPreroll(editingCategory.id)}
-                      >
-                        <Plus size={14} style={{marginRight: '0.35rem'}} /> Add {categoryAddSelectedIds.length > 0 ? `${categoryAddSelectedIds.length} Selected` : 'Selected'}
-                      </button>
-                    </div>
+                <section className="nx-category-pane" aria-label="Add prerolls">
+                  <header>
+                    <h4>Add prerolls <span className="nx-category-pane-count">{allAvailable.length}</span></h4>
+                    <button
+                      type="button"
+                      className="nx-category-linkbtn"
+                      onClick={() => {
+                        if (allVisibleSelected) {
+                          setCategoryAddSelectedIds(prev => prev.filter(id => !visibleIds.includes(id)));
+                        } else {
+                          setCategoryAddSelectedIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+                        }
+                      }}
+                      disabled={visibleIds.length === 0}
+                      title={allVisibleSelected ? 'Deselect the prerolls shown' : 'Select every preroll shown'}
+                    >
+                      {allVisibleSelected ? 'Deselect all' : `Select all ${visibleIds.length}`}
+                    </button>
+                  </header>
+                  <div className="nx-category-pick-filters">
+                    <select
+                      className="nx-input"
+                      value={categoryAddFolder}
+                      onChange={(e) => setCategoryAddFolder(e.target.value)}
+                      aria-label="Filter by source folder"
+                      title="Filter by the file's folder on disk"
+                    >
+                      <option value="">All folders ({allAvailable.length})</option>
+                      {folderOptions.map(f => (
+                        <option key={f} value={f}>{f} ({folderCounts[f]})</option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      className="nx-input"
+                      placeholder="Search by name..."
+                      aria-label="Search prerolls to add"
+                      value={categoryAddSearch}
+                      onChange={(e) => setCategoryAddSearch(e.target.value)}
+                    />
                   </div>
-                </div>
-              </>
-            )}
-          </div>
+                  <div className="nx-category-pane-scroll">
+                    {filtered.length === 0 ? (
+                      <p className="nx-category-pane-empty">
+                        {allAvailable.length === 0 ? 'Every preroll is already in this category.' : `No prerolls${emptyReason}.`}
+                      </p>
+                    ) : (
+                      <div className="nx-category-pick-grid">
+                        {filtered.map(p => {
+                          const isSelected = categoryAddSelectedIds.includes(p.id);
+                          const name = p.display_name || p.filename;
+                          const folderName = extractFolder(p.path) || '(root)';
+                          return (
+                            <button
+                              type="button"
+                              key={p.id}
+                              className={`nx-category-pick${isSelected ? ' is-selected' : ''}`}
+                              aria-pressed={isSelected}
+                              title={`${name}\nFolder: ${folderName}`}
+                              onClick={() => setCategoryAddSelectedIds(prev =>
+                                prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
+                              )}
+                            >
+                              <span className="nx-category-pick-thumb">
+                                {p.thumbnail ? <img src={thumbnailUrl(p.thumbnail)} alt="" loading="lazy" /> : <Film size={18} />}
+                                {isSelected && <span className="nx-category-pick-check"><Check size={12} /></span>}
+                              </span>
+                              <span className="nx-category-pick-name">{name}</span>
+                              <span className="nx-category-pick-folder">{folderName}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <footer className="nx-category-pick-footer">
+                    <span>{selectedCount ? `${selectedCount} selected` : 'Click prerolls to select them'}</span>
+                    {selectedCount > 0 && (
+                      <button type="button" className="button-secondary" onClick={() => setCategoryAddSelectedIds([])}>
+                        Clear
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={selectedCount === 0}
+                      onClick={() => handleCategoryAddPreroll(categoryId)}
+                    >
+                      <Plus size={14} /> {selectedCount ? `Add ${selectedCount}` : 'Add'}
+                    </button>
+                  </footer>
+                </section>
+              </div>
 
-          <div style={{ borderTop: '1px solid var(--border-color)', margin: '1rem 0' }} />
-
-            <div className="nx-actions">
-              <button type="submit" className="button">Update Category</button>
-              <button
-                type="button"
-                className="button button-success"
-                onClick={handleUpdateCategoryAndApply}
-                title="Save changes and apply to connected server"
-              >
-                Save & Apply to Server
-              </button>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => { setEditingCategory(null); setNewCategory({ name: '', description: '' }); }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
+              <div className="nx-actions nx-category-edit-actions">
+                <span className="nx-category-edit-hint">Adding and removing prerolls saves straight away.</span>
+                <button type="button" className="button-secondary" onClick={closeEditor}>Cancel</button>
+                <button type="submit" className="button">Save</button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
 
       {false && (<div className="upload-section">
         <h2>Holiday Presets</h2>
