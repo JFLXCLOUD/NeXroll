@@ -473,7 +473,8 @@ Function .onInstSuccess
       Unregister-ScheduledTask -TaskName \"NeXrollLaunch\" -Confirm:$$false -ErrorAction SilentlyContinue"'
    Pop $0
 
-   ; Show a simple informational message to avoid complex quoting/escaping issues
-   MessageBox MB_ICONINFORMATION|MB_OK "Installation complete!$\r$\n$\r$\nNeXroll is now running in the system tray.$\r$\nAccess the web interface at http://localhost:9393"
+   ; Show a simple informational message to avoid complex quoting/escaping issues.
+   ; /SD IDOK: a silent (/S) install answers it itself instead of waiting for a click.
+   MessageBox MB_ICONINFORMATION|MB_OK "Installation complete!$\r$\n$\r$\nNeXroll is now running in the system tray.$\r$\nAccess the web interface at http://localhost:9393" /SD IDOK
 FunctionEnd
 
