@@ -1,7 +1,7 @@
  // NeXroll Service Worker for PWA functionality
-const CACHE_NAME = 'nexroll-v2.2.2';
-const STATIC_CACHE = 'nexroll-static-v2.2.2';
-const API_CACHE = 'nexroll-api-v2.2.2';
+const CACHE_NAME = 'nexroll-v2.2.3';
+const STATIC_CACHE = 'nexroll-static-v2.2.3';
+const API_CACHE = 'nexroll-api-v2.2.3';
 
 // Resources to cache immediately on install
 const STATIC_ASSETS = [

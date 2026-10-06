@@ -1,5 +1,38 @@
 ﻿# Changelog
 
+## [2.2.3] - 10-06-2026
+
+> Tag and file path conditions for prerolls like IMAX, a Logs page that shows what went wrong, an easier way to add a trailer yourself, a reworked Categories page, and fixes for random rotation and phone layouts.
+
+### Upgrading
+
+- **No plugin update is needed.** Tag and file path conditions use the plugin you have.
+- **Docker:** app.log now lives in `/data/logs`, so it survives image updates. Earlier versions kept it inside the container.
+- **Logs:** older versions recorded every page load. Those entries are hidden; **Clear page loads** on the Logs page deletes them.
+
+### Added
+
+- **Tag and File path conditions** (Jellyfin and Emby). Play a block only when the movie has a tag, such as IMAX, or when its file path contains some text, such as `IMAX` or `2160p`.
+- **App log on the Logs page.** Read app.log in NeXroll, with error traces kept with their entry, and download it. Click any event for its details.
+- **Add trailer** on Your Trailers. Pick the movie from Radarr's upcoming list and paste a YouTube link or give a file path. A preview shows which video will download.
+
+### Changed
+
+- **The Logs page shows what went wrong.** Scheduler and background warnings and errors appear under Events, not only in app.log, and a message that repeats is recorded once an hour with a count. Request logging keeps changes, failures and slow requests, not every page load.
+- **Categories page.** Your categories and the system ones are listed separately, each showing its preroll count, length and schedules. A schedule pointing at an empty category is flagged. **Select** is back for deleting several at once.
+- **The category editor fits on one screen.** **Save & Apply to Server** is gone: a running schedule replaced it within a minute. **Apply to server now** stays in the category menu for passive mode.
+
+### Fixed
+
+- **Random rotation stalled on Plex** while music played or a long movie was under way. It now waits only for video that started in the last 20 minutes. Jellyfin and Emby random categories no longer share one rotation, and rotation remembers its place through changes and restarts.
+- **app.log never rotated on Windows,** and web-server access lines filled most of it.
+- **Installs without Plex logged "Failed to reapply prerolls to Plex"** every five minutes.
+- **System categories could be edited** from the Categories grid.
+- **Trailers added by hand weren't linked to Radarr,** so a sync downloaded a second one, they stayed after the movie arrived, and they had no poster.
+- **"Needs category" counted Library Trailers,** which never have a category, while the Uncategorized filter showed nothing.
+- **Today's run on Schedules** led with schedules that had no upcoming window.
+- **NeX-Up pages on phones:** Your Trailers scrolled sideways and filters were cut off. Search boxes there and in the sidebar drew a second box inside the first.
+
 ## [2.2.2] - 10-02-2026
 
 > Else if chains so only the first matching block plays, NeX-Up trailers that match the film's genre, a prerolls-only setup for Plex's new Apple TV and iOS app, categories you can create where you need them, and fixes for deleted prerolls, category counts and the Upcoming list.
