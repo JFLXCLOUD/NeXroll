@@ -22882,12 +22882,21 @@ async def add_manual_trailer(
     release_date: Optional[str] = None,
     file_path: Optional[str] = None,
     url: Optional[str] = None,
+    radarr_movie_id: Optional[int] = None,
+    poster_url: Optional[str] = None,
+    genres: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
     Manually add a trailer by providing either:
     - A local file path to an existing trailer video
     - A URL to download from (YouTube, Vimeo, etc.)
+
+    radarr_movie_id, poster_url and genres (comma-separated) come from picking
+    the movie in Radarr's upcoming list. The Radarr ID is what syncs match
+    trailers by: without it a manual trailer was a stranger to Radarr, so a
+    later sync downloaded a second trailer for the same movie, the manual one
+    was never removed when the movie arrived, and it never got a poster.
     """
     setting = db.query(models.Setting).first()
     if not setting:
@@ -22910,6 +22919,12 @@ async def add_manual_trailer(
         ).first()
         if existing:
             raise HTTPException(status_code=400, detail=f"Trailer already exists for {title}")
+    if radarr_movie_id and radarr_movie_id > 0:
+        existing = db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.radarr_movie_id == radarr_movie_id
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"{existing.title or title} already has a trailer. Delete it first to replace it.")
     
     import shutil
     from pathlib import Path
@@ -22975,13 +22990,18 @@ async def add_manual_trailer(
         except:
             pass
     
+    genre_names = [g.strip() for g in (genres or "").split(",") if g.strip()]
+
     # Create database entry
     trailer = models.ComingSoonTrailer(
-        radarr_movie_id=0,  # Manual entry
+        radarr_movie_id=radarr_movie_id if radarr_movie_id and radarr_movie_id > 0 else 0,  # 0 = not linked to Radarr
         tmdb_id=tmdb_id,
         title=title,
         year=year,
         release_date=parsed_release_date,
+        genres=genre_json(genre_names) if genre_names else None,
+        poster_url=poster_url if poster_url and poster_url.startswith("http") else None,
+        trailer_url=url or None,
         local_path=final_path,
         file_size_mb=round(file_size_mb, 2),
         downloaded_at=datetime.datetime.utcnow(),
@@ -23007,9 +23027,9 @@ async def add_manual_trailer(
             preroll_record = models.Preroll(
                 filename=Path(final_path).name,
                 path=final_path,
-                display_name=f"{title} ({year or ''})",
+                display_name=f"{title} ({year})" if year else title,
                 category_id=nexup_category.id,
-                thumbnail="",
+                thumbnail=trailer.poster_url or "",
                 tags="[]",
                 managed=False
             )

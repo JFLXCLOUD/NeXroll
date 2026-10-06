@@ -104,6 +104,17 @@ Each item shows:
 1. Click **Download All Available**
 2. NeX-Up downloads trailers for all upcoming content that has YouTube trailers available
 
+### Add a Trailer Yourself
+
+When NeX-Up can't get a trailer on its own (YouTube blocked the download, or Radarr has no trailer link), add it from **Your Trailers → Add trailer** (top right, or **Add a trailer** below the list):
+
+1. **Which movie.** Pick it from **Radarr's upcoming movies**. That fills in the title, release date, poster and genres, and links the trailer to the movie in Radarr. A linked trailer counts as that movie's trailer: a sync won't download a second one, NeX-Up removes it when the movie arrives in your library, and genre matching works for it. Or type the title, and optionally the release date and TMDB ID.
+2. **Where the trailer comes from.** Paste a **YouTube or web link** (a preview shows which video it is) or give the path to a **file on the server**, which NeX-Up copies into its trailer folder. On Docker, the path is inside the container.
+
+The release date matters: NeX-Up removes a trailer the set number of days after the later of the download and the release date. Without one, a trailer for a movie months away could be removed before the movie is out. If YouTube access isn't set up, the window says so before you download.
+
+Manual trailers are for movies only.
+
 ## Library Trailers
 
 **NeX-Up > Library Trailers** keeps trailers for movies you **already own**, so a sequence can show them the way a cinema shows trailers before the feature.

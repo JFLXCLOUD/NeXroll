@@ -5,6 +5,7 @@ import ConflictLink from './components/ConflictLink';
 import LibraryTrailersTile from './components/LibraryTrailersTile';
 import { isAICommunitySource } from './utils/communityAI';
 import { genreMatchSummary, ratingSummary } from './utils/trailerRatings';
+import { youtubeThumbnail, youtubeVideoId } from './utils/youtube';
 import useHealthSummary from './hooks/useHealthSummary';
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -92,6 +93,14 @@ const SequenceFlowView = React.lazy(() => import('./components/SequenceFlowView'
 const LOG_CATEGORY_LABELS = {
   system: 'System', scheduler: 'Scheduler', api: 'API', user: 'User', plex: 'Plex',
   jellyfin: 'Jellyfin', emby: 'Emby', plugin: 'Plugin', nexup: 'NeX-Up',
+};
+
+// The Add a trailer form, empty. source is 'link' (download a URL) or 'file'
+// (copy a file already on the server); the Radarr fields come from picking a
+// movie in Radarr's upcoming list.
+const EMPTY_MANUAL_TRAILER = {
+  source: 'link', title: '', tmdb_id: '', release_date: '', url: '', file_path: '',
+  radarr_movie_id: '', poster_url: '', genres: [],
 };
 
 const SIZE_SPAN = { sm: 4, md: 8, lg: 12 };
@@ -1879,12 +1888,10 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [changePasswordTarget, setChangePasswordTarget] = useState(null);
   const [changePasswordForm, setChangePasswordForm] = useState({ current_password: '', new_password: '', confirm_password: '' });
   
-  const [manualTrailerForm, setManualTrailerForm] = useState({
-    title: '',
-    tmdb_id: '',
-    url: '',
-    file_path: ''
-  });
+  const [manualTrailerForm, setManualTrailerForm] = useState(EMPTY_MANUAL_TRAILER);
+  const [manualTrailerError, setManualTrailerError] = useState('');
+  // Radarr's upcoming movies, for filling in the Add a trailer form.
+  const [manualUpcoming, setManualUpcoming] = useState({ loading: false, loaded: false, movies: [] });
   // NeX-Up Sequence Builder State
   const [nexupSequencePresets, setNexupSequencePresets] = useState([]);
   const [nexupSequenceLoading, setNexupSequenceLoading] = useState(false);
@@ -8516,6 +8523,7 @@ const DashboardTiles = {
             {activeTab === 'nexup/trailers' && (
               <>
                 <button type="button" className="button button-secondary" onClick={() => openFolderBrowser('nexup-storage', nexupSettings.storage_path || '')}><FolderOpen size={15} /> Storage folder</button>
+                <button type="button" className="button button-secondary nx-add-trailer-btn" onClick={openManualTrailer} title="Add a trailer from a YouTube link or a file, for a movie NeX-Up couldn't download one for"><Youtube size={15} /> Add trailer</button>
                 <button type="button" className="button" disabled={!nexupSettings.storage_path} onClick={handleNexupFullSync}><RefreshCw size={15} /> Sync trailers</button>
               </>
             )}
@@ -24340,50 +24348,98 @@ const DashboardTiles = {
     }
   };
 
+  const loadManualUpcoming = async () => {
+    setManualUpcoming(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch(apiUrl('/nexup/radarr/upcoming'));
+      const data = await safeJson(res);
+      setManualUpcoming({ loading: false, loaded: true, at: Date.now(), movies: res.ok && Array.isArray(data?.movies) ? data.movies : [] });
+    } catch (e) {
+      setManualUpcoming({ loading: false, loaded: true, at: Date.now(), movies: [] });
+    }
+  };
+
+  // Open Add a trailer with what it needs: YouTube readiness (for a warning
+  // before a download that would be blocked) and Radarr's upcoming movies.
+  const openManualTrailer = () => {
+    setManualTrailerError('');
+    setShowManualTrailerModal(true);
+    if (!youtubeSetup.status) loadYoutubeStatus();
+    if (!potoken.status) loadPotoken();
+    // Radarr can take a while to answer, so reuse the list the Upcoming page
+    // already has, and refresh at most every two minutes.
+    if (nexupSettings.radarr_connected && !manualUpcoming.loading) {
+      if (!manualUpcoming.loaded && nexupUpcoming.length) {
+        setManualUpcoming({ loading: false, loaded: true, at: Date.now(), movies: nexupUpcoming });
+      } else if (!manualUpcoming.loaded || Date.now() - (manualUpcoming.at || 0) > 120000) {
+        loadManualUpcoming();
+      }
+    }
+  };
+
+  // Fill the form from a movie in Radarr's upcoming list ('' clears the pick).
+  const pickManualTrailerMovie = (radarrId) => {
+    const movie = manualUpcoming.movies.find(m => String(m.radarr_id) === String(radarrId));
+    setManualTrailerError('');
+    if (!movie) {
+      setManualTrailerForm(prev => ({ ...prev, radarr_movie_id: '', poster_url: '', genres: [] }));
+      return;
+    }
+    setManualTrailerForm(prev => ({
+      ...prev,
+      radarr_movie_id: String(movie.radarr_id),
+      title: movie.title || prev.title,
+      tmdb_id: movie.tmdb_id ? String(movie.tmdb_id) : '',
+      release_date: movie.release_date ? String(movie.release_date).slice(0, 10) : '',
+      poster_url: movie.poster_url || '',
+      genres: Array.isArray(movie.genres) ? movie.genres : [],
+    }));
+  };
+
   const handleManualTrailerSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!manualTrailerForm.title.trim()) {
-      alert('Please enter a movie title');
-      return;
-    }
-    
-    if (!manualTrailerForm.url && !manualTrailerForm.file_path) {
-      alert('Please provide either a URL or file path for the trailer');
-      return;
-    }
-    
-    if (!nexupSettings.storage_path) {
-      alert('Please configure a storage path in NeX-Up settings first');
-      return;
-    }
-    
+    const form = manualTrailerForm;
+    const isLink = form.source !== 'file';
+    const source = (isLink ? form.url : form.file_path).trim();
+    const tmdbId = String(form.tmdb_id || '').trim();
+    const problem = !form.title.trim() ? 'Enter the movie title, or pick the movie from Radarr.'
+      : !source ? (isLink ? 'Paste a link to the trailer.' : 'Enter the path to the video file.')
+      : isLink && !/^https?:\/\//i.test(source) ? 'The link should start with https://'
+      : tmdbId && !/^\d+$/.test(tmdbId) ? "The TMDB ID is the number in the movie's themoviedb.org address."
+      : !nexupSettings.storage_path ? 'Choose a NeX-Up storage folder first (NeX-Up > Settings).'
+      : '';
+    setManualTrailerError(problem);
+    if (problem) return;
+
     setNexupLoading(true);
     try {
       const params = new URLSearchParams();
-      params.append('title', manualTrailerForm.title.trim());
-      if (manualTrailerForm.tmdb_id) params.append('tmdb_id', manualTrailerForm.tmdb_id);
-      if (manualTrailerForm.url) params.append('url', manualTrailerForm.url.trim());
-      if (manualTrailerForm.file_path) params.append('file_path', manualTrailerForm.file_path.trim());
-      
-      const res = await fetch(apiUrl(`/nexup/trailers/manual?${params.toString()}`), {
-        method: 'POST'
-      });
-      const data = await res.json();
-      
-      if (res.ok && (data.success || data.trailer_id)) {
-        alert(`Successfully added trailer for "${manualTrailerForm.title}"`);
+      params.append('title', form.title.trim());
+      if (tmdbId) params.append('tmdb_id', tmdbId);
+      if (form.release_date) {
+        params.append('release_date', form.release_date);
+        params.append('year', form.release_date.slice(0, 4));
+      }
+      if (form.radarr_movie_id) params.append('radarr_movie_id', form.radarr_movie_id);
+      if (form.poster_url) params.append('poster_url', form.poster_url);
+      if (form.genres?.length) params.append('genres', form.genres.join(','));
+      params.append(isLink ? 'url' : 'file_path', source);
+
+      const res = await fetch(apiUrl(`/nexup/trailers/manual?${params.toString()}`), { method: 'POST' });
+      const data = await safeJson(res);
+      if (res.ok && (data?.success || data?.trailer_id)) {
+        showAlert(`Added a trailer for "${form.title.trim()}"`, 'success');
         setShowManualTrailerModal(false);
-        setManualTrailerForm({ title: '', tmdb_id: '', url: '', file_path: '' });
+        setManualTrailerForm(EMPTY_MANUAL_TRAILER);
         loadNexupTrailers();
         loadNexupStorage();
       } else {
-        // Handle both FastAPI HTTPException format (detail) and our format (message)
-        const errorMsg = data.detail || data.message || data.error || 'Unknown error';
-        alert('Failed to add trailer: ' + errorMsg);
+        // HTTPException sends detail as text; a validation error sends a list.
+        const detail = data?.detail || data?.message || data?.error;
+        setManualTrailerError(typeof detail === 'string' ? detail : `The server answered ${res.status}. Check Settings > Logs for details.`);
       }
     } catch (err) {
-      alert('Error adding trailer: ' + (err?.message || err));
+      setManualTrailerError(`Couldn't reach NeXroll: ${err?.message || err}`);
     } finally {
       setNexupLoading(false);
     }
@@ -25433,7 +25489,7 @@ const DashboardTiles = {
         onToggleTv={handleToggleTVTrailer}
         onDeleteMovie={handleDeleteTrailer}
         onDeleteTv={handleDeleteTVTrailer}
-        onManual={() => setShowManualTrailerModal(true)}
+        onManual={openManualTrailer}
         generatorTab={generatorTab}
         setGeneratorTab={setGeneratorTab}
         dynamicSettings={dynamicPrerollSettings}
@@ -26693,7 +26749,7 @@ const DashboardTiles = {
                 {syncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Sync</>}
               </button>
               <button
-                onClick={() => setShowManualTrailerModal(true)}
+                onClick={openManualTrailer}
                 className="button"
                 style={{ backgroundColor: '#6c757d', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
@@ -39977,131 +40033,226 @@ const DashboardTiles = {
       )}
 
       {/* Manual Trailer Addition Modal */}
-      {showManualTrailerModal && (
-        <div className="nx-modal-overlay" onClick={() => { if (!nexupLoading) setShowManualTrailerModal(false); }}>
-          <div 
-            className="nx-modal" 
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="manual-trailer-title"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: '600px' }}
+      {showManualTrailerModal && (() => {
+        const form = manualTrailerForm;
+        // Editing the form clears an error from the last try.
+        const set = (patch) => {
+          setManualTrailerForm(prev => ({ ...prev, ...patch }));
+          if (manualTrailerError) setManualTrailerError('');
+        };
+        const busy = nexupLoading;
+        const isLink = form.source !== 'file';
+        const videoId = isLink ? youtubeVideoId(form.url) : null;
+        const providerKnown = Boolean(potoken?.status || youtubeSetup?.status);
+        const providerReady = Boolean(potoken?.status?.configured || potoken?.status?.healthy || youtubeSetup?.status?.authenticated);
+        const retention = Number(nexupSettings.trailer_retention_days || 0);
+        const linkedIds = new Set((nexupTrailers || []).map(t => t.radarr_movie_id).filter(Boolean));
+        const picked = manualUpcoming.movies.find(m => String(m.radarr_id) === String(form.radarr_movie_id)) || null;
+        const windowsServer = /^[A-Za-z]:\\/.test(nexupSettings.storage_path || '');
+        const close = () => {
+          if (busy) return;
+          setShowManualTrailerModal(false);
+          setManualTrailerError('');
+        };
+        const keepText = picked
+          ? (retention > 0
+            ? `NeX-Up removes it when ${picked.title} arrives in your library, or ${retention} days after its release date, whichever comes first.`
+            : `NeX-Up removes it when ${picked.title} arrives in your library.`)
+          : (retention > 0
+            ? `NeX-Up removes it ${retention} days after the release date${form.release_date ? '' : ', or after today if you leave the date blank'}.`
+            : 'It stays until you delete it.');
+
+        return (
+          <Modal
+            title="Add a trailer"
+            subtitle="For a movie NeX-Up couldn't download a trailer for on its own"
+            onClose={close}
+            width={720}
+            className="nx-mt-modal"
+            bodyClassName="nx-mt-body"
+            zIndex={1000}
           >
-            <div className="nx-modal-header">
-              <h2 id="manual-trailer-title" className="nx-modal-title">Add Trailer Manually</h2>
-              <button 
-                onClick={() => setShowManualTrailerModal(false)}
-                className="nx-modal-close"
-                type="button"
-                disabled={nexupLoading}
-                aria-label="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="nx-modal-body" style={{ padding: '1rem' }}>
-            <p style={{ color: '#666', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-              Add a trailer from a local file or URL. This is useful when automatic trailer downloads are blocked by YouTube.
-            </p>
-            
-            <form onSubmit={handleManualTrailerSubmit}>
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 500 }}>
-                  Movie Title <span style={{ color: '#dc3545' }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  value={manualTrailerForm.title}
-                  onChange={(e) => setManualTrailerForm({...manualTrailerForm, title: e.target.value})}
-                  placeholder="e.g., Dune: Part Two"
-                  className="input"
-                  style={{ width: '100%' }}
-                />
+            <form onSubmit={handleManualTrailerSubmit} className="nx-mt-form" noValidate>
+              <div className="nx-mt-scroll">
+                <section className="nx-mt-section" aria-labelledby="nx-mt-movie">
+                  <h4 id="nx-mt-movie"><span className="nx-mt-step">1</span> Which movie</h4>
+                  {nexupSettings.radarr_connected && (
+                    <label className="nx-field">
+                      <span className="nx-label">From Radarr's upcoming movies</span>
+                      <select
+                        className="nx-input"
+                        value={form.radarr_movie_id}
+                        onChange={(e) => pickManualTrailerMovie(e.target.value)}
+                        disabled={busy || manualUpcoming.loading}
+                      >
+                        <option value="">
+                          {manualUpcoming.loading
+                            ? 'Loading upcoming movies…'
+                            : manualUpcoming.movies.length ? 'None: type the details below' : 'No upcoming movies in Radarr'}
+                        </option>
+                        {manualUpcoming.movies.map(movie => {
+                          const hasTrailer = linkedIds.has(movie.radarr_id);
+                          return (
+                            <option key={movie.radarr_id} value={movie.radarr_id} disabled={hasTrailer}>
+                              {movie.title}{movie.year ? ` (${movie.year})` : ''}{hasTrailer ? ' · already has a trailer' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <small>Picking it links the trailer to Radarr, so a sync won't download a second one.</small>
+                    </label>
+                  )}
+
+                  {picked ? (
+                    <div className="nx-mt-picked">
+                      <span className="nx-mt-poster" aria-hidden="true">
+                        {picked.poster_url ? <img src={picked.poster_url} alt="" /> : <Film size={18} />}
+                      </span>
+                      <span className="nx-mt-picked-text">
+                        <strong>{picked.title}{picked.year ? ` (${picked.year})` : ''}</strong>
+                        <span>
+                          {picked.release_date
+                            ? `${picked.release_type ? `${picked.release_type[0].toUpperCase()}${picked.release_type.slice(1)} release` : 'Releases'} ${formatReleaseDate(picked.release_date, { year: 'numeric', month: 'short', day: 'numeric' })}`
+                            : 'No release date yet'}
+                          {Array.isArray(picked.genres) && picked.genres.length ? ` · ${picked.genres.slice(0, 3).join(', ')}` : ''}
+                        </span>
+                      </span>
+                      <button type="button" className="nx-mt-linkbtn" onClick={() => pickManualTrailerMovie('')} disabled={busy}>Change</button>
+                    </div>
+                  ) : (
+                    <div className="nx-mt-grid">
+                      <label className="nx-field nx-mt-span">
+                        <span className="nx-label">Title <em>required</em></span>
+                        <input
+                          className="nx-input"
+                          type="text"
+                          placeholder="e.g. Dune: Part Two"
+                          value={form.title}
+                          onChange={(e) => set({ title: e.target.value })}
+                          disabled={busy}
+                        />
+                      </label>
+                      <label className="nx-field">
+                        <span className="nx-label">Release date</span>
+                        <input
+                          className="nx-input"
+                          type="date"
+                          value={form.release_date}
+                          onChange={(e) => set({ release_date: e.target.value })}
+                          disabled={busy}
+                        />
+                        <small>Keeps the trailer until the movie is out.</small>
+                      </label>
+                      <label className="nx-field">
+                        <span className="nx-label">TMDB ID</span>
+                        <input
+                          className="nx-input"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="e.g. 693134"
+                          value={form.tmdb_id}
+                          onChange={(e) => set({ tmdb_id: e.target.value })}
+                          disabled={busy}
+                        />
+                        <small>The number in the movie's themoviedb.org address. Stops a second trailer for the same movie.</small>
+                      </label>
+                    </div>
+                  )}
+                </section>
+
+                <section className="nx-mt-section" aria-labelledby="nx-mt-source">
+                  <h4 id="nx-mt-source"><span className="nx-mt-step">2</span> Where the trailer comes from</h4>
+                  <div className="nx-mt-tabs" role="tablist" aria-label="Trailer source">
+                    <button type="button" role="tab" aria-selected={isLink} className={isLink ? 'active' : ''} onClick={() => set({ source: 'link' })} disabled={busy}>
+                      <Youtube size={14} /> YouTube or web link
+                    </button>
+                    <button type="button" role="tab" aria-selected={!isLink} className={!isLink ? 'active' : ''} onClick={() => set({ source: 'file' })} disabled={busy}>
+                      <HardDrive size={14} /> File on the server
+                    </button>
+                  </div>
+
+                  {isLink ? (
+                    <>
+                      <label className="nx-field">
+                        <span className="nx-label">Video link</span>
+                        <input
+                          className="nx-input"
+                          type="url"
+                          inputMode="url"
+                          placeholder="https://www.youtube.com/watch?v=…"
+                          value={form.url}
+                          onChange={(e) => set({ url: e.target.value })}
+                          disabled={busy}
+                        />
+                        <small>
+                          YouTube works best, and most other video sites do too. Downloads at your NeX-Up quality setting
+                          {nexupSettings.quality ? ` (${nexupSettings.quality === 'best' ? 'best available' : `${nexupSettings.quality}p`})` : ''}.
+                        </small>
+                      </label>
+                      {picked?.trailer_url && form.url.trim() !== picked.trailer_url && (
+                        <button type="button" className="nx-mt-linkbtn" onClick={() => set({ url: picked.trailer_url })} disabled={busy}>
+                          Use the trailer link Radarr has for this movie
+                        </button>
+                      )}
+                      {videoId && (
+                        <a className="nx-mt-video" href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer">
+                          <img src={youtubeThumbnail(videoId)} alt="" />
+                          <span>
+                            <strong>YouTube video {videoId}</strong>
+                            <small>Open it to check it's the right trailer</small>
+                          </span>
+                          <ExternalLink size={14} aria-hidden="true" />
+                        </a>
+                      )}
+                      {providerKnown && !providerReady && (
+                        <div className="nx-mt-note is-warn">
+                          <AlertTriangle size={14} />
+                          <span>
+                            YouTube access isn't set up, so YouTube may block this download.{' '}
+                            <button type="button" className="nx-mt-linkbtn" onClick={() => { close(); setActiveTab('nexup/settings'); }}>Set it up</button>
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <label className="nx-field">
+                      <span className="nx-label">Path to the video file</span>
+                      <input
+                        className="nx-input"
+                        type="text"
+                        placeholder={windowsServer ? 'C:\\Trailers\\Dune Part Two trailer.mp4' : '/data/trailers/Dune Part Two trailer.mp4'}
+                        value={form.file_path}
+                        onChange={(e) => set({ file_path: e.target.value })}
+                        disabled={busy}
+                      />
+                      <small>A path on the NeXroll server{windowsServer ? '' : ' (inside the container on Docker)'}. NeX-Up copies the file into its trailer folder.</small>
+                    </label>
+                  )}
+                </section>
+
+                <p className="nx-mt-keep"><Clock size={13} aria-hidden="true" /> {keepText}</p>
               </div>
-              
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 500 }}>
-                  TMDB ID <span style={{ color: '#666', fontWeight: 'normal' }}>(optional - for poster)</span>
-                </label>
-                <input
-                  type="text"
-                  value={manualTrailerForm.tmdb_id}
-                  onChange={(e) => setManualTrailerForm({...manualTrailerForm, tmdb_id: e.target.value})}
-                  placeholder="e.g., 693134"
-                  className="input"
-                  style={{ width: '100%' }}
-                />
-                <small style={{ color: '#666' }}>Find this at themoviedb.org in the movie URL</small>
-              </div>
-              
-              <div style={{ 
-                padding: '1rem', 
-                backgroundColor: 'var(--card-bg)', 
-                borderRadius: '8px', 
-                border: '1px solid var(--border-color)',
-                marginBottom: '1rem'
-              }}>
-                <p style={{ margin: '0 0 1rem 0', fontWeight: 500 }}>
-                  Trailer Source <span style={{ color: '#dc3545' }}>*</span>
-                  <span style={{ fontWeight: 'normal', color: '#666', marginLeft: '0.5rem' }}>(provide one)</span>
-                </p>
-                
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.3rem' }}>
-                    URL (YouTube, Vimeo, etc.)
-                  </label>
-                  <input
-                    type="text"
-                    value={manualTrailerForm.url}
-                    onChange={(e) => setManualTrailerForm({...manualTrailerForm, url: e.target.value, file_path: ''})}
-                    placeholder="https://www.youtube.com/watch?v=..."
-                    className="input"
-                    style={{ width: '100%' }}
-                    disabled={!!manualTrailerForm.file_path}
-                  />
+
+              {(manualTrailerError || busy) && (
+                <div className={`nx-mt-status${manualTrailerError ? ' is-error' : ''}`} role={manualTrailerError ? 'alert' : 'status'}>
+                  {manualTrailerError
+                    ? <><AlertCircle size={14} /><span>{manualTrailerError}</span></>
+                    : <><Loader2 size={14} className="spin" /><span>{isLink ? 'Downloading the trailer. This can take a minute.' : 'Copying the file.'}</span></>}
                 </div>
-                
-                <div style={{ textAlign: 'center', color: '#666', marginBottom: '1rem' }}>— OR —</div>
-                
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.3rem' }}>
-                    Local File Path
-                  </label>
-                  <input
-                    type="text"
-                    value={manualTrailerForm.file_path}
-                    onChange={(e) => setManualTrailerForm({...manualTrailerForm, file_path: e.target.value, url: ''})}
-                    placeholder="C:\Trailers\movie_trailer.mp4"
-                    className="input"
-                    style={{ width: '100%' }}
-                    disabled={!!manualTrailerForm.url}
-                  />
-                  <small style={{ color: '#666' }}>The file will be copied to your NeX-Up storage folder</small>
-                </div>
-              </div>
-              
-              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowManualTrailerModal(false)}
-                  className="button button-secondary"
-                  disabled={nexupLoading}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={nexupLoading}
-                  className="button button-success"
-                >
-                  {nexupLoading ? 'Adding...' : 'Add Trailer'}
+              )}
+
+              <div className="nx-actions nx-mt-actions">
+                <span className="nx-mt-hint">Movie trailers only.</span>
+                <button type="button" className="button-secondary" onClick={close} disabled={busy}>Cancel</button>
+                <button type="submit" className="button" disabled={busy}>
+                  {busy ? <Loader2 size={14} className="spin" /> : (isLink ? <Download size={14} /> : <Plus size={14} />)}
+                  {' '}{busy ? (isLink ? 'Downloading…' : 'Adding…') : (isLink ? 'Download trailer' : 'Add trailer')}
                 </button>
               </div>
             </form>
-            </div>
-          </div>
-        </div>
-      )}
+          </Modal>
+        );
+      })()}
 
       {renderCustomizeDashboard()}
 
