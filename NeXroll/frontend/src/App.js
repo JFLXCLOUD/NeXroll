@@ -323,6 +323,12 @@ const isNexUpTrailerPreroll = (preroll) => {
   if (/\/nexup\/(movies|tv|library)\//.test(path)) return true;
   return prerollCategoryNames(preroll).some(n => NEXUP_TRAILER_CATEGORIES.includes(n));
 };
+// A preroll the user should put in a category. NeX-Up's own rows are left out:
+// Library Trailers never get a category, so a library with 33 of them showed
+// "Needs category 33" while the Uncategorized filter, which skips the hidden
+// trailers, listed nothing.
+const needsCategory = (preroll) => isUncategorized(preroll)
+  && !isNexUpTrailerPreroll(preroll) && !isNexUpGeneratedPreroll(preroll);
 
 const HEALTH_CHECK_ACTIONS = {
   media_server: { tab: 'connect', label: 'Connect server' },
@@ -6706,7 +6712,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     //    no categories at all (after v1.13.0 deletes a category, prerolls that had
     //    only that category land here).
     if (filterCategory === 'uncategorized') {
-      filtered = filtered.filter(isUncategorized);
+      filtered = filtered.filter(needsCategory);
     } else if (filterCategory) {
       const catId = parseInt(filterCategory);
       filtered = filtered.filter(p => prerollInCategory(p, catId));
@@ -7654,7 +7660,7 @@ const DashboardTiles = {
     const total = prerolls.length;
     const totalCats = categories.length;
     const usedCats = categories.filter(cat => prerolls.some(p => prerollInCategory(p, cat.id))).length;
-    const uncategorized = prerolls.filter(isUncategorized).length;
+    const uncategorized = prerolls.filter(needsCategory).length;
     const recentCutoff = Date.now() - (7 * 86400000);
     const recentCount = prerolls.filter(p => p.upload_date && new Date(p.upload_date).getTime() >= recentCutoff).length;
     const detail = dashLayout?.tiles?.prerolls?.detail || 'detailed';
@@ -8648,19 +8654,20 @@ const DashboardTiles = {
     if (activeTab === 'library') {
       // category_ids is never returned by the API, so the old check here
       // counted every preroll without a primary category (issue #45).
-      const uncategorized = prerolls.filter(isUncategorized).length;
+      const uncategorized = prerolls.filter(needsCategory).length;
       items = [
         // Count what the grid will actually show. This counted every row in the
         // database while the grid hides NeX-Up output by default, so a library
         // of 6 with 4 generated items advertised "Total prerolls 6" above a list
         // of 2 - reported three sessions running as the Library "undercounting".
-        // The hidden ones are named rather than dropped silently.
+        // The hidden ones are named rather than dropped silently. Hidden
+        // trailers count too; only generated output used to be subtracted.
         { label: 'Total prerolls',
-          value: hiddenGeneratedCount > 0
-            ? `${prerolls.length - hiddenGeneratedCount} of ${prerolls.length}`
+          value: hiddenFromListCount > 0
+            ? `${prerolls.length - hiddenFromListCount} of ${prerolls.length}`
             : prerolls.length,
-          hint: hiddenGeneratedCount > 0
-            ? `${hiddenGeneratedCount} generated preroll${hiddenGeneratedCount === 1 ? '' : 's'} hidden from the list`
+          hint: hiddenFromListCount > 0
+            ? `${hiddenFromListCount} NeX-Up item${hiddenFromListCount === 1 ? '' : 's'} (generated prerolls or trailers) hidden from the list`
             : undefined },
         { label: 'Library size', value: formatBytes(storageBreakdown?.locations?.find(location => location.key === 'prerolls')?.bytes || storageBreakdown?.total_bytes || 0) },
         { label: 'Community matched', value: communityMatchedCount, tone: 'success' },
@@ -11426,7 +11433,7 @@ const DashboardTiles = {
     const matchedCount = prerolls.filter(preroll =>
       preroll.community_preroll_id && !hiddenByToggles(preroll)
     ).length;
-    const uncategorizedCount = prerolls.filter(preroll => isUncategorized(preroll) && !hiddenByToggles(preroll)).length;
+    const uncategorizedCount = prerolls.filter(needsCategory).length;
     const pageNumbers = Array.from(new Set([
       1,
       Math.max(1, currentPageClamped - 1),
