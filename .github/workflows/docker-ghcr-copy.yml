@@ -52,5 +52,7 @@ jobs:
           for tag in $TAGS; do
             echo "Copying ${IMAGE_NAME}:${tag} -> ${GHCR_IMAGE}:${tag}"
             docker buildx imagetools create --tag "${GHCR_IMAGE}:${tag}" "docker.io/${IMAGE_NAME}:${tag}"
-            docker buildx imagetools inspect "${GHCR_IMAGE}:${tag}" | head -n 3
+            # Not piped into head: with pipefail, the closed pipe fails the step.
+            docker buildx imagetools inspect "${GHCR_IMAGE}:${tag}" > inspect.txt
+            head -n 3 inspect.txt
           done
