@@ -619,6 +619,15 @@ Content-Type: application/json
 
 Filler types: `category`, `sequence`, `coming_soon`
 
+### Playback Guard
+
+```http
+GET /settings/playback-guard              # {"minutes": 20, "max_minutes": 120}
+PUT /settings/playback-guard?minutes=10   # 0 turns the guard off
+```
+
+How long a newly started Plex movie holds back a preroll change (see [Playback Guard](Configuration#playback-guard-plex)). `GET /scheduler/status` reports a waiting change as `waiting_for_playback`, with `since`, `seconds`, `context` and `window_minutes`.
+
 ---
 
 ## Path Mappings

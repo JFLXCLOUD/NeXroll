@@ -41,6 +41,18 @@ Control success and informational notifications.
 | **Enabled** | Shows all notifications (success, info, errors) |
 | **Disabled** | Only shows critical error messages |
 
+### Playback Guard (Plex)
+
+Plex reads its preroll list as the prerolls play, so changing the list while someone is watching prerolls makes Plex hang on the next one. When a schedule change, rotation or fallback would change the list, NeXroll first checks what Plex is playing and holds the change while a movie that just started may still be in its prerolls.
+
+- A movie or episode whose position has moved on is playing the movie itself, so it stops holding the change within about a minute. A movie that was already under way when the change came up doesn't wait out the whole window.
+- Music and photos never hold a change.
+- **Settings → General → Playback Guard** sets the longest a change waits on one movie: 5 to 60 minutes, 20 by default. Keep it longer than your longest preroll and trailer run.
+- **Off** applies changes right away, even mid-preroll.
+- The dashboard's Currently showing card says when a change is waiting.
+
+Jellyfin and Emby ask NeXroll for prerolls when playback starts, so the guard doesn't apply to them.
+
 ---
 
 ## Filler Category
@@ -268,6 +280,7 @@ These can be set when running NeXroll (especially useful for Docker):
 | `NEXROLL_PREROLL_PATH` | Preroll storage directory | /data/prerolls |
 | `NEXROLL_SECRETS_DIR` | Secrets storage directory | /data |
 | `SCHEDULER_INTERVAL` | How often to check schedules (seconds) | 60 |
+| `NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES` | `1` turns the Plex playback guard off, whatever the setting says | unset |
 | `TZ` | Container timezone (Docker) | UTC |
 | `PUID` | User ID for file permissions (Docker) | 99 |
 | `PGID` | Group ID for file permissions (Docker) | 100 |

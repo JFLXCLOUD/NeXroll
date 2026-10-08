@@ -1644,6 +1644,10 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [clearWhenInactive, setClearWhenInactive] = useState(false);
   const [clearWhenInactiveLoading, setClearWhenInactiveLoading] = useState(false);
 
+  // Plex playback guard: minutes a newly started movie holds back a preroll change (0 = off)
+  const [playbackGuardMinutes, setPlaybackGuardMinutes] = useState(20);
+  const [playbackGuardStatus, setPlaybackGuardStatus] = useState('');
+
   // Filler category state (fills gaps when no schedules are active)
   const [fillerSettings, setFillerSettings] = useState({
     enabled: false,
@@ -7182,8 +7186,9 @@ const DashboardTiles = {
                 <Clock size={13} />
                 <span>
                   The next preroll change is held while a Plex movie that started in the last
-                  20 minutes may still be playing its prerolls{waitedFor ? ` (waiting ${waitedFor})` : ''}.
-                  Changing it then makes Plex hang. Music and movies already under way don't hold it up.
+                  {' '}{waiting.window_minutes || 20} minutes may still be playing its prerolls{waitedFor ? ` (waiting ${waitedFor})` : ''}.
+                  Changing it then makes Plex hang. Music and movies already under way don't hold it up;
+                  the wait is set under Settings &gt; General &gt; Playback guard.
                 </span>
               </p>
             )}
@@ -23180,6 +23185,34 @@ const DashboardTiles = {
     }
   };
 
+  const loadPlaybackGuard = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/settings/playback-guard'));
+      const data = await safeJson(res);
+      if (data && typeof data.minutes === 'number') {
+        setPlaybackGuardMinutes(data.minutes);
+      }
+    } catch (err) {
+      console.error('Load playback guard error:', err);
+    }
+  }, []);
+
+  const updatePlaybackGuard = async (minutes) => {
+    const previous = playbackGuardMinutes;
+    setPlaybackGuardMinutes(minutes);
+    setPlaybackGuardStatus('saving');
+    try {
+      const res = await fetch(apiUrl('/settings/playback-guard?minutes=' + minutes), { method: 'PUT' });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      setPlaybackGuardStatus('saved');
+    } catch (err) {
+      setPlaybackGuardMinutes(previous);
+      setPlaybackGuardStatus('error');
+    }
+  };
+
   // === Filler Category Functions ===
   // What the configured filler actually plays, in words. Used by the Schedules
   // banner, the calendar, and the day tooltips so they cannot disagree.
@@ -25168,9 +25201,9 @@ const DashboardTiles = {
   // Auto-load settings when opening the Settings tab
   React.useEffect(() => {
     if (activeTab === 'settings') {
-      try { loadVerboseLogging(); loadPassiveMode(); loadClearWhenInactive(); loadFillerSettings(); loadSavedSequences(); } catch {}
+      try { loadVerboseLogging(); loadPassiveMode(); loadClearWhenInactive(); loadPlaybackGuard(); loadFillerSettings(); loadSavedSequences(); } catch {}
     }
-  }, [activeTab, loadVerboseLogging, loadPassiveMode, loadClearWhenInactive, loadFillerSettings]);
+  }, [activeTab, loadVerboseLogging, loadPassiveMode, loadClearWhenInactive, loadPlaybackGuard, loadFillerSettings]);
 
   // Auto-load API keys when opening API Keys tab
   React.useEffect(() => {
@@ -29820,6 +29853,56 @@ const DashboardTiles = {
           <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Info size={14} /> Prerolls remain set on your media server when no schedules are active.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Plex playback guard */}
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
+          <Timer size={16} style={{ color: '#f59e0b' }} />
+          <h3>Playback Guard</h3>
+        </div>
+        <p className="nx-setting-row-desc">
+          Plex reads its preroll list as prerolls play, so a change mid-preroll makes it hang. NeXroll holds a
+          change while a Plex movie that just started may still be in its prerolls, and applies it once the movie
+          is playing. Music and movies already under way never hold it up. Plex only.
+        </p>
+        <div style={{ width: 'min(240px, 100%)' }}>
+          <select
+            className="input"
+            aria-label="Playback guard"
+            value={playbackGuardMinutes}
+            onChange={(e) => updatePlaybackGuard(Number(e.target.value))}
+            disabled={playbackGuardStatus === 'saving'}
+            style={{ width: '100%' }}
+          >
+            {Array.from(new Set([0, 5, 10, 15, 20, 30, 45, 60, playbackGuardMinutes]))
+              .sort((a, b) => a - b)
+              .map((minutes) => (
+                <option key={minutes} value={minutes}>
+                  {minutes === 0 ? 'Off'
+                    : `Wait up to ${minutes} min${minutes === 20 ? ' (default)' : ''}`}
+                </option>
+              ))}
+          </select>
+          <p style={{ fontSize: '0.65rem', color: playbackGuardStatus === 'error' ? '#ef4444' : 'var(--text-secondary)', margin: '0.3rem 0 0' }}>
+            {playbackGuardStatus === 'error'
+              ? 'Could not save. Try again.'
+              : (playbackGuardMinutes === 0 ? 'Changes apply right away.' : 'Longest wait per movie.')}
+            {playbackGuardStatus === 'saving' && ' Saving...'}
+            {playbackGuardStatus === 'saved' && ' Saved.'}
+          </p>
+        </div>
+        {playbackGuardMinutes === 0 && (
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-color)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: '2px', color: '#f59e0b' }} />
+              <span>
+                With the guard off, a rotation or schedule change that lands while someone is watching prerolls
+                can make Plex hang on the next preroll instead of playing it.
+              </span>
             </p>
           </div>
         )}

@@ -64,6 +64,8 @@ from backend.scheduler import (
     reconcile_nexup_trailer_status,
     playback_context,
     _localized_now,
+    normalize_playback_guard_minutes,
+    MAX_PLAYBACK_GUARD_MINUTES,
 )
 from backend.sequence_conditions import block_to_play, describe_condition
 from backend import secure_store
@@ -262,6 +264,10 @@ def ensure_schema() -> None:
             # Settings: ensure clear_when_inactive column (clear prerolls when no schedule active)
             if not _sqlite_has_column("settings", "clear_when_inactive"):
                 _sqlite_add_column("settings", "clear_when_inactive BOOLEAN DEFAULT 0")
+
+            # Settings: Plex playback guard window in minutes (0 = off)
+            if not _sqlite_has_column("settings", "playback_guard_minutes"):
+                _sqlite_add_column("settings", "playback_guard_minutes INTEGER DEFAULT 20")
             
             from backend.trailer_filters import migrate_trailer_ratings
             with engine.begin() as rating_conn:
@@ -19234,6 +19240,37 @@ def update_passive_mode(passive_mode: bool, db: Session = Depends(get_db)):
     log_event('INFO', 'system', f'Passive mode {status}', source='update_passive_mode')
     
     return {"message": f"Passive mode {status}", "passive_mode": passive_mode}
+
+@app.get("/settings/playback-guard")
+def get_playback_guard(db: Session = Depends(get_db)):
+    """How long a newly started Plex video holds back a preroll change (0 = off)."""
+    setting = db.query(models.Setting).first()
+    return {
+        "minutes": normalize_playback_guard_minutes(getattr(setting, "playback_guard_minutes", None)),
+        "max_minutes": MAX_PLAYBACK_GUARD_MINUTES,
+    }
+
+@app.put("/settings/playback-guard")
+def update_playback_guard(minutes: int, db: Session = Depends(get_db)):
+    """Set the Plex playback guard window in minutes; 0 turns the guard off."""
+    if minutes < 0 or minutes > MAX_PLAYBACK_GUARD_MINUTES:
+        raise HTTPException(status_code=400, detail=f"Minutes must be between 0 and {MAX_PLAYBACK_GUARD_MINUTES}")
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+
+    setting.playback_guard_minutes = minutes
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    status = "off" if minutes == 0 else f"{minutes} minutes"
+    _file_log(f"Playback guard set to {status}")
+    log_event('INFO', 'system', f'Playback guard set to {status}', source='update_playback_guard')
+
+    return {"message": f"Playback guard set to {status}", "minutes": minutes}
 
 @app.get("/settings/clear-when-inactive")
 def get_clear_when_inactive(db: Session = Depends(get_db)):

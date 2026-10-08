@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest import mock
 
-from backend.scheduler import Scheduler
+from backend.scheduler import Scheduler, normalize_playback_guard_minutes
 
 
 class FakeSetting:
@@ -157,6 +157,130 @@ class DeferPrerollWriteTests(unittest.TestCase):
                 os.environ.pop("NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES", None)
             else:
                 os.environ["NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES"] = original
+
+
+def movie_xml(offset, *, kind="movie", rating_key="55", session_key="7"):
+    return (f'<MediaContainer size="1"><Video sessionKey="{session_key}" type="{kind}" '
+            f'ratingKey="{rating_key}" viewOffset="{offset}"/></MediaContainer>').encode()
+
+
+class PlaybackProgressTests(unittest.TestCase):
+    """NeXroll only probes when it has a change to make, so the first time it
+    sees a session can be an hour into the movie. A movie whose position moves
+    between probes is past its prerolls and must not hold a change for the
+    whole window."""
+
+    def setUp(self):
+        self.scheduler = Scheduler()
+        self.scheduler._session_probe_ttl_seconds = 0
+        self.setting = FakeSetting()
+
+    def defer(self, xml):
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=xml)):
+            return self.scheduler._defer_preroll_write(self.setting, "rotation")
+
+    def test_a_movie_that_is_playing_stops_holding_up_a_rewrite(self):
+        self.assertTrue(self.defer(movie_xml(3_600_000)))
+        self.assertFalse(self.defer(movie_xml(3_660_000)))
+
+    def test_an_episode_that_is_playing_stops_holding_up_a_rewrite(self):
+        self.assertTrue(self.defer(movie_xml(1000, kind="episode")))
+        self.assertFalse(self.defer(movie_xml(31_000, kind="episode")))
+
+    def test_a_resumed_movie_sitting_still_keeps_holding(self):
+        # While prerolls play before a movie, its own position does not move.
+        self.assertTrue(self.defer(movie_xml(1_200_000)))
+        self.assertTrue(self.defer(movie_xml(1_200_000)))
+
+    def test_clips_never_count_as_past_their_prerolls(self):
+        self.assertTrue(self.defer(movie_xml(1000, kind="clip")))
+        self.assertTrue(self.defer(movie_xml(20_000, kind="clip")))
+
+    def test_jitter_below_a_second_is_not_progress(self):
+        self.assertTrue(self.defer(movie_xml(5000)))
+        self.assertTrue(self.defer(movie_xml(5400)))
+
+    def test_a_different_item_in_the_same_session_starts_over(self):
+        self.assertTrue(self.defer(movie_xml(5000, rating_key="55")))
+        self.assertTrue(self.defer(movie_xml(65_000, rating_key="56")))
+        self.assertFalse(self.defer(movie_xml(125_000, rating_key="56")))
+
+    def test_progress_sticks_while_the_movie_is_paused(self):
+        self.assertTrue(self.defer(movie_xml(5000)))
+        self.assertFalse(self.defer(movie_xml(65_000)))
+        self.assertFalse(self.defer(movie_xml(65_000)))
+
+    def test_a_new_movie_still_holds_while_another_plays_on(self):
+        both = (b'<MediaContainer size="2">'
+                b'<Video sessionKey="7" type="movie" ratingKey="55" viewOffset="125000"/>'
+                b'<Video sessionKey="8" type="movie" ratingKey="60" viewOffset="0"/>'
+                b'</MediaContainer>')
+        self.assertTrue(self.defer(movie_xml(65_000)))
+        self.assertTrue(self.defer(both))
+
+    def test_a_missing_or_bad_view_offset_is_not_progress(self):
+        no_offset = b'<MediaContainer size="1"><Video sessionKey="7" type="movie" ratingKey="55"/></MediaContainer>'
+        self.assertTrue(self.defer(no_offset))
+        self.assertTrue(self.defer(movie_xml("abc")))
+        self.assertTrue(self.defer(movie_xml(90_000)))
+
+    def test_ended_sessions_drop_their_progress(self):
+        self.defer(movie_xml(5000))
+        self.defer(IDLE_XML)
+        self.assertEqual(self.scheduler._session_progress, {})
+
+
+class PlaybackGuardSettingTests(unittest.TestCase):
+    def setUp(self):
+        self.scheduler = Scheduler()
+        self.scheduler._session_probe_ttl_seconds = 0
+
+    def test_normalize(self):
+        self.assertEqual(normalize_playback_guard_minutes(None), 20)
+        self.assertEqual(normalize_playback_guard_minutes(""), 20)
+        self.assertEqual(normalize_playback_guard_minutes("abc"), 20)
+        self.assertEqual(normalize_playback_guard_minutes(0), 0)
+        self.assertEqual(normalize_playback_guard_minutes("45"), 45)
+        self.assertEqual(normalize_playback_guard_minutes(-5), 0)
+        self.assertEqual(normalize_playback_guard_minutes(500), 120)
+
+    def test_zero_turns_the_guard_off_without_probing(self):
+        setting = FakeSetting()
+        setting.playback_guard_minutes = 0
+        with mock.patch("backend.scheduler.requests.get",
+                        return_value=response(content=SESSION_XML)) as get:
+            self.assertFalse(self.scheduler._defer_preroll_write(setting, "rotation"))
+            self.assertEqual(get.call_count, 0)
+
+    def test_turning_the_guard_off_releases_a_waiting_change(self):
+        setting = FakeSetting()
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=SESSION_XML)):
+            self.assertTrue(self.scheduler._defer_preroll_write(setting, "rotation"))
+        self.assertIsNotNone(self.scheduler.deferred_write_state())
+        setting.playback_guard_minutes = 0
+        self.assertFalse(self.scheduler._defer_preroll_write(setting, "rotation"))
+        self.assertIsNone(self.scheduler.deferred_write_state())
+
+    def test_a_shorter_window_releases_sooner(self):
+        setting = FakeSetting()
+        setting.playback_guard_minutes = 5
+        xml = b'<MediaContainer size="1"><Video sessionKey="7" type="movie"/></MediaContainer>'
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=xml)):
+            self.assertTrue(self.scheduler._defer_preroll_write(setting, "rotation"))
+            self.assertEqual(self.scheduler.deferred_write_state()["window_minutes"], 5)
+            self.scheduler._session_first_seen["7"] -= datetime.timedelta(minutes=6)
+            self.assertFalse(self.scheduler._defer_preroll_write(setting, "rotation"))
+
+    def test_changing_the_window_drops_the_cached_count(self):
+        setting = FakeSetting()
+        self.scheduler._session_probe_ttl_seconds = 600
+        xml = b'<MediaContainer size="1"><Video sessionKey="7" type="movie"/></MediaContainer>'
+        with mock.patch("backend.scheduler.requests.get", return_value=response(content=xml)) as get:
+            self.assertTrue(self.scheduler._defer_preroll_write(setting, "rotation"))
+            self.scheduler._session_first_seen["7"] -= datetime.timedelta(minutes=10)
+            setting.playback_guard_minutes = 5
+            self.assertFalse(self.scheduler._defer_preroll_write(setting, "rotation"))
+            self.assertEqual(get.call_count, 2)
 
 
 class TrailerRetentionGuardTests(unittest.TestCase):

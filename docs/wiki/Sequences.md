@@ -211,7 +211,7 @@ Example:
 
 Wherever NeXroll picks, it doesn't repeat a preroll until every other one in the pool has played. Each random block, each category and each server keeps its own rotation. Adding, removing or disabling a preroll doesn't start the rotation over, and a restart picks up where it left off.
 
-**While Plex is playing:** Plex reads its preroll list as it goes, so changing the list while a movie's prerolls are playing makes Plex hang. NeXroll waits until every Plex movie started in the last 20 minutes is past its prerolls before it picks again. Music, photos and movies already under way don't hold it up.
+**While Plex is playing:** Plex reads its preroll list as it goes, so changing the list while a movie's prerolls are playing makes Plex hang. NeXroll holds a new pick while a Plex movie that just started may still be in its prerolls, and makes it once the movie itself is playing (by default for at most 20 minutes; see [Settings → General → Playback Guard](Configuration#playback-guard-plex)). Music, photos and movies already under way don't hold it up.
 
 ## Example Sequences
 
@@ -271,7 +271,7 @@ Wherever NeXroll picks, it doesn't repeat a preroll until every other one in the
 ### Random Blocks Always Same
 
 - On Plex, random blocks change every 10 minutes, not with every movie; see [How often random picks change](#how-often-random-picks-change)
-- A Plex movie started in the last 20 minutes holds the change back until it is past its prerolls
+- A Plex movie that just started holds the change back until it is past its prerolls (see [Playback Guard](Configuration#playback-guard-plex))
 - A random block can't vary if its category has only as many prerolls as the block plays
 
 ### Empty Sequence Error

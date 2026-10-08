@@ -34,6 +34,23 @@ from backend.sequence_conditions import (
     skip_reason,
 )
 
+# Playback guard: how long a newly seen Plex video session holds back a
+# preroll-list rewrite. Long enough for any preroll-and-trailer run; 0 is off.
+DEFAULT_PLAYBACK_GUARD_MINUTES = 20
+MAX_PLAYBACK_GUARD_MINUTES = 120
+
+
+def normalize_playback_guard_minutes(value) -> int:
+    """A stored or submitted guard window as whole minutes in 0..120."""
+    if value is None or value == "":
+        return DEFAULT_PLAYBACK_GUARD_MINUTES
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_PLAYBACK_GUARD_MINUTES
+    return max(0, min(MAX_PLAYBACK_GUARD_MINUTES, minutes))
+
+
 # Logging helpers - direct file writes to avoid circular imports
 class ApplyResult:
     """What happened on each delivery channel for one apply.
@@ -734,8 +751,12 @@ class Scheduler:
         # Video sessions by key -> when NeXroll first saw them. A rewrite waits
         # only for sessions seen within the window (see _count_sessions_in_preroll_window).
         self._session_first_seen: dict = {}
+        # Video sessions by key -> what was playing, at which position, and
+        # whether the main item has been seen playing (past its prerolls).
+        self._session_progress: dict = {}
         self._session_probe_blocking: Optional[int] = None
-        self._preroll_window_seconds: float = 20 * 60.0
+        # Settings > General > Playback guard; 0 turns the guard off.
+        self._preroll_window_seconds: float = DEFAULT_PLAYBACK_GUARD_MINUTES * 60.0
         self._deferred_write_since: Optional[datetime.datetime] = None
         self._deferred_write_context: Optional[str] = None
         # Paths currently published to Plex, so retention never deletes a file
@@ -1932,8 +1953,17 @@ class Scheduler:
         a movie well under way no longer holds up a rotation. How Plex shows a
         preroll in /status/sessions doesn't matter here: whether the preroll is
         its own session or the movie's, it is within the window.
+
+        NeXroll only probes when it has a change to make, so "first seen" is
+        not "started": a movie an hour in when a schedule changes would still
+        hold the change for the whole window. A movie or episode whose position
+        has moved on between two probes is playing the item itself, so its
+        prerolls are over and it stops counting straight away. Prerolls and
+        trailers show up as clips, and a resumed movie sits still while
+        anything plays before it, so neither looks like progress.
         """
         seen = {}
+        progress = {}
         for element in list(root):
             if element.tag in ("Track", "Photo"):
                 continue
@@ -1943,10 +1973,39 @@ class Scheduler:
                    or (session.get("id") if session is not None else None)
                    or f"{element.get('ratingKey')}:{player.get('machineIdentifier') if player is not None else ''}")
             seen[key] = self._session_first_seen.get(key, now)
+            progress[key] = self._session_progress_entry(key, element)
         # Forget sessions that ended, so a reused key starts a new window.
         self._session_first_seen = seen
-        return sum(1 for first in seen.values()
-                   if (now - first).total_seconds() < self._preroll_window_seconds)
+        self._session_progress = progress
+        return sum(1 for key, first in seen.items()
+                   if (now - first).total_seconds() < self._preroll_window_seconds
+                   and not progress[key]["past_prerolls"])
+
+    # Position must move by at least this much between probes to count as
+    # playing; Plex's reported viewOffset can wobble by a frame or two.
+    _MIN_PROGRESS_MS = 1000
+
+    def _session_progress_entry(self, key, element) -> dict:
+        """Where one video session is now, and whether it is past its prerolls."""
+        rating_key = element.get("ratingKey")
+        try:
+            offset = int(element.get("viewOffset")) if element.get("viewOffset") is not None else None
+        except (TypeError, ValueError):
+            offset = None
+        main_item = element.get("type") in ("movie", "episode")
+        previous = self._session_progress.get(key)
+        past = False
+        if previous and previous.get("rating_key") == rating_key:
+            past = previous.get("past_prerolls", False)
+            before = previous.get("offset")
+            if (not past and main_item and offset is not None and before is not None
+                    and offset - before >= self._MIN_PROGRESS_MS):
+                past = True
+        return {"rating_key": rating_key, "offset": offset, "past_prerolls": past}
+
+    def _playback_guard_minutes(self, setting) -> int:
+        """The configured guard window in minutes; 0 means the guard is off."""
+        return normalize_playback_guard_minutes(getattr(setting, "playback_guard_minutes", None))
 
     def _plex_blocking_session_count(self, setting) -> Optional[int]:
         """Sessions a preroll-list rewrite could disturb, or None if unknown."""
@@ -1971,8 +2030,16 @@ class Scheduler:
         the write will fail anyway, and we must never let an unreachable server
         wedge scheduling permanently.
         """
-        if os.environ.get("NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES") == "1":
+        minutes = self._playback_guard_minutes(setting)
+        if os.environ.get("NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES") == "1" or minutes == 0:
+            if self._deferred_write_since is not None:
+                _scheduler_log(f"Playback guard is off; applying deferred preroll change ({context})", event=True)
+                self._deferred_write_since = None
+                self._deferred_write_context = None
             return False
+        if self._preroll_window_seconds != minutes * 60.0:
+            self._preroll_window_seconds = minutes * 60.0
+            self._session_probe_at = None  # the cached count used the old window
 
         count = self._plex_blocking_session_count(setting)
         if not count:
@@ -1992,8 +2059,9 @@ class Scheduler:
             self._deferred_write_since = datetime.datetime.now()
             _scheduler_log(
                 f"Deferring preroll change ({context}): {count} Plex video session(s) started in the "
-                f"last {int(self._preroll_window_seconds // 60)} minutes may still be in their prerolls. "
-                f"Changing prerolls now would make Plex hang on its next preroll.",
+                f"last {minutes} minutes may still be in their prerolls. "
+                f"Changing prerolls now would make Plex hang on its next preroll. "
+                f"It applies once they reach the movie (Settings > General > Playback guard).",
                 event=True,
             )
         else:
@@ -2014,6 +2082,7 @@ class Scheduler:
             "since": since.isoformat(),
             "seconds": int((datetime.datetime.now() - since).total_seconds()),
             "context": self._deferred_write_context,
+            "window_minutes": int(self._preroll_window_seconds // 60),
         }
 
     def _log_apply_outcome(self, failure_message: str, subject: str, level: str = "ERROR") -> None:
@@ -2504,9 +2573,13 @@ class Scheduler:
                     state_key = f"sequence_schedule:{chosen_schedule.id}:{'ok' if applied_ok else 'plex_failed'}"
                     if self._last_logged_state != state_key:
                         msg = f"Applied sequence-only schedule '{chosen_schedule.name}' (ID {chosen_schedule.id})"
-                        if not applied_ok:
-                            msg += " — Plex apply failed; dashboard updated anyway"
-                        _scheduler_log(msg, level="WARNING" if not applied_ok else "INFO")
+                        level = "INFO"
+                        if not applied_ok and self._deferred_write_since is not None:
+                            msg += " — Plex gets it once current playback reaches the movie"
+                        elif not applied_ok:
+                            msg += f" — Plex apply failed ({applied_ok.describe() if hasattr(applied_ok, 'describe') else 'no detail'}); dashboard updated anyway"
+                            level = "WARNING"
+                        _scheduler_log(msg, level=level)
                         self._last_logged_state = state_key
                         self._last_logged_time = now
                 else:
@@ -2542,7 +2615,11 @@ class Scheduler:
                 # on its own does not say which one, and a household with a
                 # healthy Jellyfin and a dead Plex reads as totally broken.
                 sched_name = chosen_schedule.name if chosen_schedule else 'N/A'
-                if not applied_ok:
+                if getattr(applied_ok, "plex", None) is False and self._deferred_write_since is not None:
+                    _scheduler_log(
+                        f"Category {desired_category_id} (schedule '{sched_name}') is active; Plex gets it "
+                        f"once current playback reaches the movie")
+                elif not applied_ok:
                     _scheduler_log(
                         f"Apply failed for category {desired_category_id} (schedule '{sched_name}') "
                         f"— {getattr(applied_ok, 'describe', lambda: 'no detail')()} — dashboard updated anyway",
@@ -2629,15 +2706,24 @@ class Scheduler:
                         reason = "sequence retry"
                     else:
                         reason = "random rotation"
+                    # A rotation held back by the playback guard returns False and
+                    # retries each tick until playback reaches the movie; that is
+                    # the guard working, not a failure, so it is not a warning.
+                    detail = f"; {applied_ok.describe()}" if hasattr(applied_ok, "describe") else ""
                     if chosen_schedule:
                         if applied_ok:
                             _scheduler_log(f"Re-applied schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}): {reason}")
                         else:
-                            _scheduler_log(f"Plex re-apply failed for schedule '{chosen_schedule.name}' ({reason}) — dashboard updated anyway", level="WARNING")
+                            self._log_apply_outcome(
+                                f"Re-apply failed for schedule '{chosen_schedule.name}' ({reason}{detail}) "
+                                f"— dashboard updated anyway",
+                                f"schedule '{chosen_schedule.name}' ({reason})", level="WARNING")
                     elif applied_ok:
                         _scheduler_log(f"Re-applied fallback category {desired_category_id}: {reason}")
                     else:
-                        _scheduler_log(f"Plex re-apply failed for fallback category {desired_category_id} ({reason})", level="WARNING")
+                        self._log_apply_outcome(
+                            f"Re-apply failed for fallback category {desired_category_id} ({reason}{detail})",
+                            f"fallback category {desired_category_id} ({reason})", level="WARNING")
                 else:
                     # No re-apply needed, but log occasionally and ensure active_schedule_id
                     # is sane (defensive — schedule_changed already handles it above).

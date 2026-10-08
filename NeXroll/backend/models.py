@@ -341,6 +341,8 @@ class Setting(Base):
     passive_mode = Column(Boolean, default=False)  # When enabled, only manage prerolls during active schedules (allows coexistence with other preroll managers)
     # Clear prerolls when inactive
     clear_when_inactive = Column(Boolean, default=False)  # When enabled, clear Plex preroll field when no schedules are active
+    # Plex playback guard: minutes a newly started video holds back a preroll change (0 = off)
+    playback_guard_minutes = Column(Integer, default=20)
     
     # NeX-Up Settings (Radarr integration for upcoming movie trailers)
     nexup_enabled = Column(Boolean, default=False)  # Master enable/disable for NeX-Up feature
