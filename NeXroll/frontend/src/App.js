@@ -23587,11 +23587,12 @@ const DashboardTiles = {
   // Install the provider from the NeX-Up card (reuses the System-page installer).
   const handleInstallPotokenFromNexup = async () => {
     setInstallingDep('potoken');
+    const updating = Boolean(potoken.status?.outdated);
     try {
-      showAlert('Installing YouTube downloader (this can take a few minutes)…', 'info');
+      showAlert(`${updating ? 'Updating' : 'Installing'} the YouTube downloader (this can take a few minutes)…`, 'info');
       const res = await fetch(apiUrl('system/dependencies/install/potoken'), { method: 'POST', credentials: 'include' });
       const data = await res.json().catch(() => ({}));
-      showAlert(data.message || (data.success ? 'Installed.' : 'Install failed.'), data.success ? 'success' : 'error');
+      showAlert(data.message || (data.success ? (updating ? 'Updated.' : 'Installed.') : (updating ? 'Update failed.' : 'Install failed.')), data.success ? 'success' : 'error');
       await loadPotoken();
     } catch (e) {
       showAlert('Install failed: ' + (e?.message || e), 'error');
@@ -25580,6 +25581,7 @@ const DashboardTiles = {
         onTestPotoken={handleTestPotoken}
         onConfigureYoutube={() => setYoutubeSetup(previous => ({ ...previous, showWizard: true, wizardStep: 1, testResult: null }))}
         onInstallPotoken={handleInstallPotokenFromNexup}
+        installingPotoken={installingDep === 'potoken'}
         onTestTmdbKey={handleTestTmdbKey}
         tmdbKeyTest={tmdbKeyTest}
       />
