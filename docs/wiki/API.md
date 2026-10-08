@@ -826,6 +826,8 @@ GET /nexup/settings                    # Get NeX-Up settings
 PUT /nexup/settings                    # Update NeX-Up settings
 ```
 
+`trailer_language` takes a TMDB language code (`en`, `fr-FR`, `fr-CA`, `de-DE`, `es-ES`, `es-MX`, ...); `GET` lists the choices as `trailer_languages`. `trailer_language_fallback` is `english` or `skip`. A sync reports movies skipped for having no trailer in the language as `skipped_no_language`.
+
 ### Radarr
 
 ```http

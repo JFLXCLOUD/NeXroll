@@ -376,6 +376,8 @@ class Setting(Base):
     nexup_tv_category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Auto-created category for TV trailers
     nexup_last_sonarr_sync = Column(DateTime, nullable=True)  # Last time NeX-Up synced with Sonarr
     nexup_max_trailer_duration = Column(Integer, default=180)  # Maximum trailer duration in seconds (0 = no limit)
+    nexup_trailer_language = Column(String, default="en")  # TMDB language code to prefer (backend/trailer_language.py)
+    nexup_trailer_language_fallback = Column(String, default="english")  # "english" or "skip" when none in that language
     nexup_include_unmonitored_movies = Column(Boolean, default=False)  # Include unmonitored movies from Radarr
     nexup_include_unmonitored_shows = Column(Boolean, default=False)  # Include unmonitored TV shows from Sonarr
     

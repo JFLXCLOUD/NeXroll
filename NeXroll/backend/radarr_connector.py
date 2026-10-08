@@ -16,6 +16,8 @@ from pathlib import Path
 
 import httpx
 
+from backend import trailer_language
+
 logger = logging.getLogger(__name__)
 
 # TMDB API for getting trailer sources
@@ -111,13 +113,21 @@ class TMDBTrailerFetcher:
         self.apple_fetcher = AppleTrailerFetcher()
         self.tmdb_available = True  # Track if TMDB is working
     
-    async def get_trailer_sources(self, tmdb_id: int, title: str = None, year: int = None) -> List[Dict[str, Any]]:
+    async def get_trailer_sources(self, tmdb_id: int, title: str = None, year: int = None,
+                                  language: str = trailer_language.DEFAULT_LANGUAGE) -> List[Dict[str, Any]]:
         """
         Get all trailer sources for a movie from TMDB and Apple Trailers.
         Returns list of trailers with source info (YouTube, Vimeo, Apple, etc.)
         Prioritizes sources that don't have bot detection.
+
+        With a language other than English, TMDB is asked for that language's
+        videos as well as English ones, each source carries its `language` and
+        `region` tags and a `language_rank`, and sources in the language sort
+        first. English sends no language parameters, as before.
         """
         trailers = []
+        language = trailer_language.normalize_language(language)
+        english = language == trailer_language.DEFAULT_LANGUAGE
         
         # Try Apple Trailers first (no bot detection!)
         if title:
@@ -133,7 +143,9 @@ class TMDBTrailerFetcher:
                             'name': 'Apple Trailer (Direct)',
                             'official': True,
                             'size': 1080,
-                            'priority': 0  # Highest priority
+                            'priority': 0,  # Highest priority
+                            'language': 'en',
+                            'region': 'US',
                         })
                         logger.info(f"Found Apple Trailer for {title}")
             except Exception as e:
@@ -145,7 +157,7 @@ class TMDBTrailerFetcher:
                 async with httpx.AsyncClient(timeout=30) as client:
                     response = await client.get(
                         f"{self.base_url}/movie/{tmdb_id}/videos",
-                        params={'api_key': self.api_key}
+                        params={'api_key': self.api_key, **trailer_language.tmdb_video_params(language)}
                     )
                     if response.status_code == 401:
                         logger.warning("TMDB API key invalid or expired - will use alternative sources")
@@ -159,6 +171,7 @@ class TMDBTrailerFetcher:
                                 site = video.get('site', '').lower()
                                 key = video.get('key', '')
                                 
+                                tags = {'language': video.get('iso_639_1'), 'region': video.get('iso_3166_1')}
                                 if site == 'youtube' and key:
                                     trailers.append({
                                         'source': 'youtube',
@@ -167,7 +180,8 @@ class TMDBTrailerFetcher:
                                         'name': video.get('name', 'Trailer'),
                                         'official': video.get('official', False),
                                         'size': video.get('size', 1080),
-                                        'priority': 2  # Lower priority due to bot detection
+                                        'priority': 2,  # Lower priority due to bot detection
+                                        **tags,
                                     })
                                 elif site == 'vimeo' and key:
                                     trailers.append({
@@ -177,7 +191,8 @@ class TMDBTrailerFetcher:
                                         'name': video.get('name', 'Trailer'),
                                         'official': video.get('official', False),
                                         'size': video.get('size', 1080),
-                                        'priority': 1  # Medium priority
+                                        'priority': 1,  # Medium priority
+                                        **tags,
                                     })
                     
             except httpx.HTTPStatusError as e:
@@ -189,11 +204,16 @@ class TMDBTrailerFetcher:
             except Exception as e:
                 logger.error(f"Error fetching TMDB trailers for {tmdb_id}: {e}")
         
-        # Sort by: priority (lower is better), then official, then size
+        for trailer in trailers:
+            trailer['language_rank'] = (0 if english else trailer_language.language_rank(
+                language, trailer.get('language'), trailer.get('region')))
+
+        # Sort by: language, then priority (lower is better), then official, then size
         trailers.sort(key=lambda x: (
+            x['language_rank'],
             x.get('priority', 99),
             not x['official'],
-            -x['size']
+            -(x['size'] or 0)
         ))
         
         return trailers
@@ -743,7 +763,8 @@ def _format_duration(seconds) -> str:
 class TrailerDownloader:
     """Handles downloading trailers using yt-dlp with TMDB source discovery and browser cookie support"""
     
-    def __init__(self, storage_path: str, quality: str = '1080', use_cookies: bool = True, cookie_browser: str = 'auto', tmdb_api_key: str = None, max_duration: int = 0):
+    def __init__(self, storage_path: str, quality: str = '1080', use_cookies: bool = True, cookie_browser: str = 'auto', tmdb_api_key: str = None, max_duration: int = 0,
+                 language: str = trailer_language.DEFAULT_LANGUAGE, language_fallback: str = trailer_language.DEFAULT_FALLBACK):
         self.base_storage_path = Path(storage_path)
         self.base_storage_path.mkdir(parents=True, exist_ok=True)
         
@@ -758,6 +779,9 @@ class TrailerDownloader:
         
         self.quality = quality
         self.max_duration = max_duration  # Max trailer duration in seconds (0 = no limit)
+        # NeX-Up > Settings > Trailer language, and what to do without one.
+        self.language = trailer_language.normalize_language(language)
+        self.language_fallback = trailer_language.normalize_fallback(language_fallback)
         self.use_cookies = use_cookies
         self.cookie_browser = cookie_browser  # 'chrome', 'firefox', 'edge', 'brave', 'auto'
         self.tmdb = TMDBTrailerFetcher(tmdb_api_key=tmdb_api_key)
@@ -978,27 +1002,50 @@ class TrailerDownloader:
             # caller asked to use exactly the provided URL (user-chosen alternate),
             # so a failure isn't masked by quietly grabbing a different trailer.
             if tmdb_id and not only_provided_url:
-                tmdb_sources = await self.tmdb.get_trailer_sources(tmdb_id, title=title, year=year)
+                tmdb_sources = await self.tmdb.get_trailer_sources(
+                    tmdb_id, title=title, year=year, language=self.language)
                 
                 # Add TMDB sources, but avoid duplicates with the Radarr URL
                 for source in tmdb_sources:
                     # Skip if this is the same YouTube video as Radarr provided
-                    if url and source.get('url') == url:
-                        continue
+                    same_as_radarr = bool(url and source.get('url') == url)
                     # Also check by video ID
-                    if url and source.get('source') == 'youtube':
+                    if url and not same_as_radarr and source.get('source') == 'youtube':
                         radarr_vid_id = url.split('v=')[-1].split('&')[0] if 'v=' in url else None
                         source_vid_id = source.get('key') or (source.get('url', '').split('v=')[-1].split('&')[0] if 'v=' in source.get('url', '') else None)
-                        if radarr_vid_id and source_vid_id and radarr_vid_id == source_vid_id:
-                            continue
+                        same_as_radarr = bool(radarr_vid_id and source_vid_id and radarr_vid_id == source_vid_id)
+                    if same_as_radarr:
+                        # TMDB knows the Radarr trailer's language; keep that on it.
+                        for key in ('language', 'region', 'language_rank'):
+                            if key in source:
+                                trailer_sources[0][key] = source[key]
+                        continue
                     trailer_sources.append(source)
+
+            if not only_provided_url and not trailer_language.is_english(self.language):
+                trailer_sources = self._order_by_language(trailer_sources)
+                if not trailer_sources and tmdb_id and not self.tmdb.tmdb_available:
+                    # Not "no trailer in that language": NeXroll couldn't ask.
+                    message = (
+                        f"TMDB_KEY_REJECTED: TMDB rejected the API key, so NeXroll can't look up "
+                        f"{trailer_language.label(self.language)} trailers. Add your own free TMDB API key "
+                        f"under NeX-Up > Settings > Metadata and automation, then sync again.")
+                    logger.warning(f"{title}: {message}")
+                    return {'error': 'TMDB_KEY_REJECTED', 'message': message}
+                if not trailer_sources:
+                    message = (
+                        f"NO_LANGUAGE_MATCH: TMDB lists no {trailer_language.label(self.language)} trailer for "
+                        f"this movie yet, and NeX-Up is set to skip movies without one. It is checked again "
+                        f"on the next sync.")
+                    logger.info(f"{title}: {message}")
+                    return {'error': 'NO_LANGUAGE_MATCH', 'message': message}
             
             if not trailer_sources:
                 logger.warning(f"No trailer sources found for {title}")
                 return None
             
-            # Sort by priority (lower = better)
-            trailer_sources.sort(key=lambda x: x.get('priority', 99))
+            # Sort by priority (lower = better); a chosen language comes first.
+            trailer_sources.sort(key=lambda x: (x.get('language_rank', 0), x.get('priority', 99)))
             
             logger.info(f"Found {len(trailer_sources)} trailer sources for {title}")
             for i, src in enumerate(trailer_sources[:3]):  # Log first 3
@@ -1037,7 +1084,7 @@ class TrailerDownloader:
                     result = await self._download_direct_url(source_url, output_path, title)
                     if result:
                         logger.info(f"Successfully downloaded from Apple Trailers: {title}")
-                        return result
+                        return self._with_source(result, source)
                     last_error = f"Apple Trailers download failed for {source_name}"
                 
                 elif source_type == 'vimeo':
@@ -1047,7 +1094,7 @@ class TrailerDownloader:
                         [], creationflags, output_dir
                     )
                     if isinstance(result, dict) and result.get('path'):
-                        return result
+                        return self._with_source(result, source)
                     if isinstance(result, dict) and result.get('error') == 'too_long':
                         too_long_error = result['message']
                     last_error = f"Vimeo download failed for {source_name}"
@@ -1118,7 +1165,7 @@ class TrailerDownloader:
                         )
                         if isinstance(result, dict) and result.get('path'):
                             logger.info(f"Strategy {i+1} succeeded!")
-                            return result
+                            return self._with_source(result, source)
                         # Every client sees the same length, so the remaining
                         # strategies would only be rejected the same way.
                         if isinstance(result, dict) and result.get('error') == 'too_long':
@@ -1243,6 +1290,32 @@ class TrailerDownloader:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return {'error': 'EXCEPTION', 'message': str(e)}
     
+    def _order_by_language(self, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Rank sources against the chosen (non-English) language.
+
+        A source TMDB didn't tag, like Radarr's own link or one TMDB doesn't
+        list, counts as another language: Radarr's trailer is TMDB's English
+        one. With the "skip" fallback only sources in the language are kept,
+        from any region.
+        """
+        ordered = []
+        for source in sources:
+            if 'language_rank' not in source or source.get('language') is None:
+                source['language_rank'] = trailer_language.language_rank(
+                    self.language, source.get('language'), source.get('region'))
+            if (self.language_fallback == trailer_language.FALLBACK_SKIP
+                    and source['language_rank'] > trailer_language.RANK_LANGUAGE):
+                continue
+            ordered.append(source)
+        return ordered
+
+    @staticmethod
+    def _with_source(result: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
+        """Record which source a download came from, so callers store its URL."""
+        result['source_url'] = source.get('url')
+        result['language'] = source.get('language')
+        return result
+
     async def _download_with_ytdlp(
         self,
         url: str,

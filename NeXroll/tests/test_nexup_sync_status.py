@@ -82,9 +82,11 @@ class FakeDownloader:
     """Writes a real file so the on-disk checks are exercised, not mocked."""
 
     last_path = None
+    options = {}
 
-    def __init__(self, storage_path, quality, max_duration=0):
+    def __init__(self, storage_path, quality, max_duration=0, **options):
         self.storage_path = storage_path
+        FakeDownloader.options = options
 
     async def download_trailer(self, url, title, tmdb_id=None, tvdb_id=None, year=None):
         path = os.path.join(self.storage_path, f"{title}.mp4")
@@ -159,6 +161,16 @@ class AutoSyncStatusTests(unittest.TestCase):
         with self.Session() as db:
             self.run_radarr_sync(db)
             self.assertEqual(db.query(models.ComingSoonTrailer).one().status, "downloaded")
+
+    def test_radarr_auto_sync_passes_the_trailer_language(self):
+        with self.Session() as db:
+            setting = db.query(models.Setting).first()
+            setting.nexup_trailer_language = "fr-CA"
+            setting.nexup_trailer_language_fallback = "skip"
+            db.commit()
+            self.run_radarr_sync(db)
+        self.assertEqual(FakeDownloader.options,
+                         {"language": "fr-CA", "language_fallback": "skip", "tmdb_api_key": None})
 
     def test_sonarr_auto_sync_records_the_download_as_downloaded(self):
         with self.Session() as db:

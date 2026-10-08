@@ -24217,6 +24217,9 @@ const DashboardTiles = {
       if (data.skipped_too_long > 0) {
         message += `\n• Skipped (longer than Max Trailer Duration): ${data.skipped_too_long}`;
       }
+      if (data.skipped_no_language > 0) {
+        message += `\n• Skipped (no trailer in your Trailer language yet): ${data.skipped_no_language}`;
+      }
 
       if (data.errors && data.errors.length > 0) {
         message += `\n\nErrors:\n${data.errors.slice(0, 3).join('\n')}`;
@@ -24259,7 +24262,11 @@ const DashboardTiles = {
 
   // Open the alternate-trailer picker (top 3 YouTube candidates to preview/choose).
   const openAltTrailers = async ({ kind, id, season = 1, title, reason = '' }) => {
-    setAltTrailers({ open: true, loading: true, kind, id, season, title: title || '', candidates: [], error: null, downloadingUrl: null, previewId: null, failedUrls: {}, defaultReason: reason || '' });
+    // Movie trailers follow NeX-Up > Settings > Trailer language; TV ones are English.
+    const languageCode = kind === 'tv' ? 'en' : (nexupSettings?.trailer_language || 'en');
+    const languageLabel = languageCode === 'en' ? ''
+      : ((nexupSettings?.trailer_languages || []).find(l => l.code === languageCode)?.label || '');
+    setAltTrailers({ open: true, loading: true, kind, id, season, title: title || '', candidates: [], error: null, downloadingUrl: null, previewId: null, failedUrls: {}, defaultReason: reason || '', languageLabel });
     try {
       const url = kind === 'tv'
         ? apiUrl(`/nexup/sonarr/trailers/search?sonarr_series_id=${id}&season_number=${season}`)
@@ -24267,7 +24274,12 @@ const DashboardTiles = {
       const res = await fetch(url);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'Trailer search failed');
-      setAltTrailers(prev => ({ ...prev, loading: false, candidates: data.candidates || [] }));
+      setAltTrailers(prev => ({
+        ...prev,
+        loading: false,
+        candidates: data.candidates || [],
+        languageLabel: data.language && data.language !== 'en' ? (data.language_label || '') : '',
+      }));
     } catch (e) {
       setAltTrailers(prev => ({ ...prev, loading: false, error: e?.message || String(e) }));
     }
@@ -41092,7 +41104,7 @@ const DashboardTiles = {
 
           {altTrailers.loading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '2rem', justifyContent: 'center', color: 'var(--text-secondary)' }}>
-              <Loader2 size={20} className="spin" /> Searching YouTube for trailers…
+              <Loader2 size={20} className="spin" /> Searching for {altTrailers.languageLabel ? `${altTrailers.languageLabel} ` : ''}trailers…
             </div>
           ) : altTrailers.error && altTrailers.candidates.length === 0 ? (
             <div style={{ padding: '1rem', background: 'rgba(220,53,69,0.1)', border: '1px solid rgba(220,53,69,0.4)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.88rem' }}>
@@ -41132,6 +41144,11 @@ const DashboardTiles = {
                     )}
                     <div style={{ padding: '0.6rem 0.75rem', opacity: failed ? 0.65 : 1 }}>
                       <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.2rem' }}>{c.title}</div>
+                      {c.language_label && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', fontWeight: 600, color: '#35d06f', background: 'rgba(53, 208, 111, 0.12)', border: '1px solid rgba(53, 208, 111, 0.35)', borderRadius: '999px', padding: '0.05rem 0.5rem', marginBottom: '0.3rem' }}>
+                          <Globe size={11} /> {c.language_label}, listed on TMDB
+                        </div>
+                      )}
                       {failed && (
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', color: '#d39e00', marginBottom: '0.2rem' }}>
                           <AlertTriangle size={12} /> Unavailable from your network — try another

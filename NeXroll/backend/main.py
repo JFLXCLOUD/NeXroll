@@ -68,6 +68,7 @@ from backend.scheduler import (
     MAX_PLAYBACK_GUARD_MINUTES,
 )
 from backend.sequence_conditions import block_to_play, describe_condition
+from backend import trailer_language
 from backend import secure_store
 from backend import app_log
 from backend import plugin_url_repair
@@ -308,6 +309,9 @@ def ensure_schema() -> None:
                 ("nexup_last_sonarr_sync", "nexup_last_sonarr_sync DATETIME"),
                 # Max trailer duration filter
                 ("nexup_max_trailer_duration", "nexup_max_trailer_duration INTEGER DEFAULT 180"),
+                # Trailer language preference and its fallback
+                ("nexup_trailer_language", "nexup_trailer_language TEXT DEFAULT 'en'"),
+                ("nexup_trailer_language_fallback", "nexup_trailer_language_fallback TEXT DEFAULT 'english'"),
                 # Coming Soon List auto-regeneration settings
                 ("nexup_dynamic_preroll_custom_logo_path", "nexup_dynamic_preroll_custom_logo_path TEXT"),
                 ("nexup_coming_soon_list_auto_regen", "nexup_coming_soon_list_auto_regen BOOLEAN DEFAULT 0"),
@@ -19537,6 +19541,9 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
             "playback_order": "release_date",
             "auto_refresh_hours": 24,
             "max_trailer_duration": 180,
+            "trailer_language": "en",
+            "trailer_language_fallback": "english",
+            "trailer_languages": trailer_language.options(),
             "last_sync": None,
             "next_sync": None,
             "category_id": None,
@@ -19579,6 +19586,10 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "playback_order": getattr(setting, 'nexup_playback_order', 'release_date'),
         "auto_refresh_hours": getattr(setting, 'nexup_auto_refresh_hours', 24),
         "max_trailer_duration": getattr(setting, 'nexup_max_trailer_duration', 180),
+        "trailer_language": trailer_language.normalize_language(getattr(setting, 'nexup_trailer_language', None)),
+        "trailer_language_fallback": trailer_language.normalize_fallback(
+            getattr(setting, 'nexup_trailer_language_fallback', None)),
+        "trailer_languages": trailer_language.options(),
         "last_sync": last_radarr.isoformat() if last_radarr else None,
         "next_sync": next_radarr,
         "category_id": getattr(setting, 'nexup_category_id', None),
@@ -19658,6 +19669,8 @@ def update_nexup_settings(
     playback_order: Optional[str] = None,
     auto_refresh_hours: Optional[int] = None,
     max_trailer_duration: Optional[int] = None,
+    trailer_language_code: Optional[str] = Query(None, alias="trailer_language"),
+    trailer_language_fallback: Optional[str] = None,
     download_delay: Optional[int] = None,
     max_concurrent: Optional[int] = None,
     bulk_warning_threshold: Optional[int] = None,
@@ -19819,6 +19832,14 @@ def update_nexup_settings(
         setting.nexup_auto_refresh_hours = auto_refresh_hours
     if max_trailer_duration is not None:
         setting.nexup_max_trailer_duration = max(0, min(600, max_trailer_duration))  # 0-600 seconds (0 = no limit)
+    if trailer_language_code is not None:
+        if trailer_language_code not in trailer_language.LANGUAGES:
+            raise HTTPException(status_code=400, detail=f"Unknown trailer language: {trailer_language_code}")
+        setting.nexup_trailer_language = trailer_language_code
+    if trailer_language_fallback is not None:
+        if trailer_language_fallback not in (trailer_language.FALLBACK_ENGLISH, trailer_language.FALLBACK_SKIP):
+            raise HTTPException(status_code=400, detail="trailer_language_fallback must be 'english' or 'skip'")
+        setting.nexup_trailer_language_fallback = trailer_language_fallback
     if download_delay is not None:
         setting.nexup_download_delay = max(0, min(60, download_delay))  # 0-60 seconds
     if max_concurrent is not None:
@@ -22684,7 +22705,7 @@ async def search_movie_trailers(radarr_movie_id: int, db: Session = Depends(get_
     setting = db.query(models.Setting).first()
     if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
         raise HTTPException(status_code=400, detail="Radarr not connected")
-    from backend.radarr_connector import RadarrConnector, search_youtube_trailers
+    from backend.radarr_connector import RadarrConnector, TMDBTrailerFetcher, search_youtube_trailers
     try:
         connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
         movie = await connector.get_movie_by_id(radarr_movie_id)
@@ -22692,13 +22713,43 @@ async def search_movie_trailers(radarr_movie_id: int, db: Session = Depends(get_
             raise HTTPException(status_code=404, detail="Movie not found in Radarr")
         title = movie.get('title', '') or ''
         year = movie.get('year')
-        query = (f"{title} {year} official trailer" if year else f"{title} official trailer").strip()
+        language = trailer_language.normalize_language(getattr(setting, 'nexup_trailer_language', None))
+        query = trailer_language.search_query(language, title, year)
         candidates = await asyncio.get_event_loop().run_in_executor(
             None, search_youtube_trailers, query, 3)
+        # With a Trailer language set, TMDB's own trailers in that language
+        # lead the list: they are tagged, where a search result is a guess.
+        if not trailer_language.is_english(language) and movie.get('tmdbId'):
+            try:
+                fetcher = TMDBTrailerFetcher(tmdb_api_key=getattr(setting, 'nexup_tmdb_api_key', None))
+                sources = await fetcher.get_trailer_sources(movie['tmdbId'], language=language)
+            except Exception as exc:
+                _file_log(f"Trailer search: TMDB lookup failed for {title}: {exc}")
+                sources = []
+            tagged = []
+            for source in sources:
+                if source.get('source') != 'youtube' or not trailer_language.matches(language, source.get('language')):
+                    continue
+                vid = source.get('key')
+                tagged.append({
+                    'id': vid,
+                    'title': source.get('name') or 'Trailer',
+                    'channel': 'TMDB',
+                    'duration': 0,
+                    'url': source.get('url'),
+                    'thumbnail': f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg',
+                    'view_count': None,
+                    'language_label': trailer_language.tag_label(source.get('language'), source.get('region')),
+                })
+            tagged = tagged[:3]
+            seen = {c['id'] for c in tagged}
+            candidates = tagged + [c for c in candidates if c.get('id') not in seen]
         return {
             "title": title,
             "year": year,
             "query": query,
+            "language": language,
+            "language_label": trailer_language.label(language),
             "radarr_youtube_id": movie.get('youTubeTrailerId'),
             "candidates": candidates,
         }
@@ -22765,7 +22816,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
         
         # Download trailer
         quality = getattr(setting, 'nexup_quality', '1080') or '1080'
-        downloader = TrailerDownloader(storage_path, quality)
+        downloader = TrailerDownloader(storage_path, quality, **trailer_language.downloader_options(setting))
         
         # Log cookie status
         cookies_file = Path(storage_path) / 'youtube_cookies.txt'
@@ -22791,7 +22842,8 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
                 if head.strip().replace('_', '').isalpha() and head.strip().isupper():
                     clean = rest.strip()
 
-            if err_code in ('VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED', 'TOO_LONG'):
+            if err_code in ('VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED', 'TOO_LONG', 'NO_LANGUAGE_MATCH',
+                            'TMDB_KEY_REJECTED'):
                 # Concrete, known reason from YouTube — show it verbatim (already
                 # written for users, and NOT "try again", which would mislead).
                 help_msg = clean
@@ -22854,7 +22906,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
         overview=movie.get('overview', ''),
         release_date=release_date,
         release_type=release_type,
-        trailer_url=trailer_url,
+        trailer_url=result.get('source_url') or trailer_url,
         local_path=result['path'],
         file_size_mb=result['size_mb'],
         duration_seconds=result.get('duration', 0),
@@ -23256,7 +23308,8 @@ async def sync_nexup(db: Session = Depends(get_db)):
     _file_log(f"NeX-Up sync: cookies_file={cookies_file} (exists={cookies_file.exists()})")
     log_event('INFO', 'nexup', 'NeX-Up Radarr sync started', source='sync_nexup', db=db)
     
-    downloader = TrailerDownloader(storage_path, getattr(setting, 'nexup_quality', '1080') or '1080', max_duration=max_duration)
+    downloader = TrailerDownloader(storage_path, getattr(setting, 'nexup_quality', '1080') or '1080', max_duration=max_duration,
+                                   **trailer_language.downloader_options(setting))
     
     results = {
         "checked": 0,
@@ -23265,6 +23318,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
         "skipped_no_trailer": 0,
         "skipped_already_exists": 0,
         "skipped_too_long": 0,
+        "skipped_no_language": 0,
         "eligible": 0,
         "errors": []
     }
@@ -23451,7 +23505,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
                         overview=movie.get('overview', ''),
                         release_date=datetime.datetime.fromisoformat(movie['release_date']).date() if movie.get('release_date') else None,
                         release_type=movie.get('release_type'),
-                        trailer_url=movie['trailer_url'],
+                        trailer_url=result.get('source_url') or movie['trailer_url'],
                         local_path=result['path'],
                         file_size_mb=result['size_mb'],
                         duration_seconds=result.get('duration', 0),
@@ -23481,6 +23535,20 @@ async def sync_nexup(db: Session = Depends(get_db)):
                         results["skipped_too_long"] = results.get("skipped_too_long", 0) + 1
                         _nexup_sync_progress["status"] = f"Skipped '{movie['title']}' - trailer is longer than the max duration"
                         _file_log(f"NeX-Up sync: Skipped '{movie['title']}' - {detail_msg.split(':', 1)[-1].strip()}")
+                    elif error_code == 'NO_LANGUAGE_MATCH':
+                        # Trailer language is set to skip movies without one:
+                        # also a choice, retried on the next sync.
+                        results["skipped_no_language"] = results.get("skipped_no_language", 0) + 1
+                        _nexup_sync_progress["status"] = f"Skipped '{movie['title']}' - no trailer in your language yet"
+                        _file_log(f"NeX-Up sync: Skipped '{movie['title']}' - {detail_msg.split(':', 1)[-1].strip()}")
+                    elif error_code == 'TMDB_KEY_REJECTED':
+                        # The same for every movie, so it is reported once.
+                        error_msg = detail_msg.split(':', 1)[-1].strip()
+                        if error_msg not in results["errors"]:
+                            results["errors"].append(error_msg)
+                            log_event('WARNING', 'nexup', error_msg, source='sync_nexup', db=db)
+                        _nexup_sync_progress["status"] = f"Couldn't look up '{movie['title']}' - TMDB rejected the API key"
+                        _file_log(f"NeX-Up sync: '{movie['title']}' - {error_msg}")
                     elif 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
                         error_msg = "YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
                         _nexup_sync_progress["status"] = f"YouTube blocked '{movie['title']}' - try re-exporting cookies"

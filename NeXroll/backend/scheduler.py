@@ -1477,7 +1477,9 @@ class Scheduler:
         _scheduler_log(f"NeX-Up sync: storage_path={storage_path}")
         _scheduler_log(f"NeX-Up sync: cookies_file={cookies_file} (exists={cookies_file.exists() if cookies_file else False})")
         
-        downloader = TrailerDownloader(storage_path, quality, max_duration=max_duration)
+        from backend import trailer_language
+        downloader = TrailerDownloader(storage_path, quality, max_duration=max_duration,
+                                       **trailer_language.downloader_options(setting))
         
         days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
         max_trailers = getattr(setting, 'nexup_max_trailers', 10)
@@ -1544,7 +1546,7 @@ class Scheduler:
                     overview=movie.get('overview', ''),
                     release_date=datetime.datetime.strptime(movie['release_date'], '%Y-%m-%d').date() if movie.get('release_date') else None,
                     release_type=movie.get('release_type'),
-                    trailer_url=movie.get('trailer_url', ''),
+                    trailer_url=result.get('source_url') or movie.get('trailer_url', ''),
                     local_path=result['path'],
                     downloaded_at=datetime.datetime.utcnow(),
                     file_size_mb=result.get('size_mb'),

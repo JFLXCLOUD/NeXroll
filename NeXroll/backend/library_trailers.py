@@ -571,6 +571,7 @@ async def sync_library_trailers(db, movies: list, storage: str, config: dict, do
         if got and got.get("path"):
             row.status = "available"
             row.local_path = got["path"]
+            row.trailer_url = got.get("source_url") or url
             row.file_size_mb = got.get("size_mb")
             row.duration_seconds = got.get("duration")
             row.downloaded_at = now
@@ -745,7 +746,7 @@ async def _sync_quota_downloads(db, candidates, rows_by_movie, storage, config,
                     rotation_left -= 1
                 evict(row, 'replaced' if repair else 'rotated')
             _upsert(db, rows_by_movie, movie, source='download', status='available', local_path=path,
-                    trailer_url=url, file_size_mb=incoming_size, duration_seconds=got.get('duration'),
+                    trailer_url=got.get('source_url') or url, file_size_mb=incoming_size, duration_seconds=got.get('duration'),
                     downloaded_at=now, last_attempt_at=now, error_message=None, in_selection=True)
             result['downloaded'] += 1
             _event(progress, 'downloaded', title, poster=movie_poster(movie))
@@ -851,10 +852,12 @@ async def run_sync(db) -> dict:
         downloader = None
         if config["download"]:
             os.makedirs(library_dir(storage), exist_ok=True)
+            from backend import trailer_language
             downloader = TrailerDownloader(
                 library_dir(storage),
                 getattr(setting, "nexup_quality", "1080") or "1080",
                 max_duration=getattr(setting, "nexup_max_trailer_duration", 0) or 0,
+                **trailer_language.downloader_options(setting),
             )
         delay = getattr(setting, "nexup_download_delay", 5) or 0
         result = await sync_library_trailers(db, movies or [], storage, config, downloader,

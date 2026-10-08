@@ -49,10 +49,28 @@ Go to the **Settings** tab to configure:
 | **Max Trailers** | Maximum number of trailers to keep | 10-20 |
 | **Max Trailer Duration** | Sync skips trailers longer than this. Most trailers run 2 to 3 minutes, so 1.5 minutes skips nearly all of them. The download button on the Upcoming tab ignores this limit | 3 minutes or No limit |
 | **Quality** | Download quality (720p, 1080p, 4K) | 1080p |
+| **Trailer language** | Download movie trailers in this language when TMDB has one: French, German, Spanish, Italian, Portuguese, Dutch and others, with regional versions such as French (Canada) and Spanish (Latin America). Applies to NeX-Up and Library Trailers; TV trailers stay English. See [Trailer languages](#trailer-languages) | English |
+| **When there is none in that language** | Shown for languages other than English. **Use the English trailer**, or **Skip the movie for now** (checked again on every sync) | Use the English trailer |
 | **Auto-Cleanup** | Remove trailers after content releases and lands in your library | Enabled |
 | **Release Date to Use** | Which date a trailer follows: **Digital First** (default), **Digital Only** (skip movies with no digital date), **Physical First**, or **Theatrical**. Retention is measured from this date, so a trailer is never removed before the movie is out | Digital First |
 | **Include Unmonitored** | Include unmonitored content from Radarr/Sonarr | Disabled |
 
+
+### Trailer languages
+
+Radarr's trailer link is the English trailer. With a **Trailer language** set, NeX-Up asks TMDB for that movie's trailers in the language and downloads one of those first:
+
+1. A trailer in the language and region you chose (French (Canada) prefers trailers TMDB lists for Canada).
+2. A trailer in the same language from another region.
+3. Otherwise, Radarr's English trailer and the other English sources, unless the fallback is **Skip the movie for now**. Skipped movies show in the sync summary and are checked again on the next sync, so they pick up a localized trailer once TMDB lists one.
+
+> **You need your own TMDB API key for this.** TMDB no longer accepts the key built into NeXroll. A key is free: create a TMDB account, request one under Settings → API, and paste the API key (v3) into **NeX-Up → Settings → Metadata and automation**. Without one, the English fallback still downloads Radarr's trailer, and **Skip the movie for now** reports that TMDB rejected the key.
+
+Changing the setting affects new downloads only. To replace a trailer you already have, delete it and download it again.
+
+When you search for an alternate trailer from Upcoming, TMDB's trailers in your language are listed first and tagged with the language, and the YouTube search uses that language's words for "trailer". A trailer you pick there downloads as-is, whatever the setting.
+
+TMDB's coverage depends on the movie. Big releases usually have French, German and Spanish trailers; smaller ones often only have English.
 
 ## Upcoming Releases
 
