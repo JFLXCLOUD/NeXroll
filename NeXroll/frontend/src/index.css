@@ -9343,6 +9343,16 @@ body.light .nx-lt-chip.off, body.light .nx-lt-pin.never { color: #c03a44; }
 .nx-ap-control-row > div span { margin-top: 4px; color: var(--text-muted); font-size: 12px; }
 .nx-ap-control-row > select { width: 100%; min-height: 34px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--input-bg); color: var(--text-color); font-size: 12px; }
 .nx-ap-folder-field > div { display: flex; gap: 7px; }
+/* TMDB key: the Test key button stays on one line at the input's height
+   instead of shrinking into two lines, and a note or test result sits below. */
+.nx-ap-tmdb-key > div { align-items: stretch; }
+.nx-ap-tmdb-key > div > input { flex: 1 1 auto; min-width: 0; }
+.nx-ap-tmdb-key > div > .nx-ap-btn { flex: 0 0 auto; min-height: 35px; padding: 0 12px; white-space: nowrap; }
+.nx-ap-tmdb-key { margin-bottom: 6px; }
+.nx-ap-tmdb-key > small { display: block; margin-top: 6px; color: var(--text-muted); font-size: 11.5px; line-height: 1.45; }
+.nx-ap-tmdb-key > small b { font-weight: 600; }
+.nx-ap-tmdb-key > small b.ok { color: #55d9a7; }
+.nx-ap-tmdb-key > small b.bad { color: #ff737b; }
 .nx-ap-usage { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; margin-top: 11px; }
 .nx-ap-usage > i { height: 6px; overflow: hidden; border-radius: 5px; background: var(--raised-bg); }
 .nx-ap-usage > i > span { height: 100%; display: block; border-radius: inherit; background: #f4b83f; }
