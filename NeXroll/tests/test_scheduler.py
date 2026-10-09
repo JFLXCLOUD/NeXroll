@@ -958,6 +958,39 @@ class VerificationModeTests(unittest.TestCase):
         self.assertEqual(apply_category.call_args.args[0], self.category_id)
         self.assertTrue(apply_category.call_args.kwargs["schedule"].playlist)
 
+    def test_a_reapply_held_by_the_playback_guard_is_not_a_warning(self):
+        # Production, October 7: a reapply waiting on a movie logged "Failed
+        # to reapply prerolls to Plex" every five minutes for 40 minutes, which
+        # reads as NeXroll not setting prerolls at all.
+        connector = MagicMock()
+        connector.get_preroll.return_value = "old list"
+        log = MagicMock()
+        scheduler = scheduler_module.Scheduler()
+        scheduler._deferred_write_since = self.now
+
+        with self._patch_verification(connector), patch.object(scheduler_module, "_scheduler_log", log), \
+                patch.object(scheduler, "_apply_category_to_plex",
+                             return_value=scheduler_module.ApplyResult(plex=False)):
+            scheduler._verify_and_reapply_if_needed()
+
+        self.assertEqual([c for c in log.call_args_list if c.kwargs.get("level") == "WARNING"], [])
+        self.assertFalse(any("mismatch" in str(c.args[0]) for c in log.call_args_list))
+
+    def test_a_real_reapply_failure_still_warns(self):
+        connector = MagicMock()
+        connector.get_preroll.return_value = "old list"
+        log = MagicMock()
+        scheduler = scheduler_module.Scheduler()
+
+        with self._patch_verification(connector), patch.object(scheduler_module, "_scheduler_log", log), \
+                patch.object(scheduler, "_apply_category_to_plex",
+                             return_value=scheduler_module.ApplyResult(plex=False)):
+            scheduler._verify_and_reapply_if_needed()
+
+        warnings = [c for c in log.call_args_list if c.kwargs.get("level") == "WARNING"]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Failed to reapply", warnings[0].args[0])
+
     def test_verification_skips_installs_without_plex(self):
         # Jellyfin/Emby only: there is no Plex preroll field to check, so no
         # "mismatch", no reapply and no warning every five minutes.

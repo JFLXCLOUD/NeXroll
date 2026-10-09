@@ -2895,7 +2895,12 @@ class Scheduler:
             
             # Compare expected vs actual
             if expected_normalized != actual_normalized:
-                _scheduler_log(f"VERIFICATION: Plex preroll mismatch detected!")
+                # While the playback guard holds a change back, Plex still has
+                # the old list on purpose; that is not news every five minutes.
+                if self._deferred_write_since is not None:
+                    _scheduler_verbose("VERIFICATION: Plex preroll mismatch (a change is waiting for playback)")
+                else:
+                    _scheduler_log(f"VERIFICATION: Plex preroll mismatch detected!")
                 _scheduler_verbose(f"  Expected: {expected_normalized}")
                 _scheduler_verbose(f"  Actual:   {actual_normalized}")
                 _scheduler_verbose(f"  Reapplying category {setting.active_category}...")
@@ -2914,10 +2919,11 @@ class Scheduler:
                 if getattr(result, "plex", None) is True:
                     _scheduler_log("VERIFICATION: Successfully reapplied prerolls to Plex")
                 else:
-                    _scheduler_log(
+                    # A reapply the playback guard held back is not a failure.
+                    self._log_apply_outcome(
                         f"VERIFICATION: Failed to reapply prerolls to Plex — "
                         f"{getattr(result, 'describe', lambda: 'no detail')()}",
-                        level="WARNING")
+                        "the verified prerolls", level="WARNING")
             
             # Update last verification time
             self._last_verification_time = now
