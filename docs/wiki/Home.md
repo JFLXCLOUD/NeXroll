@@ -13,6 +13,12 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.2.4
+
+- **Trailers in your language:** NeX-Up can download movie trailers in French, German, Spanish and other languages from TMDB, with your own free TMDB API key. See [NeX-Up](NeX-Up#trailer-languages).
+- **A Plex playback guard you can set:** a movie already playing no longer holds up a schedule change, and the wait for one that just started is a setting. See [Configuration](Configuration#playback-guard-plex).
+- **Docker images on GitHub's registry again** at `ghcr.io/jflxcloud/nexroll`. See [Docker](Docker).
+
 ## What's New in v2.2.3
 
 - **Tag and File path conditions:** play a preroll only before movies with a tag such as IMAX, or whose file path contains some text. See [Advanced Sequences](Advanced-Sequences#an-imax-preroll-before-imax-movies-jellyfin--emby).
