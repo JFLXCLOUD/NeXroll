@@ -1,5 +1,32 @@
 ﻿# Changelog
 
+## [2.2.4] - 10-10-2026
+
+> Trailers in your language, a Plex playback guard you can set and that no longer waits on movies already playing, Docker images on GitHub's registry again, and quieter logs.
+
+### Upgrading
+
+- **No plugin update is needed.**
+- **Docker:** images are published to `ghcr.io/jflxcloud/nexroll` as well as Docker Hub, labelled with this repository so Renovate can show release notes.
+- **Trailer languages need your own TMDB API key.** TMDB no longer accepts the key built into NeXroll. A key is free from your TMDB account under Settings > API; paste it in NeX-Up > Settings.
+
+### Added
+
+- **Trailer language** in NeX-Up > Settings. Movie and Library Trailers downloads prefer TMDB's trailers in French, German, Spanish, Italian, Portuguese and seven other languages, with regional versions such as French (Canada) and Spanish (Latin America). Without one, use the English trailer or skip the movie until a later sync.
+- **Playback Guard** in Settings > General: how long a Plex movie that just started holds back a preroll change, from 5 to 60 minutes, or off.
+
+### Changed
+
+- **A Plex movie already playing no longer holds up a schedule change or rotation.** NeXroll checks that the movie's position is moving and applies the change within a minute, instead of waiting out the full 20 minutes.
+- **NeX-Up Settings offers the YouTube downloader update** when it is out of date, instead of showing it as installed.
+- **The alternate trailer search** lists TMDB's trailers in your language first.
+
+### Fixed
+
+- **A change waiting for playback was logged as a failure.** "Plex re-apply failed" and "Failed to reapply prerolls to Plex" repeated every few minutes while NeXroll was only waiting for a movie to finish its prerolls.
+- **Movie trailer downloads ignored your TMDB API key,** so they only ever tried Radarr's trailer.
+- **Test key on NeX-Up Settings** wrapped onto two lines, never showed its result, and with no key entered reported the built-in key as rejected.
+
 ## [2.2.3] - 10-06-2026
 
 > Tag and file path conditions for prerolls like IMAX, a Logs page that shows what went wrong, an easier way to add a trailer yourself, a reworked Categories page, and fixes for random rotation and phone layouts.
