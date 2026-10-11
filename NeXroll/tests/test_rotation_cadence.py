@@ -260,6 +260,24 @@ class ScheduleRotationTests(RotationHarness):
         self.run_minutes(5)
         self.assertEqual(len(FakePlex.writes), 2, "written once it landed, not again")
 
+    def test_a_held_verification_reapply_lands_on_the_next_free_tick(self):
+        # Production, October 11: verification found Plex on the wrong list,
+        # the guard held the fix, and only the next verification (5 minutes
+        # later) would have retried it.
+        self.add_schedule(category_id=self.cat_a)
+        self.run_minutes(0)
+        FakePlex.writes.append("someone else's list")
+        self.defer[0] = True
+        self.scheduler._last_verification_time = None
+        self.scheduler._deferred_write_since = self.clock[0]
+        self.scheduler._verify_and_reapply_if_needed()
+        self.assertEqual(len(FakePlex.writes), 2)
+        self.defer[0] = False
+        self.scheduler._deferred_write_since = None
+        self.run_minutes(0)
+        self.assertEqual(len(FakePlex.writes), 3)
+        self.assertIn("A_", FakePlex.writes[-1])
+
     def test_a_rotation_plex_did_not_take_is_retried_when_jellyfin_is_also_set_up(self):
         # Jellyfin pulls, so the apply still "succeeds"; Plex must not lose its turn.
         with self.Session() as db:

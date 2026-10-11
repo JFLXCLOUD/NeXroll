@@ -2202,8 +2202,11 @@ class Scheduler:
         if not count:
             if self._deferred_write_since is not None:
                 waited = (datetime.datetime.now() - self._deferred_write_since).total_seconds()
+                # Often nothing finished: the movies are still on, past their prerolls.
+                what = ("Plex playback is past its prerolls" if self._session_probe_count
+                        else "Playback finished")
                 _scheduler_log(
-                    f"Playback finished; applying deferred preroll change ({context}) "
+                    f"{what}; applying deferred preroll change ({context}) "
                     f"after waiting {int(waited)}s",
                     event=True,
                 )
@@ -3060,7 +3063,12 @@ class Scheduler:
                 )
                 if getattr(result, "plex", None) is True:
                     _scheduler_log("VERIFICATION: Successfully reapplied prerolls to Plex")
+                    self._plex_pending = None
                 else:
+                    if self._deferred_write_since is not None:
+                        # Held for playback: let the main loop retry it every
+                        # tick instead of waiting for the next verification.
+                        self._plex_pending = (tracked_schedule_id, setting.active_category)
                     # A reapply the playback guard held back is not a failure.
                     self._log_apply_outcome(
                         f"VERIFICATION: Failed to reapply prerolls to Plex — "
