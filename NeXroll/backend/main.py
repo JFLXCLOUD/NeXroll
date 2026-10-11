@@ -66,6 +66,7 @@ from backend.scheduler import (
     _localized_now,
     normalize_playback_guard_minutes,
     MAX_PLAYBACK_GUARD_MINUTES,
+    ensure_trailer_prerolls,
 )
 from backend.sequence_conditions import block_to_play, describe_condition
 from backend import trailer_language
@@ -19521,6 +19522,17 @@ def _nexup_storage_mapping_status(storage_path: Optional[str], setting) -> dict:
     return result
 
 
+def _add_synced_trailers_to_categories(db) -> None:
+    """After a sync, put new trailers in their NeX-Up trailer category."""
+    try:
+        made = ensure_trailer_prerolls(db)
+        if made:
+            _file_log(f"NeX-Up: added {made} downloaded trailer(s) to their trailer category")
+    except Exception as exc:
+        db.rollback()
+        _file_log(f"NeX-Up: could not add trailers to their category: {exc}")
+
+
 @app.get("/nexup/settings")
 def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """Get all NeX-Up settings"""
@@ -21338,6 +21350,8 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     if results['downloaded'] == 0 and skipped_no_trailer > 0:
         results["help"] = f"No trailers were found for {skipped_no_trailer} shows. This usually happens because TMDB doesn't have trailers for these shows yet. Try adding a TMDB API key in settings for better results."
     
+    _add_synced_trailers_to_categories(db)
+
     # Auto-regenerate Coming Soon List if enabled
     await _auto_regenerate_coming_soon_list(db)
     
@@ -23598,6 +23612,8 @@ async def sync_nexup(db: Session = Depends(get_db)):
         _file_log(f"NeX-Up sync error: {e}")
         log_event('ERROR', 'nexup', f'NeX-Up sync error: {e}', source='sync_nexup', db=db)
     
+    _add_synced_trailers_to_categories(db)
+
     # Auto-regenerate Coming Soon List if enabled
     await _auto_regenerate_coming_soon_list(db)
     

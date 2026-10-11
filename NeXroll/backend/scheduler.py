@@ -119,11 +119,13 @@ class ApplyResult:
     False, or None for "no such server configured".
     """
 
-    __slots__ = ("plex", "plugin")
+    __slots__ = ("plex", "plugin", "reason")
 
-    def __init__(self, plex=None, plugin=None):
+    def __init__(self, plex=None, plugin=None, reason=None):
         self.plex = plex
         self.plugin = plugin
+        # Why nothing was sent, when it wasn't the servers' doing.
+        self.reason = reason
 
     def __bool__(self) -> bool:
         return self.plex is True or self.plugin is True
@@ -134,6 +136,8 @@ class ApplyResult:
         return self.plex is not None or self.plugin is not None
 
     def describe(self) -> str:
+        if self.reason:
+            return self.reason
         bits = []
         for name, value in (("Plex", self.plex), ("Jellyfin/Emby", self.plugin)):
             if value is None:
@@ -676,6 +680,71 @@ def _has_valid_sequence(schedule) -> bool:
     return False
 
 
+def _trailer_category(db, setting, tv: bool):
+    """The NeX-Up Movie or TV Trailers system category, or None."""
+    category_id = getattr(setting, "nexup_tv_category_id" if tv else "nexup_category_id", None) if setting else None
+    category = None
+    if category_id:
+        category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if category is None:
+        name = "NeX-Up TV Trailers" if tv else "NeX-Up Movie Trailers"
+        category = db.query(models.Category).filter(models.Category.name == name).first()
+    return category
+
+
+def ensure_trailer_prerolls(db) -> int:
+    """Give every downloaded NeX-Up trailer a preroll in its trailer category.
+
+    Schedules, category counts, the Jellyfin/Emby plugin and verification all
+    read a category's prerolls, but only some download paths (the Upcoming
+    tab's Download, Add trailer, auto-sync with a category set) created one for
+    a trailer. A full sync never did, so a schedule set to "NeX-Up Movie
+    Trailers" applied nothing while the trailers sat on disk. This fills the
+    gap for any trailer whose file exists; ``enabled`` follows the trailer's
+    own switch. Existing prerolls are left alone. Returns how many were made.
+    """
+    setting = db.query(models.Setting).first()
+    created = 0
+    for model, tv in ((models.ComingSoonTrailer, False), (models.ComingSoonTVTrailer, True)):
+        category = _trailer_category(db, setting, tv)
+        if category is None:
+            continue
+        trailers = db.query(model).filter(model.local_path.isnot(None)).all()
+        if not trailers:
+            continue
+        known = {}
+        for row in db.query(models.Preroll.path).all():
+            if row.path:
+                known[os.path.normcase(os.path.normpath(row.path))] = True
+        for trailer in trailers:
+            if (trailer.status or "") == "downloading" or not os.path.isfile(trailer.local_path):
+                continue
+            key = os.path.normcase(os.path.normpath(trailer.local_path))
+            if key in known:
+                continue
+            title = trailer.title or os.path.basename(trailer.local_path)
+            if tv and getattr(trailer, "season_number", None):
+                title = f"{title} S{trailer.season_number}"
+            preroll = models.Preroll(
+                filename=os.path.basename(trailer.local_path),
+                display_name=f"[Trailer] {title}",
+                path=trailer.local_path,
+                category_id=category.id,
+                description=f"NeX-Up trailer for {title}",
+                duration=trailer.duration_seconds,
+                file_size=int(trailer.file_size_mb * 1024 * 1024) if trailer.file_size_mb else None,
+                managed=True,
+                enabled=bool(trailer.is_enabled) if trailer.is_enabled is not None else True,
+            )
+            preroll.categories.append(category)
+            db.add(preroll)
+            known[key] = True
+            created += 1
+    if created:
+        db.commit()
+    return created
+
+
 def prerolls_for_category_query(db, category_id):
     """
     Single source of truth for "which prerolls are eligible for this category."
@@ -1132,6 +1201,17 @@ class Scheduler:
         if last is not None and (now - last).total_seconds() < 3600:
             return
         self._last_trailer_cleanup_time = now
+
+        db = SessionLocal()
+        try:
+            made = ensure_trailer_prerolls(db)
+            if made:
+                _scheduler_log(f"NeX-Up: added {made} downloaded trailer(s) to their trailer category")
+        except Exception as exc:
+            db.rollback()
+            _scheduler_log(f"NeX-Up: could not add trailers to their category: {exc}", level="WARNING")
+        finally:
+            db.close()
 
         db = SessionLocal()
         try:
@@ -1647,6 +1727,13 @@ class Scheduler:
         db.commit()
         
         _scheduler_log(f"NeX-Up Radarr auto-sync: Downloaded {downloaded} new movie trailers")
+        try:
+            made = ensure_trailer_prerolls(db)
+            if made:
+                _scheduler_log(f"NeX-Up: added {made} downloaded trailer(s) to their trailer category")
+        except Exception as exc:
+            db.rollback()
+            _scheduler_log(f"NeX-Up: could not add trailers to their category: {exc}", level="WARNING")
 
     async def _sync_sonarr_trailers(self, db: Session, setting):
         """Sync trailers from Sonarr (called by auto-sync)"""
@@ -1833,6 +1920,13 @@ class Scheduler:
         db.commit()
         
         _scheduler_log(f"NeX-Up Sonarr auto-sync: Downloaded {downloaded} new TV trailers")
+        try:
+            made = ensure_trailer_prerolls(db)
+            if made:
+                _scheduler_log(f"NeX-Up: added {made} downloaded trailer(s) to their trailer category")
+        except Exception as exc:
+            db.rollback()
+            _scheduler_log(f"NeX-Up: could not add trailers to their category: {exc}", level="WARNING")
 
     def _create_preroll_for_trailer(self, db: Session, trailer, setting, is_tv: bool = False):
         """Create a preroll entry for a downloaded trailer"""
@@ -3151,7 +3245,7 @@ class Scheduler:
             except Exception:
                 pass
             _scheduler_log(f"No prerolls found for category_id={category_id} (name='{cat_name}'). Ensure prerolls are assigned to this category.", level="ERROR")
-            return ApplyResult()
+            return ApplyResult(reason=f"category '{cat_name}' has no enabled prerolls")
 
         # Build combined path string for Plex multi-preroll format
         # Determine delimiter from schedule settings (not category)
