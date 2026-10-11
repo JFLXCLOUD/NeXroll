@@ -198,7 +198,7 @@ In Advanced mode, the builder shows a **What each server can check** panel. Here
 
 **Plex** works differently. NeXroll gives Plex one preroll list in advance, and Plex plays it before every movie. Plex never tells NeXroll which movie is starting, so:
 
-- **Trailers available** and **Time of day** work. NeXroll re-checks them every 10 minutes and updates Plex when the answer changes.
+- **Trailers available** and **Time of day** work. NeXroll re-checks them every 3 minutes and updates Plex when the answer changes.
 - **Genre**, **Tag**, **File path contains** and **Stored audio format** are unknown on Plex, so the block plays its **Otherwise**, even for **unless**.
 - **Movie or episode** always sees a movie.
 - **Media server** always knows it is Plex.
@@ -394,7 +394,7 @@ That is expected. Plex never says which movie is starting; see [If you use Plex]
 You are in Simple mode. Switch to **Advanced** to see and change them.
 
 **The preview doesn't match what played.**
-Preview checks conditions at the moment you open it. Time-of-day rules and trailer counts can change between then and playback, and on Plex the list is re-checked every 10 minutes. For genre rules, use **Preview as** to choose which case to preview.
+Preview checks conditions at the moment you open it. Time-of-day rules and trailer counts can change between then and playback, and on Plex the list is re-checked every 3 minutes. For genre rules, use **Preview as** to choose which case to preview.
 
 ---
 

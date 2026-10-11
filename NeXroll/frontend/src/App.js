@@ -20119,7 +20119,7 @@ const DashboardTiles = {
               <details className="nx-server-card" open={hasPlex}>
                 <summary>What each server can check{hasPlex ? ', including Plex' : ''}</summary>
                 <ul>
-                  <li><strong>Every server</strong><span>Trailers available, and Time of day. Jellyfin and Emby check them the moment playback starts; Plex re-checks every 10 minutes.</span></li>
+                  <li><strong>Every server</strong><span>Trailers available, and Time of day. Jellyfin and Emby check them the moment playback starts; Plex re-checks every 3 minutes.</span></li>
                   <li><strong>Jellyfin &amp; Emby</strong><span>Genre, movie or episode, and stored audio format. Their plugin identifies the title; audio rules check file metadata, not the viewer's selected track or transcoded output.</span></li>
                   <li><strong>Plex</strong><span>Plex plays one preroll list, set in advance, before every movie, so it never tells NeXroll which movie is starting. Genre and audio rules use Otherwise on Plex, even when negated.{hasPlex ? ' To theme Plex by occasion, schedule a category: a Halloween category through October works on every server.' : ''}</span></li>
                 </ul>

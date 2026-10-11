@@ -206,8 +206,10 @@ Example:
 | | Plex | Jellyfin and Emby |
 |---|---|---|
 | **Random category schedule** | Plex gets the whole category and picks one itself before each movie. Plex's own pick can repeat. | NeXroll picks before each movie (or episode). |
-| **Sequence** | NeXroll picks and gives Plex a fixed list, then picks again every 10 minutes. Movies started within those 10 minutes get the same picks. | NeXroll picks before each movie (or episode). |
+| **Sequence** | NeXroll picks and gives Plex a fixed list, then picks again every 3 minutes. Movies started within those 3 minutes get the same picks. | NeXroll picks before each movie (or episode). |
 | **In-order category** | Every preroll in the category plays, in order. | The same. |
+
+A filler sequence picks again on the same 3 minutes. Blended schedules take turns: every 3 minutes NeXroll picks one of them, and a sequence picked twice in a row still gets new random picks. A sequence of fixed blocks is written to Plex once and left alone.
 
 Wherever NeXroll picks, it doesn't repeat a preroll until every other one in the pool has played. Each random block, each category and each server keeps its own rotation. Adding, removing or disabling a preroll doesn't start the rotation over, and a restart picks up where it left off.
 
@@ -270,7 +272,7 @@ Wherever NeXroll picks, it doesn't repeat a preroll until every other one in the
 
 ### Random Blocks Always Same
 
-- On Plex, random blocks change every 10 minutes, not with every movie; see [How often random picks change](#how-often-random-picks-change)
+- On Plex, random blocks change every 3 minutes, not with every movie; see [How often random picks change](#how-often-random-picks-change)
 - A Plex movie that just started holds the change back until it is past its prerolls (see [Playback Guard](Configuration#playback-guard-plex))
 - A random block can't vary if its category has only as many prerolls as the block plays
 

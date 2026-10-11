@@ -34,6 +34,53 @@ from backend.sequence_conditions import (
     skip_reason,
 )
 
+# Plex holds a fixed preroll list, so random picks (random blocks, random NeX-Up
+# and Library Trailers blocks) and conditional blocks only change when NeXroll
+# writes a new list. Movies started within one interval get the same picks.
+# Three minutes keeps variety high; each rotation is a few small Plex requests,
+# and the playback guard still holds a rotation while prerolls are playing.
+ROTATION_INTERVAL_SECONDS = 180
+
+
+def sequence_needs_rotation(blocks) -> bool:
+    """Whether a sequence's list changes between applies, so Plex needs it rewritten.
+
+    True for random category blocks, NeX-Up and Library Trailers blocks in
+    random mode (their default), and conditional blocks, whose answer (time of
+    day, trailers available) can change. A sequence of fixed blocks gives the
+    same list every time, so rewriting it only costs Plex requests.
+    """
+    if isinstance(blocks, str):
+        try:
+            blocks = json.loads(blocks)
+        except Exception:
+            return False
+    if not isinstance(blocks, list):
+        return False
+
+    def is_random(block) -> bool:
+        if not isinstance(block, dict):
+            return False
+        block_type = str(block.get("type", "")).lower()
+        if block_type == "random":
+            return True
+        if block_type in ("nexup_trailers", "library_trailers"):
+            return str(block.get("mode", "random")).lower() == "random"
+        return is_random(block.get("otherwise"))
+
+    return any(is_random(b) for b in blocks) or has_conditions(blocks)
+
+
+def _plex_took(result) -> bool:
+    """Whether an apply reached Plex, or there is no Plex to reach.
+
+    An ApplyResult is truthy when any server took it, and Jellyfin/Emby always
+    do. A rotation or filler marked done on that alone skipped Plex whenever
+    the playback guard held its write, until the next change.
+    """
+    return bool(result) and getattr(result, "plex", None) is not False
+
+
 # Playback guard: how long a newly seen Plex video session holds back a
 # preroll-list rewrite. Long enough for any preroll-and-trailer run; 0 is off.
 DEFAULT_PLAYBACK_GUARD_MINUTES = 20
@@ -741,7 +788,21 @@ class Scheduler:
         self._scheduler_check_interval: float = float(os.environ.get('SCHEDULER_INTERVAL', '60.0'))
         # Track last rotation time for random blocks (schedule_id -> last_rotation_time)
         self._last_rotation_time: dict[int, datetime.datetime] = {}
-        self._rotation_interval_seconds: float = 600.0  # 10 minute rotation interval
+        self._rotation_interval_seconds: float = float(ROTATION_INTERVAL_SECONDS)
+        # Filler last written to Plex by this process ("category:4", ...), so a
+        # filler is written when it starts or after a restart, not every tick.
+        self._filler_key: Optional[str] = None
+        # Blend: which schedules are blending and when the pick last changed.
+        # A blend re-picks once per rotation interval, not every tick.
+        self._blend_key: Optional[str] = None
+        self._blend_rotated_at: Optional[datetime.datetime] = None
+        # Set while re-applying for a rotation, so routine rewrites stay out of
+        # the Logs page's Events (they are still in app.log).
+        self._routine_apply: bool = False
+        # (schedule id, category id) whose apply the playback guard held. The
+        # dashboard switches to it at once, so without this only the
+        # five-minute verification retried it; now every tick does.
+        self._plex_pending: Optional[tuple] = None
         # Playback guard. Plex resolves the preroll list lazily while it plays,
         # so a rewrite mid-playback makes it hang on the next entry. These track
         # a short-lived session probe and how long a write has been waiting.
@@ -2268,100 +2329,9 @@ class Scheduler:
                             priority = getattr(bs, "priority", 5)
                             _scheduler_log(f"  -> '{bs.name}' (Category: {cat_name}, Priority: {priority})")
 
-                        any_has_sequence = any(_has_valid_sequence(s) for s in blend_schedules)
-
-                        if any_has_sequence:
-                            # At least one schedule has a sequence — randomly pick one per tick.
-                            # Applies the full sequence or full category depending on what was chosen,
-                            # rather than interleaving individual prerolls (which breaks sequence ordering).
-                            chosen = random.choice(blend_schedules)
-                            last_active_sched_id = getattr(setting, "active_schedule_id", None)
-                            last_active_cat_id = getattr(setting, "active_category", None)
-
-                            if _has_valid_sequence(chosen):
-                                if last_active_sched_id != chosen.id:
-                                    applied_ok = self._apply_schedule_sequence_to_plex(chosen, db)
-                                    if applied_ok:
-                                        setting.active_category = None
-                                        setting.active_schedule_id = chosen.id
-                                        setting.filler_active = None
-                                        for sched in blend_schedules:
-                                            sched.last_run = now
-                                            sched.next_run = self._calculate_next_run(sched)
-                                        db.commit()
-                                        _scheduler_log(f"MIX BLEND: Applied sequence '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
-                                    else:
-                                        self._log_apply_outcome(
-                                            f"MIX BLEND: Failed to apply sequence '{chosen.name}'",
-                                            f"blended sequence '{chosen.name}'", level="WARNING")
-                                else:
-                                    # Same sequence chosen again — still refresh last_run
-                                    for sched in blend_schedules:
-                                        sched.last_run = now
-                                    db.commit()
-                            else:
-                                if last_active_sched_id != chosen.id:
-                                    applied_ok = self._apply_category_to_plex(chosen.category_id, db, chosen)
-                                    if applied_ok:
-                                        setting.active_category = chosen.category_id
-                                        setting.active_schedule_id = chosen.id
-                                        setting.filler_active = None
-                                        for sched in blend_schedules:
-                                            sched.last_run = now
-                                            sched.next_run = self._calculate_next_run(sched)
-                                        db.commit()
-                                        _scheduler_log(f"MIX BLEND: Applied category '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
-                                    else:
-                                        self._log_apply_outcome(
-                                            f"MIX BLEND: Failed to apply category from '{chosen.name}'",
-                                            f"blended category from '{chosen.name}'", level="WARNING")
-                                else:
-                                    # Same category chosen again — still refresh last_run
-                                    for sched in blend_schedules:
-                                        sched.last_run = now
-                                    db.commit()
-
-                            state_key = f"mix_blend_active:{','.join(str(s.id) for s in blend_schedules)}:{chosen.id}"
-                            if self._last_logged_state != state_key:
-                                names = ', '.join(f"'{s.name}'" for s in blend_schedules)
-                                _scheduler_log(f"MIX BLEND: Blending schedules: {names}")
-                                self._last_logged_state = state_key
-                                self._last_logged_time = now
-                        else:
-                            # Pure category blend: randomly pick one category per tick.
-                            # Consistent with sequence and mixed blend — each tick one schedule
-                            # is chosen and its full category pool applied. Plex randomly selects
-                            # from that pool, and on the next tick it may be a different category.
-                            chosen = random.choice(blend_schedules)
-                            last_active_sched_id = getattr(setting, "active_schedule_id", None)
-                            if last_active_sched_id != chosen.id:
-                                applied_ok = self._apply_category_to_plex(chosen.category_id, db, chosen)
-                                if applied_ok:
-                                    setting.active_category = chosen.category_id
-                                    setting.active_schedule_id = chosen.id
-                                    setting.filler_active = None
-                                    for sched in blend_schedules:
-                                        sched.last_run = now
-                                        sched.next_run = self._calculate_next_run(sched)
-                                    db.commit()
-                                    _scheduler_log(f"CAT BLEND: Applied category '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
-                                else:
-                                    self._log_apply_outcome(
-                                        f"CAT BLEND: Failed to apply category from '{chosen.name}'",
-                                        f"blended category from '{chosen.name}'", level="WARNING")
-                            else:
-                                # Same category chosen again — still refresh last_run
-                                for sched in blend_schedules:
-                                    sched.last_run = now
-                                db.commit()
-                            state_key = f"cat_blend_active:{','.join(str(s.id) for s in blend_schedules)}:{chosen.id}"
-                            if self._last_logged_state != state_key:
-                                names = ', '.join(f"'{s.name}'" for s in blend_schedules)
-                                _scheduler_log(f"CAT BLEND: Blending categories: {names}")
-                                self._last_logged_state = state_key
-                                self._last_logged_time = now
+                        self._apply_blend(blend_schedules, setting, db, now)
                         return  # Skip normal processing when in blend mode
-                    
+
                     # STEP 3: No exclusive, no blend - use normal winner selection
                     # Priority (highest wins), then earliest end date, then earliest start, then lowest id
                     def _sort_key(s):
@@ -2453,13 +2423,8 @@ class Scheduler:
                                         _scheduler_log(f"No active schedules; using FILLER category {filler_category_id}")
                                         self._last_logged_state = state_key
                                         self._last_logged_time = now
-                                    # Apply the filler category directly and return early
-                                    applied_ok = self._apply_category_to_plex(filler_category_id, db, schedule=None)
-                                    if applied_ok:
-                                        setting.filler_active = f"category:{filler_category_id}"
-                                        setting.active_category = None  # Clear normal category tracking
-                                        setting.active_schedule_id = None
-                                        db.commit()
+                                    self._apply_filler(f"category:{filler_category_id}", setting, db, now,
+                                                       lambda: self._apply_category_to_plex(filler_category_id, db, schedule=None))
                                     filler_applied = True
                                     return  # Filler category applied, exit early
                                     
@@ -2471,14 +2436,11 @@ class Scheduler:
                                         _scheduler_log(f"No active schedules; using FILLER sequence {filler_sequence_id}")
                                         self._last_logged_state = state_key
                                         self._last_logged_time = now
-                                    # Apply the sequence directly
-                                    applied_ok = self._apply_saved_sequence_to_plex(filler_sequence_id, db)
-                                    if applied_ok:
-                                        # Use filler_active to track filler state
-                                        setting.filler_active = f"sequence:{filler_sequence_id}"
-                                        setting.active_category = None  # Clear normal category tracking
-                                        setting.active_schedule_id = None
-                                        db.commit()
+                                    saved = db.query(models.SavedSequence).filter(
+                                        models.SavedSequence.id == filler_sequence_id).first()
+                                    self._apply_filler(f"sequence:{filler_sequence_id}", setting, db, now,
+                                                       lambda: self._apply_saved_sequence_to_plex(filler_sequence_id, db),
+                                                       rotates=bool(saved and sequence_needs_rotation(saved.get_blocks())))
                                     filler_applied = True
                                     return  # Sequence applied, exit early
                                     
@@ -2489,14 +2451,8 @@ class Scheduler:
                                     _scheduler_log(f"No active schedules; using FILLER Coming Soon List ({filler_layout})")
                                     self._last_logged_state = state_key
                                     self._last_logged_time = now
-                                # Apply the coming soon list video
-                                applied_ok = self._apply_coming_soon_list_to_plex(filler_layout, db)
-                                if applied_ok:
-                                    # Use filler_active to track filler state
-                                    setting.filler_active = f"coming_soon:{filler_layout}"
-                                    setting.active_category = None  # Clear normal category tracking
-                                    setting.active_schedule_id = None
-                                    db.commit()
+                                self._apply_filler(f"coming_soon:{filler_layout}", setting, db, now,
+                                                   lambda: self._apply_coming_soon_list_to_plex(filler_layout, db))
                                 filler_applied = True
                                 return  # Coming soon applied, exit early
 
@@ -2508,13 +2464,9 @@ class Scheduler:
                                         _scheduler_log(f"No active schedules; using FILLER dynamic preroll ({filler_filename})")
                                         self._last_logged_state = state_key
                                         self._last_logged_time = now
-                                    applied_ok = self._apply_generated_video_to_plex(
-                                        filler_filename, db, f"dynamic preroll ({filler_filename})")
-                                    if applied_ok:
-                                        setting.filler_active = f"dynamic:{filler_filename}"
-                                        setting.active_category = None
-                                        setting.active_schedule_id = None
-                                        db.commit()
+                                    self._apply_filler(f"dynamic:{filler_filename}", setting, db, now,
+                                                       lambda: self._apply_generated_video_to_plex(
+                                                           filler_filename, db, f"dynamic preroll ({filler_filename})"))
                                     filler_applied = True
                                     return  # Dynamic preroll applied, exit early
 
@@ -2547,24 +2499,31 @@ class Scheduler:
                 # Check if this sequence schedule was already applied (avoid re-applying every tick)
                 last_rotation = self._last_rotation_time.get(chosen_schedule.id)
                 needs_apply = False
+                routine = False
                 if setting.filler_active is not None:
                     # Filler is currently showing — need to switch to this schedule
                     needs_apply = True
                 elif last_rotation is None:
                     # Never applied yet
                     needs_apply = True
-                elif (now - last_rotation).total_seconds() >= self._rotation_interval_seconds:
+                elif getattr(setting, "active_schedule_id", None) != chosen_schedule.id:
+                    # Won back from another schedule: Plex has that one's list
+                    needs_apply = True
+                elif ((now - last_rotation).total_seconds() >= self._rotation_interval_seconds
+                      and sequence_needs_rotation(chosen_schedule.sequence)):
                     # Time to rotate random blocks
                     needs_apply = True
+                    routine = True
 
                 if needs_apply:
-                    applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
+                    applied_ok = self._apply_routinely(
+                        routine, lambda: self._apply_schedule_sequence_to_plex(chosen_schedule, db))
                     # State reflects intent (which schedule is the winner), not Plex apply result.
                     # If Plex was unreachable, the sequence had no valid blocks, the category had no
                     # prerolls, etc. — the dashboard should still say "this schedule is active" so
                     # users can see what the scheduler decided. Plex sync is best-effort and will
                     # retry on next tick or via _verify_and_reapply_if_needed.
-                    if applied_ok:
+                    if _plex_took(applied_ok):
                         self._last_rotation_time[chosen_schedule.id] = now
                     setting.active_category = None  # No category to track
                     setting.filler_active = None
@@ -2598,10 +2557,12 @@ class Scheduler:
                 applied_ok = False
                 if chosen_schedule and _has_valid_sequence(chosen_schedule):
                     applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
-                    if applied_ok and chosen_schedule.id:
+                    if _plex_took(applied_ok) and chosen_schedule.id:
                         self._last_rotation_time[chosen_schedule.id] = now
                 else:
                     applied_ok = self._apply_category_to_plex(desired_category_id, db, schedule=chosen_schedule)
+                pending_key = (chosen_schedule.id if chosen_schedule else None, desired_category_id)
+                self._plex_pending = None if _plex_took(applied_ok) else pending_key
                 # State reflects intent (which schedule is the winner), not Plex apply result.
                 # Plex apply can fail for reasons that should not hide the active schedule from
                 # the dashboard: empty category (no prerolls), Plex unreachable, broken paths.
@@ -2655,25 +2616,12 @@ class Scheduler:
                 should_rotate = False
                 if chosen_schedule and _has_valid_sequence(chosen_schedule):
                     try:
-                        seq = chosen_schedule.sequence
-                        if isinstance(seq, str):
-                            seq = json.loads(seq)
-                        if isinstance(seq, list):
-                            has_random = any(
-                                block.get("type") == "random"
-                                or (
-                                    block.get("type") in ("nexup_trailers", "library_trailers")
-                                    and str(block.get("mode", "random")).lower() == "random"
-                                )
-                                for block in seq
-                                if isinstance(block, dict)
-                            )
-                            # Plex holds a fixed list, so a conditional block is
-                            # only re-checked when the sequence is re-applied.
-                            if has_random or has_conditions(seq):
-                                last_rotation = self._last_rotation_time.get(chosen_schedule.id)
-                                if last_rotation is None or (now - last_rotation).total_seconds() >= self._rotation_interval_seconds:
-                                    should_rotate = True
+                        # Plex holds a fixed list, so random picks and conditional
+                        # blocks only change when the sequence is re-applied.
+                        if sequence_needs_rotation(chosen_schedule.sequence):
+                            last_rotation = self._last_rotation_time.get(chosen_schedule.id)
+                            if last_rotation is None or (now - last_rotation).total_seconds() >= self._rotation_interval_seconds:
+                                should_rotate = True
                     except Exception as e:
                         _scheduler_log(f"SCHEDULER: Error checking rotation for schedule {chosen_schedule.id}: {e}", level="ERROR")
 
@@ -2683,22 +2631,30 @@ class Scheduler:
                     and self._last_rotation_time.get(chosen_schedule.id) is None
                 )
 
-                if schedule_changed or filler_changed or fallback_needs_apply or should_rotate or sequence_needs_retry:
+                pending_key = (chosen_schedule.id if chosen_schedule else None, desired_category_id)
+                plex_retry = self._plex_pending == pending_key
+
+                if schedule_changed or filler_changed or fallback_needs_apply or should_rotate or sequence_needs_retry or plex_retry:
+                    routine = should_rotate and not (schedule_changed or filler_changed or fallback_needs_apply or plex_retry)
                     if chosen_schedule and _has_valid_sequence(chosen_schedule):
-                        applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
+                        applied_ok = self._apply_routinely(
+                            routine, lambda: self._apply_schedule_sequence_to_plex(chosen_schedule, db))
                     else:
                         applied_ok = self._apply_category_to_plex(desired_category_id, db, schedule=chosen_schedule)
                     # State reflects intent. See note in the matching block above for why
                     # we update unconditionally on apply failure.
-                    if applied_ok and chosen_schedule:
+                    if _plex_took(applied_ok) and chosen_schedule:
                         self._last_rotation_time[chosen_schedule.id] = now
+                    self._plex_pending = None if _plex_took(applied_ok) else pending_key
                     setting.active_schedule_id = chosen_schedule.id if chosen_schedule else None
                     setting.filler_active = None
                     if chosen_schedule:
                         chosen_schedule.last_run = now
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                     db.commit()
-                    if schedule_changed:
+                    if plex_retry and not (schedule_changed or filler_changed or fallback_needs_apply):
+                        reason = "held for playback"
+                    elif schedule_changed:
                         reason = "winner changed"
                     elif filler_changed:
                         reason = "leaving filler"
@@ -2741,6 +2697,98 @@ class Scheduler:
 
         finally:
             db.close()
+
+    def _apply_routinely(self, routine: bool, apply):
+        """Run an apply, keeping its success out of Events when it is a rotation.
+
+        A rotation rewrites Plex every few minutes; recording each one as an
+        event would bury the changes people look for on the Logs page.
+        """
+        self._routine_apply = routine
+        try:
+            return apply()
+        finally:
+            self._routine_apply = False
+
+    def _rotation_due(self, key, now) -> bool:
+        last = self._last_rotation_time.get(key)
+        return last is None or (now - last).total_seconds() >= self._rotation_interval_seconds
+
+    def _apply_filler(self, filler_key: str, setting, db, now, apply, rotates: bool = False) -> None:
+        """Write a filler to Plex when it starts, and again only to rotate it.
+
+        This ran every tick, so Plex got the same filler written every minute
+        (and a random filler sequence re-picked every minute), with an event
+        logged each time. Now it is written when filler starts, after a
+        restart, and on the rotation interval for a sequence with random or
+        conditional blocks. A write the playback guard held is retried.
+        """
+        starting = setting.filler_active != filler_key or self._filler_key != filler_key
+        rotate_key = f"filler:{filler_key}"
+        if not starting and not (rotates and self._rotation_due(rotate_key, now)):
+            return
+        applied_ok = self._apply_routinely(not starting, apply)
+        if _plex_took(applied_ok):
+            self._filler_key = filler_key
+            self._last_rotation_time[rotate_key] = now
+            if starting:
+                setting.filler_active = filler_key
+                setting.active_category = None  # Clear normal category tracking
+                setting.active_schedule_id = None
+                db.commit()
+
+    def _apply_blend(self, blend_schedules, setting, db, now) -> None:
+        """Blend mode: pick one of the blending schedules per rotation interval.
+
+        The pick used to change on every tick, so Plex was rewritten most
+        minutes, while a sequence picked twice running kept its old random
+        picks. Now the pick changes once per interval, immediately when the
+        set of blending schedules changes, and each rotation re-picks the
+        random blocks of a sequence even when the same schedule wins again.
+        """
+        blend_key = ",".join(str(s.id) for s in sorted(blend_schedules, key=lambda s: s.id))
+        for sched in blend_schedules:
+            sched.last_run = now
+        due = (self._blend_key != blend_key or self._blend_rotated_at is None
+               or (now - self._blend_rotated_at).total_seconds() >= self._rotation_interval_seconds
+               or setting.filler_active is not None)
+        if not due:
+            db.commit()
+            return
+
+        chosen = random.choice(blend_schedules)
+        has_sequence = _has_valid_sequence(chosen)
+        unchanged = (self._blend_key == blend_key
+                     and getattr(setting, "active_schedule_id", None) == chosen.id
+                     and setting.filler_active is None
+                     and not (has_sequence and sequence_needs_rotation(chosen.sequence)))
+        if unchanged:
+            # Same category won again: Plex already has it and picks itself.
+            self._blend_rotated_at = now
+            db.commit()
+            return
+
+        routine = self._blend_key == blend_key
+        if has_sequence:
+            applied_ok = self._apply_routinely(routine, lambda: self._apply_schedule_sequence_to_plex(chosen, db))
+        else:
+            applied_ok = self._apply_routinely(routine, lambda: self._apply_category_to_plex(chosen.category_id, db, chosen))
+        kind = "MIX BLEND" if any(_has_valid_sequence(s) for s in blend_schedules) else "CAT BLEND"
+        if _plex_took(applied_ok):
+            self._blend_key = blend_key
+            self._blend_rotated_at = now
+            setting.active_category = None if has_sequence else chosen.category_id
+            setting.active_schedule_id = chosen.id
+            setting.filler_active = None
+            for sched in blend_schedules:
+                sched.next_run = self._calculate_next_run(sched)
+            db.commit()
+            what = "sequence" if has_sequence else "category"
+            _scheduler_log(f"{kind}: Applied {what} '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
+        else:
+            db.commit()
+            self._log_apply_outcome(f"{kind}: Failed to apply '{chosen.name}'", f"blended schedule '{chosen.name}'",
+                                    level="WARNING")
 
     def _verify_and_reapply_if_needed(self):
         """
@@ -3221,7 +3269,7 @@ class Scheduler:
             self._applied_local_paths = {os.path.abspath(p) for p in preroll_paths_local}
         if ok:
             _scheduler_log(f"SUCCESS setting multi-preroll (mode={mode_str}): {_category_label(db, category_id)}, "
-                           f"{len(prerolls)} prerolls", event=True)
+                           f"{len(prerolls)} prerolls", event=not self._routine_apply)
         else:
             _scheduler_log(f"FAIL setting multi-preroll (mode={mode_str}): Plex didn't accept the preroll list "
                            f"for {_category_label(db, category_id)}", level="WARNING")
@@ -3426,7 +3474,7 @@ class Scheduler:
             self._applied_local_paths = {os.path.abspath(p) for p in paths}
         if ok:
             _scheduler_log(f"SUCCESS setting sequence preroll list: schedule '{getattr(schedule, 'name', '?')}', "
-                           f"{len(paths)} items ({mode})", event=True)
+                           f"{len(paths)} items ({mode})", event=not self._routine_apply)
         else:
             _scheduler_log(f"FAIL setting sequence preroll list for schedule '{getattr(schedule, 'name', '?')}'",
                            level="WARNING")
