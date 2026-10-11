@@ -20336,14 +20336,38 @@ const DashboardTiles = {
     );
   };
 
+  // Which schedules were built from a saved sequence. Schedules keep their own
+  // copy of the blocks and point back with source_sequence_id (edits to the
+  // saved sequence are copied into them); there is no sequence_id field, so
+  // counting by one showed 0 for every sequence. Filler can use one too.
+  const savedSequenceUsage = (sequenceId) => {
+    const linked = schedules.filter(schedule => schedule.source_sequence_id != null
+      && String(schedule.source_sequence_id) === String(sequenceId));
+    const filler = Boolean(fillerSettings.enabled && fillerSettings.type === 'sequence'
+      && String(fillerSettings.sequence_id) === String(sequenceId));
+    const off = linked.filter(schedule => schedule.is_active === false).length;
+    return { linked, off, filler, total: linked.length + (filler ? 1 : 0) };
+  };
+  const savedSequenceUsageLabel = (usage) => {
+    const parts = [`${usage.linked.length} schedule${usage.linked.length === 1 ? '' : 's'}`];
+    if (usage.off) parts.push(`${usage.off} off`);
+    if (usage.filler) parts.push('filler');
+    return parts.join(' · ');
+  };
+  const savedSequenceUsageTitle = (usage) => {
+    const names = usage.linked.map(schedule => `${schedule.name}${schedule.is_active === false ? ' (off)' : ''}`);
+    if (usage.filler) names.push('Filler (when no schedule is active)');
+    return names.length ? `Used by: ${names.join(', ')}` : 'Not used by any schedule or filler';
+  };
+
   const renderApprovedSequenceLibrary = () => {
     const filtered = savedSequences
       .filter(sequence => `${sequence.name || ''} ${sequence.description || ''}`.toLowerCase().includes(sequenceLibrarySearch.toLowerCase()))
       .sort((a, b) => {
         if (sequenceLibrarySort === 'name') return (a.name || '').localeCompare(b.name || '');
         if (sequenceLibrarySort === 'used') {
-          const usedA = schedules.filter(schedule => String(schedule.sequence_id) === String(a.id)).length;
-          const usedB = schedules.filter(schedule => String(schedule.sequence_id) === String(b.id)).length;
+          const usedA = savedSequenceUsage(a.id).total;
+          const usedB = savedSequenceUsage(b.id).total;
           return usedB - usedA;
         }
         return new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
@@ -20359,7 +20383,7 @@ const DashboardTiles = {
         <section className="nx-draft-panel nx-draft-table-panel">
           {sequencesLoading ? <div className="nx-draft-loading"><Loader2 className="spin" size={22} /> Loading sequences...</div> : filtered.length === 0 ? <div className="nx-draft-loading"><Layers size={22} /> No saved sequences found.</div> : (
             <table className="nx-draft-sequence-table"><thead><tr><th>Sequence</th><th>Blocks</th><th>Duration</th><th>Used by</th><th>Updated</th><th /></tr></thead><tbody>
-              {filtered.map(sequence => <tr key={sequence.id}><td><strong>{sequence.name}</strong><span>{sequence.description || 'Reusable playback experience'}</span></td><td><span className="nx-draft-block-dots">{(sequence.blocks || []).slice(0, 5).map((block, index) => <i key={index} className={index % 2 ? 'violet' : ''}>{String(block.type || 'B').charAt(0).toUpperCase()}</i>)}</span></td><td>~{Math.max(1, (sequence.blocks?.length || 1) * 2)}m</td><td>{schedules.filter(schedule => String(schedule.sequence_id) === String(sequence.id)).length} schedules</td><td>{sequence.updated_at ? new Date(sequence.updated_at).toLocaleDateString() : 'Saved'}</td><td><div className="nx-draft-row-actions">
+              {filtered.map(sequence => <tr key={sequence.id}><td><strong>{sequence.name}</strong><span>{sequence.description || 'Reusable playback experience'}</span></td><td><span className="nx-draft-block-dots">{(sequence.blocks || []).slice(0, 5).map((block, index) => <i key={index} className={index % 2 ? 'violet' : ''}>{String(block.type || 'B').charAt(0).toUpperCase()}</i>)}</span></td><td>~{Math.max(1, (sequence.blocks?.length || 1) * 2)}m</td><td title={savedSequenceUsageTitle(savedSequenceUsage(sequence.id))}>{savedSequenceUsageLabel(savedSequenceUsage(sequence.id))}</td><td>{sequence.updated_at ? new Date(sequence.updated_at).toLocaleDateString() : 'Saved'}</td><td><div className="nx-draft-row-actions">
                 <button className="nx-draft-btn small" onClick={() => createScheduleFromSequence(sequence)}>Use</button>
                 <button className="nx-draft-btn square small" onClick={() => { setPreviewingSequence(sequence); setShowSequencePreviewModal(true); }} title="Preview"><Eye size={12} /></button>
                 <button className="nx-draft-btn square small" onClick={() => loadSequenceIntoBuilder(sequence)} title="Edit"><Edit size={12} /></button>
