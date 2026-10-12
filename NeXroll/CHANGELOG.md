@@ -1,5 +1,18 @@
 ﻿# Changelog
 
+## [2.2.6] - 10-12-2026
+
+> Two fixes for 2.2.5: Plex no longer stops on a trailer when NeXroll updates the preroll list between two prerolls, and Jellyfin and Emby switch to filler or a blend at once on installs that also run Plex.
+
+### Upgrading
+
+- **No plugin update is needed.** No settings or database changes.
+
+### Fixed
+
+- **Plex could stop on the second trailer.** Plex reports nothing playing for a moment between two prerolls, and a preroll change that landed then left Plex looking for a trailer that was no longer in the list. NeXroll now keeps holding changes through that gap.
+- **On installs with Plex and Jellyfin or Emby,** while a Plex movie was in its prerolls, Jellyfin and Emby kept playing the schedule that had ended instead of switching to filler or to the next blended schedule.
+
 ## [2.2.5] - 10-11-2026
 
 > Random prerolls and trailers on Plex change every 3 minutes, filler and blended schedules stop rewriting Plex every minute, and a schedule set to a NeX-Up trailer category plays your trailers.
