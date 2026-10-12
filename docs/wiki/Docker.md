@@ -8,12 +8,17 @@ NeXroll can be run in Docker containers for easy deployment and management. Offi
 # Latest stable version
 docker pull jbrns/nexroll:latest
 
+# Latest 2.2.x release (or :2 for the latest 2.x)
+docker pull jbrns/nexroll:2.2
+
 # Specific version
-docker pull jbrns/nexroll:1.11.0
+docker pull jbrns/nexroll:2.2.6
 
 # Beta channel (pre-release features)
 docker pull jbrns/nexroll:beta
 ```
+
+`2.2` and `2` start with 2.2.6. Like `latest`, they move with each release and are rebuilt weekly with a fresh yt-dlp, while a specific version such as `2.2.6` never changes. NeXroll's 2.2.x releases can add features and update the database, so pinning to `2.2` keeps you off 2.3 but not off new features. Back up your `/data` folder before upgrading if you might want to go back. `beta` is the newest beta, or the latest stable release when no beta is newer.
 
 The same images and tags are on GitHub Container Registry as `ghcr.io/jflxcloud/nexroll`, for example `docker pull ghcr.io/jflxcloud/nexroll:latest`. Use it if Docker Hub's pull limits get in the way. Both carry the `org.opencontainers.image.source` label, so tools like Renovate find the release notes. (GHCR wasn't updated between 1.5.12 and 2.2.3.)
 

@@ -1,6 +1,7 @@
-name: Scheduled Docker Refresh (latest/beta)
+name: Scheduled Docker Refresh (floating tags)
 
-# Rebuilds and repushes the floating :latest / :beta Docker tags on a cadence,
+# Rebuilds and repushes the floating :latest / :beta Docker tags, and the
+# :2.2 / :2 tags that follow :latest, on a cadence,
 # from the exact commit of the most recent corresponding GitHub release (NOT
 # main HEAD — never ship unreleased code under a tag people already trust as
 # stable/beta). This exists because the image bakes in whatever yt-dlp was
@@ -9,8 +10,10 @@ name: Scheduled Docker Refresh (latest/beta)
 # releases. Refreshing the floating tags periodically keeps Docker users from
 # sitting on a stale yt-dlp for the weeks/months between releases.
 #
-# Pinned version-numbered tags (e.g. :2.1.0-beta.2) are never touched here —
-# those stay immutable snapshots of what was actually released.
+# Pinned full version tags (e.g. :2.2.6, :2.1.0-beta.2) are never touched
+# here — those stay immutable snapshots of what was actually released. The
+# minor and major tags (:2.2, :2) are rebuilt with :latest, so people who pin
+# to them get the yt-dlp refresh as well.
 
 on:
   schedule:
@@ -32,6 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       stable_tag: ${{ steps.resolve.outputs.stable_tag }}
+      latest_tags: ${{ steps.resolve.outputs.latest_tags }}
       beta_tag: ${{ steps.resolve.outputs.beta_tag }}
       build_beta: ${{ steps.resolve.outputs.build_beta }}
     steps:
@@ -41,14 +45,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release list --repo "${{ github.repository }}" --limit 50 \
-            --json tagName,isPrerelease,isDraft,publishedAt \
-            --jq '[.[] | select(.isDraft == false)] | sort_by(.publishedAt) | reverse' > releases.json
+          gh release list --repo "${{ github.repository }}" --limit 200 \
+            --json tagName,isPrerelease,isDraft \
+            --jq '.[] | select(.isDraft == false) | "\(.isPrerelease) \(.tagName)"' > releases.txt
 
-          STABLE_TAG=$(jq -r '[.[] | select(.isPrerelease == false)][0].tagName // empty' releases.json)
-          STABLE_AT=$(jq -r '[.[] | select(.isPrerelease == false)][0].publishedAt // empty' releases.json)
-          PRE_TAG=$(jq -r '[.[] | select(.isPrerelease == true)][0].tagName // empty' releases.json)
-          PRE_AT=$(jq -r '[.[] | select(.isPrerelease == true)][0].publishedAt // empty' releases.json)
+          # Highest version, not most recently published: a release for an
+          # older line (v1.14.0 went out after v2.0.0-beta.1) must not take
+          # over :latest or :beta. Same rule as docker-build.yml.
+          STABLE_TAG=$(awk '$1 == "false" { print $2 }' releases.txt | sort -V | tail -n 1)
+          PRE_TAG=$(awk '$1 == "true" { print $2 }' releases.txt | sort -V | tail -n 1)
 
           if [ -z "$STABLE_TAG" ]; then
             echo "No stable release found; nothing to do for :latest" >&2
@@ -57,14 +62,27 @@ jobs:
           echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
           echo "Latest stable: $STABLE_TAG"
 
-          # :beta tracks the newest prerelease while one is newer than the
-          # latest stable, and follows the stable release otherwise. Once a
-          # beta cycle ships as stable, its prereleases may be deleted; the
-          # newest remaining prerelease is then from an older cycle, and
+          # :2.2 and :2 move with :latest.
+          LATEST_TAGS="latest"
+          if [[ "$STABLE_TAG" =~ ^v?([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+            LATEST_TAGS="latest ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} ${BASH_REMATCH[1]}"
+          fi
+          TAGS=""
+          for tag in $LATEST_TAGS; do
+            TAGS="${TAGS}${TAGS:+,}${IMAGE_NAME}:${tag},${GHCR_IMAGE}:${tag}"
+          done
+          echo "latest_tags=$TAGS" >> "$GITHUB_OUTPUT"
+          echo "Refreshing: $LATEST_TAGS"
+
+          # :beta tracks the newest prerelease while it is for a later version
+          # than the latest stable, and follows the stable release otherwise.
+          # Once a beta cycle ships as stable, its prereleases may be deleted;
+          # the newest remaining prerelease is then from an older cycle, and
           # rebuilding :beta from it would roll beta users back onto code
-          # older than the database they have already migrated. ISO 8601
-          # timestamps compare correctly as strings.
-          if [ -n "$PRE_TAG" ] && [[ "$PRE_AT" > "$STABLE_AT" ]]; then
+          # older than the database they have already migrated.
+          PRE_BASE="${PRE_TAG%%-*}"
+          if [ -n "$PRE_TAG" ] &&
+             [ "$(printf '%s\n%s\n' "$PRE_BASE" "$STABLE_TAG" | sort -V | tail -n 1)" != "$STABLE_TAG" ]; then
             BETA_TAG="$PRE_TAG"
             echo "Latest prerelease: $BETA_TAG (newer than $STABLE_TAG)"
           else
@@ -105,16 +123,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push :latest
+      - name: Build and push :latest and its minor and major tags
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.GHCR_IMAGE }}:latest
+          tags: ${{ needs.resolve-refs.outputs.latest_tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}

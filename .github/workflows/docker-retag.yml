@@ -1,0 +1,89 @@
+name: Point Docker tags at a release
+
+# Points floating tags (latest, beta, 2.2, 2) at an already-published release
+# image on Docker Hub and GHCR, unchanged (same manifests and digest, nothing
+# rebuilt). Releases and the weekly refresh move these tags themselves
+# (docker-build.yml, docker-refresh.yml); this is for moving them by hand,
+# e.g. when a new floating tag is introduced.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Published version to point at (e.g. 2.2.6)'
+        required: true
+      tags:
+        description: 'Floating tags to point at it, space-separated (e.g. "2.2 2")'
+        required: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  IMAGE_NAME: jbrns/nexroll
+  GHCR_IMAGE: ghcr.io/jflxcloud/nexroll
+
+concurrency:
+  group: docker-image-push
+  cancel-in-progress: false
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check inputs
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          TAGS: ${{ github.event.inputs.tags }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${VERSION#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Not a version: $VERSION" >&2
+            exit 1
+          fi
+          for tag in $TAGS; do
+            if ! [[ "$tag" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+              echo "Not a tag name: $tag" >&2
+              exit 1
+            fi
+            # Full version tags are snapshots of what was released; never overwrite one.
+            if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+              echo "Refusing to overwrite release tag $tag" >&2
+              exit 1
+            fi
+          done
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Point tags
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          TAGS: ${{ github.event.inputs.tags }}
+        run: |
+          set -euo pipefail
+          SOURCE="docker.io/${IMAGE_NAME}:${VERSION#v}"
+          docker buildx imagetools inspect "$SOURCE" > inspect.txt
+          head -n 3 inspect.txt
+          for tag in $TAGS; do
+            for image in "$IMAGE_NAME" "$GHCR_IMAGE"; do
+              echo "Pointing ${image}:${tag} at ${SOURCE}"
+              docker buildx imagetools create --tag "${image}:${tag}" "$SOURCE"
+              # Not piped into head: with pipefail, the closed pipe fails the step.
+              docker buildx imagetools inspect "${image}:${tag}" > inspect.txt
+              head -n 3 inspect.txt
+            done
+          done

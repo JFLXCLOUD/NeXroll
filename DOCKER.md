@@ -18,8 +18,12 @@ URLs (default):
 | Tag | Description |
 |-----|-------------|
 | `jbrns/nexroll:latest` | Latest stable release (recommended for production) |
-| `jbrns/nexroll:beta` | Latest beta/pre-release version (for testing new features) |
-| `jbrns/nexroll:1.12.0` | Specific version (pin to a known good version) |
+| `jbrns/nexroll:2` | Latest 2.x stable release |
+| `jbrns/nexroll:2.2` | Latest 2.2.x stable release |
+| `jbrns/nexroll:2.2.6` | Specific version (pin to a known good version) |
+| `jbrns/nexroll:beta` | Latest beta/pre-release version (for testing new features); the latest stable release when no beta is newer |
+
+`2.2` and `2` start with 2.2.6. Like `latest`, they move with each release and are rebuilt weekly with a fresh yt-dlp, while a specific version such as `2.2.6` never changes. NeXroll's 2.2.x releases can add features and update the database, so pinning to `2.2` keeps you off 2.3 but not off new features. Back up your `/data` folder before upgrading if you might want to go back.
 
 The same images, with the same tags, are published to GitHub Container Registry as `ghcr.io/jflxcloud/nexroll` (for example `ghcr.io/jflxcloud/nexroll:latest`). Use it if Docker Hub's pull limits get in the way. Both carry the `org.opencontainers.image.source` label, so tools like Renovate find the release notes.
 

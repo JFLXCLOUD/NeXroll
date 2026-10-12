@@ -59,6 +59,10 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          # The release's own code. Without a ref, a manual run built the
+          # branch it was started from and labelled it with this version.
+          ref: ${{ steps.version.outputs.tag }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -99,19 +103,63 @@ jobs:
 
       - name: Determine Docker tags
         id: docker_tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           IS_PRERELEASE="${{ steps.version.outputs.is_prerelease }}"
-          
+
+          # The floating tags (latest, beta, 2.2, 2) only move to the newest
+          # version they cover, so rebuilding an older release by hand can't
+          # roll them back. Published release versions, without the v:
+          gh release list --repo "${{ github.repository }}" --limit 200 \
+            --json tagName,isPrerelease,isDraft \
+            --jq '.[] | select(.isDraft == false) | "\(.isPrerelease) \(.tagName | ltrimstr("v"))"' > releases.txt
+          STABLE=$(awk '$1 == "false" { print $2 }' releases.txt)
+          PRERELEASES=$(awk '$1 == "true" { print $2 }' releases.txt)
+
+          # The highest of the versions on stdin, one per line.
+          highest() { awk NF | sort -V | tail -n 1; }
+          # The highest stable version starting with $1, counting this one.
+          newest_stable() {
+            printf '%s\n%s\n' "$VERSION" "$STABLE" | awk -v p="$1" 'substr($0, 1, length(p)) == p' | highest
+          }
+
+          FLOATING=""
           if [ "$IS_PRERELEASE" = "true" ]; then
-            # Pre-release: tag with version and 'beta'
-            echo "tags=${{ env.IMAGE_NAME }}:${VERSION},${{ env.IMAGE_NAME }}:beta,${{ env.GHCR_IMAGE }}:${VERSION},${{ env.GHCR_IMAGE }}:beta" >> $GITHUB_OUTPUT
-            echo "Using beta tags: ${VERSION}, beta"
+            # :beta is the newest prerelease, while it is for a later version
+            # than the newest stable release.
+            NEWEST_STABLE=$(echo "$STABLE" | highest)
+            if [ "$(printf '%s\n%s\n' "$VERSION" "$PRERELEASES" | highest)" = "$VERSION" ] &&
+               [ "$(printf '%s\n%s\n' "${VERSION%%-*}" "$NEWEST_STABLE" | highest)" != "$NEWEST_STABLE" ]; then
+              FLOATING="beta"
+            fi
           else
-            # Stable release: tag with version and 'latest'
-            echo "tags=${{ env.IMAGE_NAME }}:${VERSION},${{ env.IMAGE_NAME }}:latest,${{ env.GHCR_IMAGE }}:${VERSION},${{ env.GHCR_IMAGE }}:latest" >> $GITHUB_OUTPUT
-            echo "Using stable tags: ${VERSION}, latest"
+            if [ "$(newest_stable "")" = "$VERSION" ]; then
+              FLOATING="latest"
+              # :beta follows the stable release too, unless a beta for a
+              # later version is out (the weekly refresh uses the same rule).
+              NEWEST_BETA=$(echo "$PRERELEASES" | sed 's/-.*//' | highest)
+              if [ -z "$NEWEST_BETA" ] || [ "$(printf '%s\n%s\n' "$NEWEST_BETA" "$VERSION" | highest)" = "$VERSION" ]; then
+                FLOATING="$FLOATING beta"
+              fi
+            fi
+            # :2.2 and :2, for people who pin to a minor or major version.
+            if [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+              MAJOR="${BASH_REMATCH[1]}"
+              MINOR="$MAJOR.${BASH_REMATCH[2]}"
+              if [ "$(newest_stable "$MINOR.")" = "$VERSION" ]; then FLOATING="$FLOATING $MINOR"; fi
+              if [ "$(newest_stable "$MAJOR.")" = "$VERSION" ]; then FLOATING="$FLOATING $MAJOR"; fi
+            fi
           fi
+
+          TAGS="${IMAGE_NAME}:${VERSION},${GHCR_IMAGE}:${VERSION}"
+          for tag in $FLOATING; do
+            TAGS="${TAGS},${IMAGE_NAME}:${tag},${GHCR_IMAGE}:${tag}"
+          done
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Using tags: ${VERSION} ${FLOATING}"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
