@@ -329,6 +329,64 @@ class FillerAndBlendRotationTests(RotationHarness):
         self.assertEqual(len(FakePlex.writes), 2)
         self.assertIn("B_", FakePlex.writes[-1])
 
+    def set_jellyfin(self):
+        with self.Session() as db:
+            db.query(models.Setting).first().jellyfin_url = "http://jellyfin.test"
+            db.commit()
+
+    def setting(self):
+        with self.Session() as db:
+            s = db.query(models.Setting).first()
+            return s.filler_active, s.active_schedule_id, s.active_category
+
+    def test_filler_reaches_jellyfin_while_plex_is_held(self):
+        # Jellyfin and Emby play what the settings say at playback time; a Plex
+        # movie in its prerolls must not keep them on the schedule that ended.
+        self.set_jellyfin()
+        self.set_filler(filler_type="category", filler_category_id=self.cat_b)
+        self.defer[0] = True
+        self.run_minutes(2)
+        self.assertEqual(self.setting()[0], f"category:{self.cat_b}")
+        self.assertEqual(FakePlex.writes, [])
+        self.defer[0] = False
+        self.run_minutes(3)
+        self.assertEqual(len(FakePlex.writes), 1, "Plex gets it once the guard lets go, then no more")
+        self.assertIn("B_", FakePlex.writes[0])
+
+    def test_a_held_blend_pick_reaches_jellyfin_and_stays_put(self):
+        self.set_jellyfin()
+        self.add_schedule(category_id=self.cat_a, blend_enabled=True, name="blend A")
+        self.add_schedule(category_id=self.cat_b, blend_enabled=True, name="blend B")
+        self.defer[0] = True
+        picks = set()
+        for _ in range(5):
+            self.run_minutes(0)
+            picks.add(self.setting()[1])
+        self.assertEqual(len(picks), 1, "the plugin servers kept one pick while Plex waited")
+        self.assertIsNotNone(picks.pop())
+        self.assertEqual(FakePlex.writes, [])
+        self.defer[0] = False
+        self.run_minutes(0)
+        self.assertEqual(len(FakePlex.writes), 1)
+        expected = "A_" if self.setting()[2] == self.cat_a else "B_"
+        self.assertIn(expected, FakePlex.writes[0])
+
+    def test_jellyfin_only_filler_and_blend_still_apply(self):
+        with self.Session() as db:
+            s = db.query(models.Setting).first()
+            s.plex_url = None
+            s.jellyfin_url = "http://jellyfin.test"
+            db.commit()
+        self.set_filler(filler_type="category", filler_category_id=self.cat_b)
+        self.run_minutes(0)
+        self.assertEqual(self.setting()[0], f"category:{self.cat_b}")
+        self.add_schedule(category_id=self.cat_a, blend_enabled=True, name="blend A")
+        self.add_schedule(category_id=self.cat_b, blend_enabled=True, name="blend B")
+        self.run_minutes(0)
+        self.assertIsNone(self.setting()[0])
+        self.assertIsNotNone(self.setting()[1])
+        self.assertEqual(FakePlex.writes, [])
+
     def test_blended_category_schedules_switch_on_the_interval_not_every_tick(self):
         self.add_schedule(category_id=self.cat_a, blend_enabled=True, name="blend A")
         self.add_schedule(category_id=self.cat_b, blend_enabled=True, name="blend B")

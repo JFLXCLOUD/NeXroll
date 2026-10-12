@@ -865,6 +865,8 @@ class Scheduler:
         # A blend re-picks once per rotation interval, not every tick.
         self._blend_key: Optional[str] = None
         self._blend_rotated_at: Optional[datetime.datetime] = None
+        # (blend key, schedule id) picked but not yet taken by Plex.
+        self._blend_pending: Optional[tuple] = None
         # Set while re-applying for a rotation, so routine rewrites stay out of
         # the Logs page's Events (they are still in app.log).
         self._routine_apply: bool = False
@@ -2858,20 +2860,24 @@ class Scheduler:
         logged each time. Now it is written when filler starts, after a
         restart, and on the rotation interval for a sequence with random or
         conditional blocks. A write the playback guard held is retried.
+
+        Jellyfin and Emby play whatever ``filler_active`` says when playback
+        starts, so it is recorded as soon as any server took the filler. Only
+        the Plex write waits for the guard, and is retried until Plex has it.
         """
         starting = setting.filler_active != filler_key or self._filler_key != filler_key
         rotate_key = f"filler:{filler_key}"
         if not starting and not (rotates and self._rotation_due(rotate_key, now)):
             return
         applied_ok = self._apply_routinely(not starting, apply)
+        if applied_ok and setting.filler_active != filler_key:
+            setting.filler_active = filler_key
+            setting.active_category = None  # Clear normal category tracking
+            setting.active_schedule_id = None
+            db.commit()
         if _plex_took(applied_ok):
             self._filler_key = filler_key
             self._last_rotation_time[rotate_key] = now
-            if starting:
-                setting.filler_active = filler_key
-                setting.active_category = None  # Clear normal category tracking
-                setting.active_schedule_id = None
-                db.commit()
 
     def _apply_blend(self, blend_schedules, setting, db, now) -> None:
         """Blend mode: pick one of the blending schedules per rotation interval.
@@ -2881,6 +2887,12 @@ class Scheduler:
         picks. Now the pick changes once per interval, immediately when the
         set of blending schedules changes, and each rotation re-picks the
         random blocks of a sequence even when the same schedule wins again.
+
+        Jellyfin and Emby play the schedule recorded in the settings when
+        playback starts, so the pick is recorded as soon as any server took
+        it. A pick Plex hasn't taken yet (held for playback) is kept and
+        retried each tick, rather than picked afresh, so the plugin servers
+        don't switch schedules every minute while Plex waits.
         """
         blend_key = ",".join(str(s.id) for s in sorted(blend_schedules, key=lambda s: s.id))
         for sched in blend_schedules:
@@ -2892,9 +2904,12 @@ class Scheduler:
             db.commit()
             return
 
-        chosen = random.choice(blend_schedules)
+        pending = self._blend_pending
+        held = [s for s in blend_schedules if pending and pending == (blend_key, s.id)]
+        chosen = held[0] if held else random.choice(blend_schedules)
         has_sequence = _has_valid_sequence(chosen)
-        unchanged = (self._blend_key == blend_key
+        unchanged = (not held
+                     and self._blend_key == blend_key
                      and getattr(setting, "active_schedule_id", None) == chosen.id
                      and setting.filler_active is None
                      and not (has_sequence and sequence_needs_rotation(chosen.sequence)))
@@ -2910,19 +2925,22 @@ class Scheduler:
         else:
             applied_ok = self._apply_routinely(routine, lambda: self._apply_category_to_plex(chosen.category_id, db, chosen))
         kind = "MIX BLEND" if any(_has_valid_sequence(s) for s in blend_schedules) else "CAT BLEND"
-        if _plex_took(applied_ok):
-            self._blend_key = blend_key
-            self._blend_rotated_at = now
+        if applied_ok:
+            # Some server has it: record it for Jellyfin/Emby straight away.
             setting.active_category = None if has_sequence else chosen.category_id
             setting.active_schedule_id = chosen.id
             setting.filler_active = None
             for sched in blend_schedules:
                 sched.next_run = self._calculate_next_run(sched)
-            db.commit()
+        db.commit()
+        if _plex_took(applied_ok):
+            self._blend_key = blend_key
+            self._blend_rotated_at = now
+            self._blend_pending = None
             what = "sequence" if has_sequence else "category"
             _scheduler_log(f"{kind}: Applied {what} '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
         else:
-            db.commit()
+            self._blend_pending = (blend_key, chosen.id)
             self._log_apply_outcome(f"{kind}: Failed to apply '{chosen.name}'", f"blended schedule '{chosen.name}'",
                                     level="WARNING")
 
