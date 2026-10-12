@@ -1,5 +1,29 @@
 ﻿# Changelog
 
+## [2.2.5] - 10-11-2026
+
+> Random prerolls and trailers on Plex change every 3 minutes, filler and blended schedules stop rewriting Plex every minute, and a schedule set to a NeX-Up trailer category plays your trailers.
+
+### Upgrading
+
+- **No plugin update is needed.**
+- **Downloaded NeX-Up trailers join their trailer category** on first start, so the category's count goes up.
+
+### Changed
+
+- **Random picks on Plex change every 3 minutes** instead of 10, for random blocks, random NeX-Up and Library Trailers blocks, and conditions. A sequence of fixed blocks is written to Plex once.
+- **Blended schedules take turns every 3 minutes** instead of switching most minutes.
+- **Routine rotations stay off the Logs page's Events.** They are still in app.log.
+
+### Fixed
+
+- **A schedule set to the NeX-Up Movie Trailers or TV Trailers category played nothing.** Trailers downloaded by a sync weren't added to the category, and the warning blamed "no media server configured".
+- **Filler rewrote Plex every minute** and logged it each time, and a random filler sequence picked again every minute.
+- **A sequence schedule that won back from another one** kept the other schedule's prerolls until its next rotation.
+- **A change held for playback could wait 5 more minutes** after the movie was past its prerolls.
+- **With Jellyfin or Emby also set up,** a rotation Plex didn't take waited for the next one.
+- **Saved Sequences showed "0 schedules"** for every sequence.
+
 ## [2.2.4] - 10-10-2026
 
 > Trailers in your language, a Plex playback guard you can set and that no longer waits on movies already playing, Docker images on GitHub's registry again, and quieter logs.
