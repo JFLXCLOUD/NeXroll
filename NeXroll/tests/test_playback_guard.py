@@ -101,6 +101,8 @@ class DeferPrerollWriteTests(unittest.TestCase):
             self.scheduler._defer_preroll_write(self.setting, "rotation")
             self.assertEqual(self.scheduler._deferred_write_since, first)
 
+        # Ended for longer than the gap Plex leaves between two prerolls.
+        age_last_seen(self.scheduler, minutes=2)
         self.scheduler._session_probe_at = None
         with mock.patch("backend.scheduler.requests.get", return_value=response(content=IDLE_XML)):
             self.assertFalse(self.scheduler._defer_preroll_write(self.setting, "rotation"))
@@ -140,6 +142,7 @@ class DeferPrerollWriteTests(unittest.TestCase):
         with mock.patch("backend.scheduler.requests.get",
                         return_value=response(content=b'<MediaContainer size="1"><Video sessionKey="7"/></MediaContainer>')):
             self.scheduler._defer_preroll_write(self.setting, "rotation")
+        age_last_seen(self.scheduler, minutes=2)
         with mock.patch("backend.scheduler.requests.get", return_value=response(content=IDLE_XML)):
             self.scheduler._defer_preroll_write(self.setting, "rotation")
         self.assertEqual(self.scheduler._session_first_seen, {})
@@ -157,6 +160,12 @@ class DeferPrerollWriteTests(unittest.TestCase):
                 os.environ.pop("NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES", None)
             else:
                 os.environ["NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES"] = original
+
+
+def age_last_seen(scheduler, minutes):
+    """Pretend every tracked session was last reported `minutes` ago."""
+    for entry in scheduler._session_progress.values():
+        entry["last_seen"] -= datetime.timedelta(minutes=minutes)
 
 
 def movie_xml(offset, *, kind="movie", rating_key="55", session_key="7"):
@@ -226,8 +235,69 @@ class PlaybackProgressTests(unittest.TestCase):
 
     def test_ended_sessions_drop_their_progress(self):
         self.defer(movie_xml(5000))
+        age_last_seen(self.scheduler, minutes=2)
         self.defer(IDLE_XML)
         self.assertEqual(self.scheduler._session_progress, {})
+
+
+def item(kind, rating_key, session_key, offset, session_id="lhlvsuni8gr433lp5r3pau05"):
+    """One playing item as Plex reports it: own sessionKey, shared Session id."""
+    return (f'<Video type="{kind}" ratingKey="{rating_key}" sessionKey="{session_key}" '
+            f'viewOffset="{offset}"><Session id="{session_id}"/><Player state="playing"/></Video>')
+
+
+def container(*items):
+    return f'<MediaContainer size="{len(items)}">{"".join(items)}</MediaContainer>'.encode()
+
+
+class GapsBetweenItemsTests(unittest.TestCase):
+    """JB's Plex for iOS, October 12: The Monster Squad with one preroll.
+
+    The preroll was a clip with its own sessionKey, then Plex reported nothing
+    for about 2 s, then the movie under another sessionKey; all three shared
+    one Session id. A rewrite in a gap like that, between two trailers, is
+    what stops Plex on the second trailer.
+    """
+
+    def setUp(self):
+        self.scheduler = Scheduler()
+        self.t0 = datetime.datetime(2026, 10, 12, 7, 25, 1)
+
+    def count(self, xml, seconds):
+        import xml.etree.ElementTree as ET
+        return self.scheduler._count_sessions_in_preroll_window(
+            ET.fromstring(xml), self.t0 + datetime.timedelta(seconds=seconds))
+
+    def test_the_gap_after_a_preroll_still_holds_writes(self):
+        self.assertEqual(self.count(container(item("clip", "65572", "308", 0)), 0), 1)
+        self.assertEqual(self.count(container(), 16), 1, "nothing reported between items")
+        self.assertEqual(self.count(container(item("movie", "65484", "311", 0)), 18), 1)
+        self.assertEqual(self.count(container(item("movie", "65484", "311", 60000)), 78), 0,
+                         "the movie itself is playing")
+
+    def test_one_playback_counts_once_across_its_items(self):
+        self.count(container(item("clip", "65572", "308", 0)), 0)
+        both = container(item("clip", "65573", "309", 0), item("movie", "1", "400", 0, session_id="other"))
+        self.assertEqual(self.count(both, 30), 2)
+
+    def test_a_playback_stopped_during_its_prerolls_stops_holding_after_the_grace(self):
+        self.count(container(item("clip", "65572", "308", 0)), 0)
+        self.assertEqual(self.count(container(), 60), 1)
+        self.assertEqual(self.count(container(), 95), 0)
+        self.assertEqual(self.scheduler._session_progress, {})
+
+    def test_a_finished_movie_does_not_linger(self):
+        self.count(container(item("movie", "65484", "311", 0)), 0)
+        self.count(container(item("movie", "65484", "311", 60000)), 60)
+        self.assertEqual(self.count(container(), 70), 0)
+
+    def test_the_same_client_starting_another_movie_gets_a_new_window(self):
+        # The client watched a movie for an hour; its Session id is old news.
+        self.count(container(item("movie", "65484", "311", 0)), 0)
+        self.count(container(item("movie", "65484", "311", 60000)), 60)
+        self.assertEqual(self.count(container(item("movie", "65484", "311", 3_600_000)), 3600), 0)
+        # Then the next movie's preroll starts on the same client.
+        self.assertEqual(self.count(container(item("clip", "70000", "500", 0)), 3700), 1)
 
 
 class PlaybackGuardSettingTests(unittest.TestCase):

@@ -2118,6 +2118,14 @@ class Scheduler:
         prerolls are over and it stops counting straight away. Prerolls and
         trailers show up as clips, and a resumed movie sits still while
         anything plays before it, so neither looks like progress.
+
+        Each preroll, trailer and the movie is its own item with its own
+        sessionKey, but they share the playback's Session id, so sessions are
+        tracked by that id. Between items Plex reports nothing for a moment
+        (about 2 s on JB's Plex for iOS, October 12). A probe that landed in
+        that gap saw nothing playing, rewrote the list, and Plex stopped on the
+        next trailer. A session that vanishes while still in its prerolls
+        therefore keeps counting for ``_PLAYBACK_GAP_GRACE_SECONDS``.
         """
         seen = {}
         progress = {}
@@ -2126,17 +2134,48 @@ class Scheduler:
                 continue
             session = element.find("Session")
             player = element.find("Player")
-            key = (element.get("sessionKey")
-                   or (session.get("id") if session is not None else None)
+            key = ((session.get("id") if session is not None else None)
+                   or element.get("sessionKey")
                    or f"{element.get('ratingKey')}:{player.get('machineIdentifier') if player is not None else ''}")
-            seen[key] = self._session_first_seen.get(key, now)
-            progress[key] = self._session_progress_entry(key, element)
-        # Forget sessions that ended, so a reused key starts a new window.
+            previous = self._session_progress.get(key)
+            entry = self._session_progress_entry(key, element)
+            first = self._session_first_seen.get(key, now)
+            # The same client moving on from an item it was already playing
+            # (the movie it watched, then the next one's prerolls) has started
+            # a new playback, with a new window.
+            if (previous and previous.get("past_prerolls")
+                    and previous.get("rating_key") != entry["rating_key"]):
+                first = now
+            entry["last_seen"] = now
+            seen[key] = first
+            progress[key] = entry
+        blocking = sum(1 for key, first in seen.items()
+                       if (now - first).total_seconds() < self._preroll_window_seconds
+                       and not progress[key]["past_prerolls"])
+        # Sessions missing from this probe: one that was still in its prerolls
+        # is most likely between two items, so it keeps holding writes for a
+        # short grace. Anything else has ended and is forgotten, so a reused
+        # key starts a new window.
+        for key, entry in self._session_progress.items():
+            if key in seen or entry.get("past_prerolls"):
+                continue
+            first = self._session_first_seen.get(key)
+            last = entry.get("last_seen")
+            if first is None or last is None:
+                continue
+            if ((now - last).total_seconds() < self._PLAYBACK_GAP_GRACE_SECONDS
+                    and (now - first).total_seconds() < self._preroll_window_seconds):
+                seen[key] = first
+                progress[key] = entry
+                blocking += 1
         self._session_first_seen = seen
         self._session_progress = progress
-        return sum(1 for key, first in seen.items()
-                   if (now - first).total_seconds() < self._preroll_window_seconds
-                   and not progress[key]["past_prerolls"])
+        return blocking
+
+    # How long a session that was still in its prerolls keeps counting after
+    # Plex stops reporting it: longer than the gap between two prerolls, short
+    # enough that a playback stopped during its prerolls doesn't hold writes long.
+    _PLAYBACK_GAP_GRACE_SECONDS = 90
 
     # Position must move by at least this much between probes to count as
     # playing; Plex's reported viewOffset can wobble by a frame or two.
