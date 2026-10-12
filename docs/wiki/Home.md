@@ -13,6 +13,10 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.2.6
+
+- **Fixes for 2.2.5:** Plex no longer stops on a trailer when the preroll list changes between two prerolls, and Jellyfin and Emby switch to filler or a blend straight away on installs that also run Plex.
+
 ## What's New in v2.2.5
 
 - **Random prerolls and trailers on Plex change every 3 minutes**, and filler and blended schedules no longer rewrite Plex every minute. See [Sequences](Sequences#how-often-random-picks-change).

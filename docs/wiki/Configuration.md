@@ -47,6 +47,7 @@ Plex reads its preroll list as the prerolls play, so changing the list while som
 
 - A movie or episode whose position has moved on is playing the movie itself, so it stops holding the change within about a minute. A movie that was already under way when the change came up doesn't wait out the whole window.
 - Music and photos never hold a change.
+- Between two prerolls or trailers Plex briefly reports nothing playing; NeXroll keeps holding through that gap (up to 90 seconds) so the next trailer is still there.
 - **Settings → General → Playback Guard** sets the longest a change waits on one movie: 5 to 60 minutes, 20 by default. Keep it longer than your longest preroll and trailer run.
 - **Off** applies changes right away, even mid-preroll.
 - The dashboard's Currently showing card says when a change is waiting.
