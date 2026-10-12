@@ -618,6 +618,8 @@ Trailers are removed automatically once the film enters your library, or once th
 
 Choose which category downloaded movie trailers and TV trailers are filed under. NeXroll creates *NeX-Up Movie Trailers* and *NeX-Up TV Trailers* by default.
 
+Every downloaded trailer is in its category, so a schedule can use the category directly, for example *NeX-Up Movie Trailers* in random mode to play one of your trailers before each movie. A trailer you switch off on Your Trailers stays out of it. For more control (how many trailers, ratings, genres, Library Trailers) use a NeX-Up Trailers block in a sequence. Before 2.2.5 a trailer downloaded by a sync wasn't added to the category, so a schedule on it played nothing.
+
 ## Managing Your Trailers
 
 ### View Downloaded Trailers

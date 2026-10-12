@@ -13,6 +13,12 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.2.5
+
+- **Random prerolls and trailers on Plex change every 3 minutes**, and filler and blended schedules no longer rewrite Plex every minute. See [Sequences](Sequences#how-often-random-picks-change).
+- **Schedules can use the NeX-Up trailer categories:** every downloaded trailer is in *NeX-Up Movie Trailers* or *NeX-Up TV Trailers*. See [NeX-Up](NeX-Up#categories).
+- **Saved Sequences shows which schedules use each sequence.**
+
 ## What's New in v2.2.4
 
 - **Trailers in your language:** NeX-Up can download movie trailers in French, German, Spanish and other languages from TMDB, with your own free TMDB API key. See [NeX-Up](NeX-Up#trailer-languages).
