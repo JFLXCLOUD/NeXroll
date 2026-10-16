@@ -17,6 +17,7 @@ re-indexed as prerolls.
 from __future__ import annotations
 
 import datetime
+import time
 import json
 import os
 import shutil
@@ -24,6 +25,7 @@ import uuid
 from typing import Optional
 
 from backend.preroll_files import _move_to_exact_destination, move_to_unique_destination
+from backend.timeutil import utcnow
 
 TRASH_DIR_NAME = ".nexroll-trash"
 MANIFEST_NAME = "manifest.json"
@@ -81,7 +83,7 @@ def resolve_trash_root(source_path: str, prerolls_dir: Optional[str],
 
 
 def _new_entry_id() -> str:
-    stamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}-{uuid.uuid4().hex[:8]}"
 
 
@@ -109,7 +111,7 @@ def move_to_trash(source_path: str, prerolls_dir: Optional[str], data_dir: Optio
         "original_path": original,
         "filename": os.path.basename(original),
         "trashed_path": trashed_path,
-        "deleted_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "deleted_at": utcnow().isoformat() + "Z",
         "size_bytes": _safe_size(trashed_path),
     }
     if metadata:
@@ -259,7 +261,7 @@ def purge_trash(prerolls_dir: Optional[str], data_dir: Optional[str],
     if older_than_days is not None:
         if older_than_days <= 0:
             return {"removed": 0, "bytes_freed": 0}
-        cutoff = datetime.datetime.utcnow().timestamp() - (older_than_days * 86400)
+        cutoff = time.time() - (older_than_days * 86400)
 
     for root in trash_roots(prerolls_dir, data_dir):
         if not os.path.isdir(root):

@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from backend.database import Base
 import datetime
 import json
+from backend.timeutil import utcnow
 
 # Association (many-to-many) between prerolls and categories
 preroll_categories = Table(
@@ -32,7 +33,7 @@ class Preroll(Base):
     # put there, so deletion is gated on an explicit request instead (see
     # delete_preroll's delete_file parameter).
     managed = Column(Boolean, default=True)
-    upload_date = Column(DateTime, default=datetime.datetime.utcnow)
+    upload_date = Column(DateTime, default=utcnow)
     community_preroll_id = Column(String, nullable=True, index=True)  # ID from community prerolls library
     exclude_from_matching = Column(Boolean, default=False)  # Exclude from auto-matching to community prerolls
     file_hash = Column(String, nullable=True, index=True)  # SHA256 hash for duplicate detection
@@ -69,7 +70,7 @@ class IgnoredPath(Base):
     path_key = Column(String, unique=True, index=True)  # normcase(normpath(abspath))
     filename = Column(String, nullable=True)
     reason = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 
 class GenreMap(Base):
@@ -121,8 +122,8 @@ class SavedSequence(Base):
     name = Column(String, index=True)  # Sequence name
     description = Column(Text, nullable=True)  # Optional description
     blocks = Column(Text)  # JSON array of sequence blocks
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
     def get_blocks(self):
         """Parse and return blocks as list"""
@@ -168,7 +169,7 @@ class CommunityTemplate(Base):
     tags = Column(Text)  # JSON array of tags
     downloads = Column(Integer, default=0)
     rating = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     is_public = Column(Boolean, default=True)
 
 
@@ -213,8 +214,8 @@ class ComingSoonTrailer(TrailerGenres, Base):
     excluded_from_list = Column(Boolean, default=False)  # User can exclude from Coming Soon list generation
     play_count = Column(Integer, default=0)  # How many times this trailer has been played
     last_played = Column(DateTime, nullable=True)  # Last time trailer was played
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class ComingSoonTVTrailer(TrailerGenres, Base):
@@ -250,8 +251,8 @@ class ComingSoonTVTrailer(TrailerGenres, Base):
     excluded_from_list = Column(Boolean, default=False)  # User can exclude from Coming Soon list generation
     play_count = Column(Integer, default=0)  # How many times this trailer has been played
     last_played = Column(DateTime, nullable=True)  # Last time trailer was played
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class LibraryTrailer(TrailerGenres, Base):
@@ -288,8 +289,8 @@ class LibraryTrailer(TrailerGenres, Base):
     in_selection = Column(Boolean, default=True)
     downloaded_at = Column(DateTime, nullable=True)
     last_attempt_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class Setting(Base):
@@ -323,7 +324,7 @@ class Setting(Base):
     # from onboarding_complete because a re-run happens on a configured install,
     # where the "no prior configuration" test for a first run no longer holds.
     onboarding_restart_requested = Column(Boolean, default=False)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=utcnow)
     override_expires_at = Column(DateTime, nullable=True)
     path_mappings = Column(Text, nullable=True)  # JSON list of {"local": "...", "plex": "..."} path prefix mappings
     last_schedule_fallback = Column(Integer, nullable=True)  # Fallback category from most recently active schedule (used when no schedules are active)
@@ -534,7 +535,7 @@ class APIKey(Base):
     key_prefix = Column(String(8), nullable=False)  # First 8 chars for identification (e.g., "nx_abc123")
     permissions = Column(String, default='full')  # 'read' or 'full'
     expires_at = Column(DateTime, nullable=True)  # Optional expiration date
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     last_used_at = Column(DateTime, nullable=True)  # Track last usage
     is_active = Column(Boolean, default=True)  # Soft revoke without deleting
     description = Column(Text, nullable=True)  # Optional description/notes
@@ -551,7 +552,7 @@ class User(Base):
     email = Column(String, nullable=True)  # Optional email
     role = Column(String, default='user')  # 'admin' or 'user'
     is_active = Column(Boolean, default=True)  # Account enabled/disabled
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     last_login_at = Column(DateTime, nullable=True)  # Track last login
     failed_login_attempts = Column(Integer, default=0)  # For lockout protection
     locked_until = Column(DateTime, nullable=True)  # Account lockout timestamp
@@ -565,7 +566,7 @@ class NavigationFavorite(Base):
     scope = Column(String, primary_key=True)
     page = Column(String, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
 
 class Session(Base):
@@ -575,7 +576,7 @@ class Session(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_token = Column(String, unique=True, nullable=False, index=True)  # Random token
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     expires_at = Column(DateTime, nullable=False)
     ip_address = Column(String, nullable=True)  # Client IP for security
     user_agent = Column(String, nullable=True)  # Browser/client info
@@ -589,7 +590,7 @@ class AuthAuditLog(Base):
     __tablename__ = "auth_audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    timestamp = Column(DateTime, default=utcnow, nullable=False, index=True)
     event_type = Column(String, nullable=False, index=True)  # 'login_success', 'login_failed', 'logout', 'account_locked', 'user_created', 'user_deleted', 'password_changed'
     username = Column(String, nullable=True, index=True)  # Username involved (nullable for system events)
     user_id = Column(Integer, nullable=True)  # User ID if applicable
@@ -603,7 +604,7 @@ class LogEntry(Base):
     __tablename__ = "log_entries"
 
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    timestamp = Column(DateTime, default=utcnow, nullable=False, index=True)
     level = Column(String, nullable=False, index=True)  # 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
     category = Column(String, nullable=False, index=True)  # 'system', 'scheduler', 'api', 'user', 'plex', 'jellyfin', 'nexup'
     source = Column(String, nullable=True)  # Module/function name (e.g., 'scheduler.apply_prerolls')

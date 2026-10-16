@@ -6,6 +6,7 @@ import ipaddress
 from typing import Optional
 from backend import secure_store
 from backend.jellyfin_auth import jellyfin_auth_headers
+from backend.timeutil import utcnow
 
 def _is_dir_writable(p: str) -> bool:
     try:
@@ -197,7 +198,7 @@ class JellyfinConnector:
                 cfg_dir = os.path.dirname(self.config_file) or "."
                 os.makedirs(cfg_dir, exist_ok=True)
                 cfg = {
-                    "setup_date": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                    "setup_date": utcnow().isoformat() + "Z",
                     "note": "API key saved to secure store; this file contains no secrets",
                     "token_length": len(api_key),
                 }

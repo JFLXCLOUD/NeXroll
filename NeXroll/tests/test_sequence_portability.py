@@ -28,6 +28,7 @@ from sqlalchemy.orm import sessionmaker
 import ast
 from backend import models
 from backend.preroll_files import validate_storage_component
+from backend.timeutil import utcnow
 from tests.test_trailer_filters import main_ast
 
 FUNCTIONS = {
@@ -55,7 +56,7 @@ def load(prerolls_dir):
         elif isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in CONSTANTS:
             nodes.append(node)
     env = dict(
-        models=models, os=os, json=json, io=io, zipfile=zipfile, uuid=uuid, datetime=datetime, or_=or_,
+        models=models, os=os, json=json, io=io, zipfile=zipfile, uuid=uuid, datetime=datetime, utcnow=utcnow, or_=or_,
         Optional=Optional, HTTPException=HTTPException, app_version='test',
         StreamingResponse=lambda content, media_type, headers: SimpleNamespace(content=content, headers=headers),
         _file_log=lambda *a, **k: None, log_event=lambda *a, **k: None,
@@ -76,10 +77,26 @@ class Upload:
         return self._data
 
 
+_opened = []
+
+
 def session(path):
     engine = create_engine(f'sqlite:///{path}')
     models.Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)()
+    db = sessionmaker(bind=engine)()
+    _opened.append((db, engine))
+    return db
+
+
+@pytest.fixture(autouse=True)
+def _close_databases():
+    # Unclosed SQLite connections raise ResourceWarning since Python 3.13 and
+    # keep the files open, which on Windows stops tmp_path from cleaning up.
+    yield
+    while _opened:
+        db, engine = _opened.pop()
+        db.close()
+        engine.dispose()
 
 
 @pytest.fixture

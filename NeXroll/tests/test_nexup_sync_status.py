@@ -20,6 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend import models
 from backend import scheduler as scheduler_module
+from backend.timeutil import utcnow
 
 
 class FakeRadarrConnector:
@@ -213,7 +214,7 @@ class ReconcileStatusTests(unittest.TestCase):
             db.add(models.ComingSoonTrailer(
                 title="Stranded", status="pending", is_enabled=True,
                 local_path=self.media("stranded.mp4"),
-                downloaded_at=datetime.datetime.utcnow()))
+                downloaded_at=utcnow()))
             db.commit()
             self.assertEqual(scheduler_module.reconcile_nexup_trailer_status(db), 1)
             db.commit()
@@ -225,7 +226,7 @@ class ReconcileStatusTests(unittest.TestCase):
             db.add(models.ComingSoonTVTrailer(
                 title="Stranded Show", status="pending", is_enabled=True,
                 local_path=self.media("stranded-show.mp4"),
-                downloaded_at=datetime.datetime.utcnow()))
+                downloaded_at=utcnow()))
             db.commit()
             self.assertEqual(scheduler_module.reconcile_nexup_trailer_status(db), 1)
             db.commit()
@@ -236,7 +237,7 @@ class ReconcileStatusTests(unittest.TestCase):
             db.add(models.ComingSoonTrailer(
                 title="Vanished", status="pending", is_enabled=True,
                 local_path=os.path.join(self.temp_dir.name, "not-there.mp4"),
-                downloaded_at=datetime.datetime.utcnow()))
+                downloaded_at=utcnow()))
             db.commit()
             self.assertEqual(scheduler_module.reconcile_nexup_trailer_status(db), 0)
             self.assertEqual(db.query(models.ComingSoonTrailer).one().status, "pending")
@@ -247,7 +248,7 @@ class ReconcileStatusTests(unittest.TestCase):
             db.add(models.ComingSoonTrailer(
                 title="In Flight", status="downloading", is_enabled=True,
                 local_path=self.media("in-flight.mp4"),
-                downloaded_at=datetime.datetime.utcnow()))
+                downloaded_at=utcnow()))
             db.commit()
             self.assertEqual(scheduler_module.reconcile_nexup_trailer_status(db), 0)
             self.assertEqual(db.query(models.ComingSoonTrailer).one().status, "downloading")
@@ -266,7 +267,7 @@ class ReconcileStatusTests(unittest.TestCase):
             db.add(models.ComingSoonTrailer(
                 title="Failed", status="error", is_enabled=True,
                 local_path=self.media("failed.mp4"),
-                downloaded_at=datetime.datetime.utcnow()))
+                downloaded_at=utcnow()))
             db.commit()
             self.assertEqual(scheduler_module.reconcile_nexup_trailer_status(db), 0)
 
@@ -275,7 +276,7 @@ class ReconcileStatusTests(unittest.TestCase):
             db.add(models.ComingSoonTrailer(
                 title="Stranded", status="pending", is_enabled=True,
                 local_path=self.media("stranded.mp4"),
-                downloaded_at=datetime.datetime.utcnow()))
+                downloaded_at=utcnow()))
             db.commit()
             scheduler_module.reconcile_nexup_trailer_status(db)
             db.commit()

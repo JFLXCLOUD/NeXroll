@@ -120,6 +120,7 @@ from backend.backup_utils import (
     remap_sequence_blocks,
     remap_sequence_json,
 )
+from backend.timeutil import utcnow
 from backend.auth_gate import (
     DEV_UI_ORIGINS,
     friendly_local_username,
@@ -929,7 +930,7 @@ def _migrate_legacy_api_keys():
                 setattr(setting, attr, None)
                 migrated.append(attr)
         if migrated:
-            setting.updated_at = datetime.datetime.utcnow()
+            setting.updated_at = utcnow()
             db.commit()
             _file_log(f"Security migration: Moved {', '.join(migrated)} from DB to secure store")
         db.close()
@@ -1727,7 +1728,7 @@ def _remove_ignored_conflicts_for_schedule(db: Session, schedule_id: int) -> int
             kept.append(key)
     if removed:
         setting.ignored_conflicts = json.dumps(kept)
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
     return removed
 
 class CategoryCreate(BaseModel):
@@ -1989,7 +1990,7 @@ def _bootstrap_plex_from_env() -> None:
                     setting.plex_url = _normalize_url(url_env)
                     setting.plex_token = token
                     try:
-                        setting.updated_at = datetime.datetime.utcnow()
+                        setting.updated_at = utcnow()
                     except Exception:
                         pass
                     db.commit()
@@ -2002,7 +2003,7 @@ def _bootstrap_plex_from_env() -> None:
                     setting.plex_url = _normalize_url(u)
                     setting.plex_token = token
                     try:
-                        setting.updated_at = datetime.datetime.utcnow()
+                        setting.updated_at = utcnow()
                     except Exception:
                         pass
                     db.commit()
@@ -2266,7 +2267,7 @@ def _get_or_create_plex_client_id() -> str:
                 setting.plex_client_id = new_id
                 # best-effort updated_at
                 try:
-                    setting.updated_at = datetime.datetime.utcnow()
+                    setting.updated_at = utcnow()
                 except Exception:
                     pass
                 db.commit()
@@ -4394,7 +4395,7 @@ def _validate_session(session_token: str, db: Session) -> Optional[models.User]:
     session = db.query(models.Session).filter(
         models.Session.session_token == token_hash,
         models.Session.is_valid == True,
-        models.Session.expires_at > datetime.datetime.utcnow()
+        models.Session.expires_at > utcnow()
     ).first()
     
     if not session:
@@ -4409,7 +4410,7 @@ def _validate_session(session_token: str, db: Session) -> Optional[models.User]:
     if secrets.randbelow(50) == 0:
         try:
             db.query(models.Session).filter(
-                models.Session.expires_at < datetime.datetime.utcnow()
+                models.Session.expires_at < utcnow()
             ).delete()
             db.commit()
         except Exception:
@@ -4540,7 +4541,7 @@ def create_api_key(
     # Calculate expiration
     expires_at = None
     if expires_days and expires_days > 0:
-        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=expires_days)
+        expires_at = utcnow() + datetime.timedelta(days=expires_days)
     
     # Create the API key record
     api_key = models.APIKey(
@@ -4661,7 +4662,7 @@ def validate_api_key(api_key: str, required_permission: str = "read", db: Sessio
         return None
     
     # Check expiration
-    if key_record.expires_at and key_record.expires_at < datetime.datetime.utcnow():
+    if key_record.expires_at and key_record.expires_at < utcnow():
         return None
     
     # Check permissions
@@ -4669,7 +4670,7 @@ def validate_api_key(api_key: str, required_permission: str = "read", db: Sessio
         return None
     
     # Update last used timestamp
-    key_record.last_used_at = datetime.datetime.utcnow()
+    key_record.last_used_at = utcnow()
     db.commit()
     
     return key_record
@@ -6060,7 +6061,7 @@ app_log.set_db_sink(lambda level, category, message, source=None, details=None: 
 def _iso_utc(dt):
     """Serialize a naive-UTC datetime as an ISO string explicitly marked UTC.
 
-    Log entries are stored with datetime.utcnow() (naive UTC). Without the 'Z'
+    Log entries are stored as naive UTC (timeutil.utcnow()). Without the 'Z'
     marker the frontend's new Date(...) treats the value as local time, so log
     timestamps display shifted by the viewer's UTC offset. Marking them UTC lets
     the browser render them correctly in the viewer's local timezone.
@@ -6080,7 +6081,7 @@ def cleanup_old_logs(retention_days: int = None, db: Session = None):
             settings = _get_log_settings(db)
             retention_days = settings.get("log_retention_days", 30)
         
-        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=retention_days)
+        cutoff = utcnow() - datetime.timedelta(days=retention_days)
         deleted = db.query(models.LogEntry).filter(
             models.LogEntry.timestamp < cutoff
         ).delete(synchronize_session=False)
@@ -6328,7 +6329,7 @@ async def onboarding_complete(request: Request, db: Session = Depends(get_db)):
     setting.onboarding_complete = True
     setting.onboarding_restart_requested = False
     try:
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
     except Exception:
         pass
     db.commit()
@@ -6350,7 +6351,7 @@ async def onboarding_restart(request: Request, db: Session = Depends(get_db)):
         db.add(setting)
     setting.onboarding_restart_requested = True
     try:
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
     except Exception:
         pass
     db.commit()
@@ -6450,8 +6451,8 @@ async def auth_login(
         raise HTTPException(status_code=401, detail="Invalid username or password")
     
     # Check if account is locked
-    if user.locked_until and user.locked_until > datetime.datetime.utcnow():
-        remaining = (user.locked_until - datetime.datetime.utcnow()).seconds // 60
+    if user.locked_until and user.locked_until > utcnow():
+        remaining = (user.locked_until - utcnow()).seconds // 60
         _log_auth_event(db, 'login_failed', username=user.username, user_id=user.id,
                        ip_address=ip, user_agent=user_agent, details=f'Account locked ({remaining} min remaining)')
         raise HTTPException(status_code=423, detail=f"Account locked. Try again in {remaining} minutes.")
@@ -6469,7 +6470,7 @@ async def auth_login(
         
         # Lock account after 5 failed attempts
         if user.failed_login_attempts >= 5:
-            user.locked_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+            user.locked_until = utcnow() + datetime.timedelta(minutes=15)
             db.commit()
             _log_auth_event(db, 'account_locked', username=user.username, user_id=user.id,
                            ip_address=ip, user_agent=user_agent, details='Locked after 5 failed attempts')
@@ -6483,7 +6484,7 @@ async def auth_login(
     # Success - reset failed attempts
     user.failed_login_attempts = 0
     user.locked_until = None
-    user.last_login_at = datetime.datetime.utcnow()
+    user.last_login_at = utcnow()
     
     # Create session
     session_hours = getattr(setting, 'auth_session_timeout_hours', 24)
@@ -6497,7 +6498,7 @@ async def auth_login(
     session = models.Session(
         session_token=token_hash,
         user_id=user.id,
-        expires_at=datetime.datetime.utcnow() + datetime.timedelta(hours=session_hours),
+        expires_at=utcnow() + datetime.timedelta(hours=session_hours),
         ip_address=ip,
         user_agent=user_agent
     )
@@ -7038,7 +7039,7 @@ async def auth_clear_audit_logs(
         if not user or user.role != 'admin':
             raise HTTPException(status_code=403, detail="Admin access required")
     
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=older_than_days)
+    cutoff = utcnow() - datetime.timedelta(days=older_than_days)
     deleted = db.query(models.AuthAuditLog).filter(
         models.AuthAuditLog.timestamp < cutoff
     ).delete()
@@ -7501,7 +7502,7 @@ async def logs_get_stats(
         if category:
             category_counts[category] = count
 
-    since = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    since = utcnow() - datetime.timedelta(hours=24)
     last_24h = {level: 0 for level in levels}
     for level, count in (db.query(level_col, func.count(models.LogEntry.id))
                          .filter(models.LogEntry.timestamp >= since).group_by(level_col).all()):
@@ -7757,12 +7758,12 @@ async def logs_clear(
         query = query.filter(~_routine_read_filter())
     else:
         if older_than_days is not None:
-            cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=older_than_days)
+            cutoff = utcnow() - datetime.timedelta(days=older_than_days)
             query = query.filter(models.LogEntry.timestamp < cutoff)
         elif level is None and category is None:
             # If no filters, use retention setting as safety
             settings = _get_log_settings(db)
-            cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=settings.get("log_retention_days", 30))
+            cutoff = utcnow() - datetime.timedelta(days=settings.get("log_retention_days", 30))
             query = query.filter(models.LogEntry.timestamp < cutoff)
 
     if level:
@@ -7882,7 +7883,7 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
             else:
                 setting.plex_url = url
                 setting.plex_token = None
-                setting.updated_at = datetime.datetime.utcnow()
+                setting.updated_at = utcnow()
                 _file_log(f"/plex/connect: Updated existing settings")
 
             # Persist token in secure store
@@ -8058,7 +8059,7 @@ def disconnect_plex(db: Session = Depends(get_db)):
     if setting:
         setting.plex_url = None
         setting.plex_token = None
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
         db.commit()
 
     return {"disconnected": True, "message": "Successfully disconnected from Plex server"}
@@ -8087,7 +8088,7 @@ def connect_plex_stable_token(request: PlexStableConnectRequest, db: Session = D
                 else:
                     setting.plex_url = url
                     setting.plex_token = connector.token
-                    setting.updated_at = datetime.datetime.utcnow()
+                    setting.updated_at = utcnow()
                 db.commit()
                 return {
                     "connected": True,
@@ -8263,7 +8264,7 @@ def plex_auto_connect(req: PlexAutoConnectRequest, db: Session = Depends(get_db)
         setting.plex_url = chosen
         setting.plex_token = token
         try:
-            setting.updated_at = datetime.datetime.utcnow()
+            setting.updated_at = utcnow()
         except Exception:
             pass
     try:
@@ -8478,7 +8479,7 @@ def plex_tv_start(forward_url: str | None = None):
     try:
         # Periodically purge expired sessions
         try:
-            now = datetime.datetime.utcnow()
+            now = utcnow()
             expired = [k for k, v in OAUTH_SESSIONS.items() if v.get("expires") and v["expires"] < now]
             for k in expired:
                 OAUTH_SESSIONS.pop(k, None)
@@ -8501,8 +8502,8 @@ def plex_tv_start(forward_url: str | None = None):
         OAUTH_SESSIONS[sid] = {
             "pin": pinlogin,
             "headers": headers,
-            "created": datetime.datetime.utcnow(),
-            "expires": datetime.datetime.utcnow() + datetime.timedelta(minutes=10),
+            "created": utcnow(),
+            "expires": utcnow() + datetime.timedelta(minutes=10),
         }
         return {"id": sid, "url": url}
     except Exception as e:
@@ -8617,7 +8618,7 @@ def plex_tv_connect(req: PlexTvConnectRequest, db: Session = Depends(get_db)):
         else:
             setting.plex_url = baseurl
             setting.plex_token = token
-            setting.updated_at = datetime.datetime.utcnow()
+            setting.updated_at = utcnow()
 
         # Save to secure store (best effort)
         try:
@@ -11730,7 +11731,7 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
                 linked_schedule_ids.append(sched.id)
                 synced_schedules += 1
 
-        db_sequence.updated_at = datetime.datetime.utcnow()
+        db_sequence.updated_at = utcnow()
         db.commit()
         db.refresh(db_sequence)
 
@@ -11920,7 +11921,7 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         setting.override_expires_at = _localized_now(db) + datetime.timedelta(minutes=15)
         setting.applied_sequence_id = sequence_id
         setting.applied_sequence_name = saved_seq.name
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
         db.commit()
     except Exception:
         try:
@@ -13692,7 +13693,7 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
             'created_by': 'NeXroll',
             'export_mode': export_mode,
             'nexroll_version': app_version,
-            'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
+            'exported_at': utcnow().isoformat() + 'Z',
             'blocks': pattern_blocks
         }
         
@@ -13769,7 +13770,7 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
                     # Add a manifest file with export details
                     manifest = {
                         'sequence_name': sequence_name,
-                        'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
+                        'exported_at': utcnow().isoformat() + 'Z',
                         'nexroll_version': app_version,
                         'total_files': len(taken),
                         'categories_exported': categories_exported,
@@ -13813,7 +13814,7 @@ def _build_sequence_export(sequence_name, sequence_description, blocks, export_m
 @app.post("/sequences/{sequence_id}/export")
 def export_sequence_pattern(
     sequence_id: int,
-    export_mode: str = Query("pattern_only", regex="^(pattern_only|with_community_ids|with_preroll_data|full_bundle)$"),
+    export_mode: str = Query("pattern_only", pattern="^(pattern_only|with_community_ids|with_preroll_data|full_bundle)$"),
     db: Session = Depends(get_db)
 ):
     """Export a saved sequence as a .nexseq pattern file (or full-bundle ZIP)."""
@@ -15215,7 +15216,7 @@ def put_path_mappings(payload: PathMappingsPayload, merge: bool = False, db: Ses
 
     try:
         setting.path_mappings = json.dumps(out)
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
         db.commit()
     except Exception as e:
         db.rollback()
@@ -16020,7 +16021,7 @@ def _set_last_scan_stats(stats: dict) -> None:
         _LAST_SCAN_STATS["files_on_disk"] = int(stats.get("files_on_disk", 0) or 0)
         _LAST_SCAN_STATS["db_rows_total"] = int(stats.get("db_rows_total", 0) or 0)
         _LAST_SCAN_STATS["storage_maybe_offline"] = bool(stats.get("storage_maybe_offline", False))
-        _LAST_SCAN_STATS["last_scan_at"] = _dt.utcnow().isoformat() + "Z"
+        _LAST_SCAN_STATS["last_scan_at"] = utcnow().isoformat() + "Z"
     except Exception:
         pass
 
@@ -16440,7 +16441,7 @@ def system_storage_breakdown(db: Session = Depends(get_db)):
     slow network share; thumbnails are walked, but the whole result is cached for
     5 minutes.
     """
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     c = _storage_breakdown_cache
     if c["data"] and c["at"] and (now - c["at"]).total_seconds() < STORAGE_BREAKDOWN_TTL:
         return {**c["data"], "cached": True}
@@ -17100,7 +17101,7 @@ def backup_database(request: Request = None, db: Session = Depends(get_db)):
                 .order_by(models.NavigationFavorite.created_at, models.NavigationFavorite.page).all()
             ],
             "credentials": _export_credentials() if _backup_may_include_credentials(request) else {},
-            "exported_at": datetime.datetime.utcnow().isoformat(),
+            "exported_at": utcnow().isoformat(),
             "exported_by_version": app_version,
         }
 
@@ -17586,8 +17587,8 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                             old_preroll_id_to_new_id,
                             old_id_to_new_id,
                         )),
-                        created_at=created_at or datetime.datetime.utcnow(),
-                        updated_at=updated_at or datetime.datetime.utcnow()
+                        created_at=created_at or utcnow(),
+                        updated_at=updated_at or utcnow()
                     )
                     db.add(sequence)
                     db.flush()
@@ -17669,7 +17670,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                         seen_pages.add(page)
                         db.add(models.NavigationFavorite(
                             scope="local", page=page, user_id=None,
-                            created_at=datetime.datetime.utcnow() + datetime.timedelta(microseconds=index)))
+                            created_at=utcnow() + datetime.timedelta(microseconds=index)))
                 db.commit()
             except Exception as fav_err:
                 db.rollback()
@@ -18894,7 +18895,7 @@ def _apply_category_to_plex_and_track(db: Session, category_id: int, ttl: int = 
                 st.override_expires_at = _localized_now(db) + datetime.timedelta(minutes=int(ttl))
             except Exception:
                 st.override_expires_at = None
-            st.updated_at = datetime.datetime.utcnow()
+            st.updated_at = utcnow()
             db.commit()
         except Exception:
             try:
@@ -19255,7 +19256,7 @@ def update_dashboard_tile_order(order: list[str], db: Session = Depends(get_db))
     try:
         order_json = json.dumps(order)
         setting.dashboard_tile_order = order_json
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
         db.commit()
         return {"message": "Dashboard tile order updated"}
     except Exception as e:
@@ -19282,7 +19283,7 @@ def update_verbose_logging(verbose_logging: bool, db: Session = Depends(get_db))
         db.refresh(setting)
     
     setting.verbose_logging = verbose_logging
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     status = "enabled" if verbose_logging else "disabled"
@@ -19311,7 +19312,7 @@ def update_passive_mode(passive_mode: bool, db: Session = Depends(get_db)):
         db.refresh(setting)
     
     setting.passive_mode = passive_mode
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     status = "enabled" if passive_mode else "disabled"
@@ -19343,7 +19344,7 @@ def update_playback_guard(minutes: int, db: Session = Depends(get_db)):
         db.refresh(setting)
 
     setting.playback_guard_minutes = minutes
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
 
     status = "off" if minutes == 0 else f"{minutes} minutes"
@@ -19371,7 +19372,7 @@ def update_clear_when_inactive(clear_when_inactive: bool, db: Session = Depends(
         db.refresh(setting)
     
     setting.clear_when_inactive = clear_when_inactive
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     status = "enabled" if clear_when_inactive else "disabled"
@@ -19469,7 +19470,7 @@ def update_filler_settings(
                 return {"error": f"Generated preroll not found: {cleaned}"}
         setting.filler_dynamic_filename = cleaned or None
     
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     filler_status = "enabled" if setting.filler_enabled else "disabled"
@@ -20080,7 +20081,7 @@ def update_nexup_settings(
     if trailer_retention_days is not None:
         setting.nexup_trailer_retention_days = max(0, min(365, trailer_retention_days))
     
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     _file_log(f"NeX-Up settings updated")
@@ -20152,7 +20153,7 @@ async def connect_radarr(
             
             setting.nexup_radarr_url = url
             setting.nexup_radarr_api_key = api_key
-            setting.updated_at = datetime.datetime.utcnow()
+            setting.updated_at = utcnow()
             db.commit()
             
             _file_log(f"Radarr connected: {result.get('appName')} v{result.get('version')}")
@@ -20184,7 +20185,7 @@ def disconnect_radarr(db: Session = Depends(get_db)):
     if setting:
         setting.nexup_radarr_url = None
         setting.nexup_radarr_api_key = None
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
         db.commit()
     
     _file_log("Radarr disconnected")
@@ -20229,7 +20230,7 @@ async def get_upcoming_movies(db: Session = Depends(get_db)):
         if movie.get('has_file', False):
             # Check if trailer was downloaded - use downloaded_at if available, else release_date
             if trailer and trailer.downloaded_at:
-                days_since = (datetime.datetime.utcnow() - trailer.downloaded_at).days
+                days_since = (utcnow() - trailer.downloaded_at).days
             elif movie.get('release_date'):
                 try:
                     rd = datetime.datetime.fromisoformat(movie['release_date']).date()
@@ -20321,7 +20322,7 @@ async def connect_sonarr(
             setting.nexup_sonarr_url = url
             setting.nexup_sonarr_api_key = api_key
             setting.nexup_sonarr_enabled = True
-            setting.updated_at = datetime.datetime.utcnow()
+            setting.updated_at = utcnow()
             db.commit()
             
             _file_log(f"Sonarr connected: {result.get('appName')} v{result.get('version')}")
@@ -20354,7 +20355,7 @@ def disconnect_sonarr(db: Session = Depends(get_db)):
         setting.nexup_sonarr_url = None
         setting.nexup_sonarr_api_key = None
         setting.nexup_sonarr_enabled = False
-        setting.updated_at = datetime.datetime.utcnow()
+        setting.updated_at = utcnow()
         db.commit()
     
     _file_log("Sonarr disconnected")
@@ -20402,7 +20403,7 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
         # If available, check grace period
         if show['available_now']:
             if trailer and trailer.downloaded_at:
-                days_since = (datetime.datetime.utcnow() - trailer.downloaded_at).days
+                days_since = (utcnow() - trailer.downloaded_at).days
             elif show.get('release_date'):
                 try:
                     rd = datetime.datetime.fromisoformat(show['release_date']).date()
@@ -20492,7 +20493,7 @@ async def search_tv_trailers(sonarr_series_id: int, season_number: int = 1, db: 
         year = show.get('year')
         season_str = f"season {season_number}" if season_number and season_number > 1 else ""
         query = " ".join(p for p in [title, str(year) if year else "", season_str, "official trailer"] if p).strip()
-        candidates = await asyncio.get_event_loop().run_in_executor(
+        candidates = await asyncio.get_running_loop().run_in_executor(
             None, search_youtube_trailers, query, 3)
         return {"title": title, "year": year, "season_number": season_number, "query": query, "candidates": candidates}
     except HTTPException:
@@ -20591,7 +20592,7 @@ async def download_tv_trailer(
                 yq = " ".join(p for p in [_title, str(_year) if _year else "",
                                           f"season {season_number}", "official trailer"] if p).strip()
                 _file_log(f"Sonarr: Season-aware YouTube search: {yq}")
-                yt = await asyncio.get_event_loop().run_in_executor(None, search_youtube_trailers, yq, 1)
+                yt = await asyncio.get_running_loop().run_in_executor(None, search_youtube_trailers, yq, 1)
                 if yt and yt[0].get('url'):
                     trailers = [{
                         'source': 'youtube',
@@ -20670,7 +20671,7 @@ async def download_tv_trailer(
             trailer.duration_seconds = result.get('duration')
             trailer.resolution = result.get('resolution')
             trailer.status = 'downloaded'
-            trailer.downloaded_at = datetime.datetime.utcnow()
+            trailer.downloaded_at = utcnow()
             
             _file_log(f"Sonarr: Successfully downloaded '{show_info.get('title')}' trailer ({result.get('size_mb', 0):.1f} MB) to {result['path']}")
             
@@ -20808,7 +20809,7 @@ def toggle_tv_trailer(trailer_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Trailer not found")
     
     trailer.is_enabled = not trailer.is_enabled
-    trailer.updated_at = datetime.datetime.utcnow()
+    trailer.updated_at = utcnow()
     
     # Also toggle the associated preroll (path-tolerant lookup so case/separator
     # differences don't silently miss it — see NEXUP-2)
@@ -21080,7 +21081,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                     _auto_log = json.loads(_log_raw) if _log_raw else {}
                     if not isinstance(_auto_log, dict):
                         _auto_log = {}
-                    _auto_log[layout] = datetime.datetime.utcnow().isoformat()
+                    _auto_log[layout] = utcnow().isoformat()
                     setting.nexup_coming_soon_list_auto_regen_log = json.dumps(_auto_log)
                     db.commit()
                 except Exception as _e:
@@ -21202,12 +21203,12 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
             if season_file_count > 0:
                 # Mark downloaded_at if not already set
                 if not trailer.downloaded_at:
-                    trailer.downloaded_at = datetime.datetime.utcnow()
+                    trailer.downloaded_at = utcnow()
                     db.commit()
                     _file_log(f"Sonarr Sync: Marked '{trailer.title}' S{trailer.season_number} as downloaded (Available Now!)")
                 
                 # Only expire if past the grace period
-                days_since = (datetime.datetime.utcnow() - trailer.downloaded_at).days
+                days_since = (utcnow() - trailer.downloaded_at).days
                 if days_since > available_days:
                     should_expire = True
                     expire_reason = f"Season has {season_file_count} episode(s) downloaded, past {available_days}-day grace period"
@@ -21366,7 +21367,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                 tv_trailer.duration_seconds = result.get('duration')
                 tv_trailer.resolution = result.get('resolution')
                 tv_trailer.status = 'downloaded'
-                tv_trailer.downloaded_at = datetime.datetime.utcnow()
+                tv_trailer.downloaded_at = utcnow()
                 
                 await _create_preroll_from_tv_trailer(tv_trailer, setting, db)
                 results["downloaded"] += 1
@@ -21969,7 +21970,7 @@ async def test_youtube_download(payload: dict = Body(default=None), db: Session 
                    else 'no authentication')
 
     # Run the (blocking) probes off the event loop.
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     control_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # always-available control
     control = await loop.run_in_executor(None, lambda: probe_youtube(control_url, cf, browser))
 
@@ -22804,7 +22805,7 @@ async def search_movie_trailers(radarr_movie_id: int, db: Session = Depends(get_
         year = movie.get('year')
         language = trailer_language.normalize_language(getattr(setting, 'nexup_trailer_language', None))
         query = trailer_language.search_query(language, title, year)
-        candidates = await asyncio.get_event_loop().run_in_executor(
+        candidates = await asyncio.get_running_loop().run_in_executor(
             None, search_youtube_trailers, query, 3)
         # With a Trailer language set, TMDB's own trailers in that language
         # lead the list: they are tagged, where a search result is a guess.
@@ -23000,7 +23001,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
         file_size_mb=result['size_mb'],
         duration_seconds=result.get('duration', 0),
         resolution=result.get('resolution', ''),
-        downloaded_at=datetime.datetime.utcnow(),
+        downloaded_at=utcnow(),
         status='downloaded',
         is_enabled=True,
         monitored=movie.get('monitored', True),
@@ -23182,7 +23183,7 @@ async def add_manual_trailer(
         trailer_url=url or None,
         local_path=final_path,
         file_size_mb=round(file_size_mb, 2),
-        downloaded_at=datetime.datetime.utcnow(),
+        downloaded_at=utcnow(),
         status='downloaded',
         is_enabled=True,
         play_count=0
@@ -23307,7 +23308,7 @@ def toggle_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Trailer not found")
 
     trailer.is_enabled = not trailer.is_enabled
-    trailer.updated_at = datetime.datetime.utcnow()
+    trailer.updated_at = utcnow()
 
     # Keep the associated Preroll record in sync so random category blocks
     # also respect the enabled state (path-tolerant lookup — see NEXUP-2).
@@ -23331,7 +23332,7 @@ def toggle_trailer_exclusion(trailer_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Trailer not found")
     
     trailer.excluded_from_list = not trailer.excluded_from_list
-    trailer.updated_at = datetime.datetime.utcnow()
+    trailer.updated_at = utcnow()
     db.commit()
     
     status = "excluded from" if trailer.excluded_from_list else "included in"
@@ -23348,7 +23349,7 @@ def toggle_tv_trailer_exclusion(trailer_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="TV Trailer not found")
     
     trailer.excluded_from_list = not trailer.excluded_from_list
-    trailer.updated_at = datetime.datetime.utcnow()
+    trailer.updated_at = utcnow()
     db.commit()
     
     status = "excluded from" if trailer.excluded_from_list else "included in"
@@ -23463,12 +23464,12 @@ async def sync_nexup(db: Session = Depends(get_db)):
             if trailer.radarr_movie_id in downloaded_movies:
                 # Mark downloaded_at if not already set
                 if not trailer.downloaded_at:
-                    trailer.downloaded_at = datetime.datetime.utcnow()
+                    trailer.downloaded_at = utcnow()
                     db.commit()
                     _file_log(f"NeX-Up: Marked '{trailer.title}' as downloaded (Available Now!)")
                 
                 # Check if past the grace period
-                days_since = (datetime.datetime.utcnow() - trailer.downloaded_at).days
+                days_since = (utcnow() - trailer.downloaded_at).days
                 if days_since > available_days:
                     # Delete trailer file
                     if trailer.local_path and os.path.exists(trailer.local_path):
@@ -23601,7 +23602,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
                         resolution=result.get('resolution', ''),
                         poster_url=movie.get('poster_url'),
                         fanart_url=movie.get('fanart_url'),
-                        downloaded_at=datetime.datetime.utcnow(),
+                        downloaded_at=utcnow(),
                         status='downloaded',
                         is_enabled=True,
                         play_count=0
@@ -24330,7 +24331,7 @@ def delete_nexup_font(filename: str, db: Session = Depends(get_db)):
         if getattr(setting, attr, None) == token:
             setattr(setting, attr, None)
             cleared.append(label)
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
 
     _file_log(f"Custom font deleted: {path}" + (f" (cleared from: {', '.join(cleared)})" if cleared else ""))
@@ -24375,7 +24376,7 @@ async def upload_coming_soon_audio(
         f.write(content)
     
     setting.nexup_coming_soon_list_custom_audio_path = str(dest)
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     _file_log(f"Custom Coming Soon audio uploaded: {dest} ({len(content)} bytes)")
@@ -24400,7 +24401,7 @@ def delete_coming_soon_audio(db: Session = Depends(get_db)):
             pass
     
     setting.nexup_coming_soon_list_custom_audio_path = None
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     _file_log("Custom Coming Soon audio removed")
@@ -24446,7 +24447,7 @@ async def upload_dynamic_preroll_audio(
 
     setting.nexup_dynamic_preroll_custom_audio_path = str(dest)
     setting.nexup_dynamic_preroll_audio_mode = 'custom'
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
 
     _file_log(f"Custom Dynamic Preroll audio uploaded: {dest} ({len(content)} bytes)")
@@ -24472,7 +24473,7 @@ def delete_dynamic_preroll_audio(db: Session = Depends(get_db)):
 
     setting.nexup_dynamic_preroll_custom_audio_path = None
     setting.nexup_dynamic_preroll_audio_mode = 'default'
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
 
     _file_log("Custom Dynamic Preroll audio removed")
@@ -24517,7 +24518,7 @@ async def upload_dynamic_preroll_logo(
         f.write(content)
     
     setting.nexup_dynamic_preroll_custom_logo_path = str(dest)
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     _file_log(f"Custom Dynamic Preroll logo uploaded: {dest} ({len(content)} bytes)")
@@ -24539,7 +24540,7 @@ def delete_dynamic_preroll_logo(db: Session = Depends(get_db)):
             pass
     
     setting.nexup_dynamic_preroll_custom_logo_path = None
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     _file_log("Custom Dynamic Preroll logo removed")
@@ -24599,7 +24600,7 @@ async def upload_coming_soon_logo(
         f.write(content)
     
     setting.nexup_coming_soon_list_custom_logo_path = str(dest)
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     _file_log(f"Custom Coming Soon logo uploaded: {dest} ({len(content)} bytes)")
@@ -24669,7 +24670,7 @@ async def upload_dynamic_backdrop(file: UploadFile = File(...), db: Session = De
     os.replace(staging, dest)
 
     setting.nexup_dynamic_preroll_custom_backdrop_path = str(dest)
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
 
     _file_log(f"Custom dynamic preroll backdrop uploaded: {dest} ({len(content)} bytes, {duration:.1f}s)")
@@ -24692,7 +24693,7 @@ def delete_dynamic_backdrop(db: Session = Depends(get_db)):
             _file_log(f"Could not delete backdrop {path}: {e}")
 
     setting.nexup_dynamic_preroll_custom_backdrop_path = None
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     return {"success": True}
 
@@ -24774,7 +24775,7 @@ async def upload_coming_soon_backdrop(file: UploadFile = File(...), db: Session 
     os.replace(staging, dest)
 
     setting.nexup_coming_soon_list_custom_backdrop_path = str(dest)
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
 
     _file_log(f"Custom Coming Soon backdrop uploaded: {dest} ({len(content)} bytes, {duration:.1f}s)")
@@ -24797,7 +24798,7 @@ def delete_coming_soon_backdrop(db: Session = Depends(get_db)):
             _file_log(f"Could not delete backdrop {path}: {e}")
 
     setting.nexup_coming_soon_list_custom_backdrop_path = None
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     return {"success": True}
 
@@ -24830,7 +24831,7 @@ def delete_coming_soon_logo(db: Session = Depends(get_db)):
             pass
     
     setting.nexup_coming_soon_list_custom_logo_path = None
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     
     _file_log("Custom Coming Soon logo removed")
@@ -26607,7 +26608,7 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
     try:
         import tempfile
 
-        ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        ts = utcnow().strftime("%Y%m%d_%H%M%S")
         tmp_path = os.path.join(tempfile.gettempdir(), f"NeXroll_Diagnostics_{ts}.zip")
 
         # Sensitive-value inventory (settings + secure store) and the scrubber are
@@ -26633,7 +26634,7 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
             "scheduler": {"running": scheduler.running},
             "secure_provider": secure_store.provider_info()[1],
             "paths": raw_paths,
-            "timestamp_utc": datetime.datetime.utcnow().isoformat() + "Z",
+            "timestamp_utc": utcnow().isoformat() + "Z",
         }
 
         with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -26761,7 +26762,7 @@ async def events(request: Request):
             while True:
                 payload = {
                     "type": "status",
-                    "time": datetime.datetime.utcnow().isoformat() + "Z",
+                    "time": utcnow().isoformat() + "Z",
                     "scheduler": {"running": scheduler.running},
                 }
                 yield f"data: {_json.dumps(payload)}\n\n"
@@ -26822,7 +26823,7 @@ def connect_jellyfin(request: JellyfinConnectRequest, db: Session = Depends(get_
         else:
             setting.jellyfin_url = url
             try:
-                setting.updated_at = datetime.datetime.utcnow()
+                setting.updated_at = utcnow()
             except Exception:
                 pass
 
@@ -26936,7 +26937,7 @@ def disconnect_jellyfin(db: Session = Depends(get_db)):
     if setting:
         setting.jellyfin_url = None
         try:
-            setting.updated_at = datetime.datetime.utcnow()
+            setting.updated_at = utcnow()
         except Exception:
             pass
         db.commit()
@@ -27385,7 +27386,7 @@ def connect_emby(request: EmbyConnectRequest, db: Session = Depends(get_db)):
         else:
             setting.emby_url = url
             try:
-                setting.updated_at = datetime.datetime.utcnow()
+                setting.updated_at = utcnow()
             except Exception:
                 pass
 
@@ -27481,7 +27482,7 @@ def disconnect_emby(db: Session = Depends(get_db)):
     if setting:
         setting.emby_url = None
         try:
-            setting.updated_at = datetime.datetime.utcnow()
+            setting.updated_at = utcnow()
         except Exception:
             pass
         db.commit()
@@ -28033,7 +28034,7 @@ def check_community_prerolls_health(db: Session = Depends(get_db)):
         "error": str or None
     }
     """
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     
     # Check cache first
     if (_community_health_cache["checked_at"] and 
@@ -28113,7 +28114,7 @@ def get_community_servers():
     central servers.json endpoint.  Results are cached for 10 minutes.
     """
     import datetime
-    now = datetime.datetime.utcnow()
+    now = utcnow()
 
     # Return cached result if still fresh
     if (_community_servers_cache["fetched_at"] and
@@ -28222,7 +28223,7 @@ def accept_fair_use_policy(db: Session = Depends(get_db)):
     
     try:
         setting.community_fair_use_accepted = True
-        setting.community_fair_use_accepted_at = datetime.datetime.utcnow()
+        setting.community_fair_use_accepted_at = utcnow()
         db.commit()
         return {
             "accepted": True,
@@ -30483,7 +30484,7 @@ def get_top5_community_prerolls(
         )
     
     # Return cached result if still fresh and same platform filter
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     if (_community_top5_cache["fetched_at"] and
         _community_top5_cache["platform"] == platform and
         (now - _community_top5_cache["fetched_at"]).total_seconds() < COMMUNITY_TOP5_CACHE_TTL):
@@ -30906,7 +30907,7 @@ def plugin_get_intros(
             "server_type": server_type,
             "server_name": server_name,
             "server_version": server_version,
-            "last_seen": datetime.datetime.utcnow().isoformat(),
+            "last_seen": utcnow().isoformat(),
         }
 
     try:
@@ -30991,7 +30992,7 @@ def plugin_health(
                 "server_type": srv_type,
                 "server_name": srv_name,
                 "server_version": srv_ver,
-                "last_seen": datetime.datetime.utcnow().isoformat(),
+                "last_seen": utcnow().isoformat(),
             }
         else:
             raise HTTPException(status_code=401, detail="Invalid or expired API key")
@@ -31050,7 +31051,7 @@ def _sign_stream_path(file_path: str, expires: int) -> str:
 
 def _build_stream_url(base_url: str, file_path: str) -> str:
     """Build a signed streaming URL for a preroll file."""
-    expires = int(datetime.datetime.utcnow().timestamp()) + 86400  # 24 hours
+    expires = int(time.time()) + 86400  # 24 hours
     token = _sign_stream_path(file_path, expires)
     encoded_path = base64.urlsafe_b64encode(file_path.encode("utf-8")).decode("ascii")
     return f"{base_url.rstrip('/')}/plugin/stream?p={encoded_path}&e={expires}&t={token}"
@@ -31076,7 +31077,7 @@ def plugin_stream_preroll(
         raise HTTPException(status_code=400, detail="Invalid path encoding")
 
     # Check expiry
-    now = int(datetime.datetime.utcnow().timestamp())
+    now = int(time.time())
     if now > e:
         raise HTTPException(status_code=403, detail="Stream link expired")
 
@@ -31123,7 +31124,7 @@ def plugin_register(request: Request, db: Session = Depends(get_db)):
         "server_type": server_type,
         "server_name": server_name,
         "server_version": server_version,
-        "last_seen": datetime.datetime.utcnow().isoformat(),
+        "last_seen": utcnow().isoformat(),
     }
 
     log_event("INFO", "plugin", f"Plugin registered: {server_type} '{server_name}' via API key '{key_record.name}'",
@@ -31172,7 +31173,7 @@ def ignore_conflict(body: IgnoreConflictRequest, db: Session = Depends(get_db)):
         ignored.append(body.pair_key)
 
     setting.ignored_conflicts = json.dumps(ignored)
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     return {"ignored": ignored}
 
@@ -31192,7 +31193,7 @@ def unignore_conflict(pair_key: str, db: Session = Depends(get_db)):
 
     ignored = [k for k in ignored if k != pair_key]
     setting.ignored_conflicts = json.dumps(ignored)
-    setting.updated_at = datetime.datetime.utcnow()
+    setting.updated_at = utcnow()
     db.commit()
     return {"ignored": ignored}
 
@@ -31475,7 +31476,7 @@ def _bootstrap_jellyfin_from_env() -> None:
                 if ok:
                     setting.jellyfin_url = test_url
                     try:
-                        setting.updated_at = datetime.datetime.utcnow()
+                        setting.updated_at = utcnow()
                     except Exception:
                         pass
                     db.commit()

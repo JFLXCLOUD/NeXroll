@@ -17,6 +17,7 @@ from pathlib import Path
 import httpx
 
 from backend import trailer_language
+from backend.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -1407,7 +1408,7 @@ class TrailerDownloader:
                 return {'success': False, 'error': 'exception', 'message': str(e)}
         
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await asyncio.wait_for(
                 loop.run_in_executor(None, _run_ytdlp),
                 timeout=300
@@ -1698,7 +1699,7 @@ class NexUpManager:
                         resolution=download_result.get('resolution', ''),
                         poster_url=movie.get('poster_url'),
                         fanart_url=movie.get('fanart_url'),
-                        downloaded_at=datetime.utcnow(),
+                        downloaded_at=utcnow(),
                         status='downloaded',
                         is_enabled=True,
                         play_count=0
@@ -1753,5 +1754,5 @@ class NexUpManager:
         trailer = db_session.query(models.ComingSoonTrailer).get(trailer_id)
         if trailer:
             trailer.play_count += 1
-            trailer.last_played = datetime.utcnow()
+            trailer.last_played = utcnow()
             db_session.commit()

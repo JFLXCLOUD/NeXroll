@@ -33,6 +33,7 @@ from backend.sequence_conditions import (
     needs_evaluation,
     skip_reason,
 )
+from backend.timeutil import utcnow
 
 # Plex holds a fixed preroll list, so random picks (random blocks, random NeX-Up
 # and Library Trailers blocks) and conditional blocks only change when NeXroll
@@ -1127,7 +1128,7 @@ class Scheduler:
         thumbnails, which is exactly why it must not live on the scheduler loop.
         """
         # Seed so the first scan waits a full interval (startup already scanned).
-        self._last_preroll_scan_time = datetime.datetime.utcnow()
+        self._last_preroll_scan_time = utcnow()
         _scheduler_log("Auto-scan thread started")
         while self._autoscan_running:
             try:
@@ -1145,7 +1146,7 @@ class Scheduler:
                     raise RuntimeError("auto-scan helpers not found in loaded main module")
                 minutes = get_auto_scan_minutes()
                 if minutes and minutes > 0:
-                    now = datetime.datetime.utcnow()
+                    now = utcnow()
                     last = self._last_preroll_scan_time
                     if last is None or (now - last).total_seconds() >= minutes * 60:
                         self._last_preroll_scan_time = now
@@ -1168,7 +1169,7 @@ class Scheduler:
 
     def _maybe_cleanup_logs(self):
         """Prune logs older than the retention window, at most once every 24h."""
-        now = datetime.datetime.utcnow()
+        now = utcnow()
         last = self._last_log_cleanup_time
         if last is not None and (now - last).total_seconds() < 86400:
             return
@@ -1198,7 +1199,7 @@ class Scheduler:
         (movie now in your library), which is event-based; this is the time-based
         retention the setting promised but never previously enforced.
         """
-        now = datetime.datetime.utcnow()
+        now = utcnow()
         last = self._last_trailer_cleanup_time
         if last is not None and (now - last).total_seconds() < 3600:
             return
@@ -1691,7 +1692,7 @@ class Scheduler:
                     release_type=movie.get('release_type'),
                     trailer_url=result.get('source_url') or movie.get('trailer_url', ''),
                     local_path=result['path'],
-                    downloaded_at=datetime.datetime.utcnow(),
+                    downloaded_at=utcnow(),
                     file_size_mb=result.get('size_mb'),
                     duration_seconds=result.get('duration'),
                     resolution=result.get('resolution', ''),
@@ -1888,7 +1889,7 @@ class Scheduler:
                     release_type=show.get('release_type'),
                     trailer_url=show.get('trailer_url', ''),
                     local_path=result['path'],
-                    downloaded_at=datetime.datetime.utcnow(),
+                    downloaded_at=utcnow(),
                     file_size_mb=result.get('size_mb'),
                     duration_seconds=result.get('duration'),
                     resolution=result.get('resolution', ''),

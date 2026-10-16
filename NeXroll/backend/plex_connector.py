@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from backend import secure_store
 from backend import plex_visibility
+from backend.timeutil import utcnow
 
 def _is_dir_writable(p: str) -> bool:
     try:
@@ -179,7 +180,7 @@ class PlexConnector:
                         try:
                             cfg.pop('plex_token', None)
                             cfg['token_migrated'] = True
-                            cfg['migration_date'] = datetime.utcnow().isoformat() + "Z"
+                            cfg['migration_date'] = utcnow().isoformat() + "Z"
                             cfg['token_length'] = len(legacy)
                             cfg.setdefault('note', 'Token migrated to secure store; file contains no secrets')
                             with open(self.config_file, 'w', encoding='utf-8') as wf:
@@ -225,7 +226,7 @@ class PlexConnector:
                 cfg_dir = os.path.dirname(self.config_file) or "."
                 os.makedirs(cfg_dir, exist_ok=True)
                 cfg = {
-                    "setup_date": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                    "setup_date": utcnow().isoformat() + "Z",
                     "note": "Token saved to secure store; this file contains no secrets",
                     "token_length": len(token)
                 }

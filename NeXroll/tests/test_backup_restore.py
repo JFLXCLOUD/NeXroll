@@ -8,6 +8,7 @@ recent commits were still in its WAL file; and a system restore kept the old
 machine's folders and brand-asset paths.
 """
 import ast
+import contextlib
 import copy
 import datetime
 import json
@@ -25,6 +26,7 @@ from sqlalchemy.orm import sessionmaker
 from backend import models
 from backend.backup_utils import (normalize_preroll_id, remap_preroll_ids_json, remap_sequence_blocks,
                                   remap_sequence_json)
+from backend.timeutil import utcnow
 from tests.test_trailer_filters import main_ast
 
 FUNCTIONS = {
@@ -61,7 +63,7 @@ def load(secrets, prerolls_dir='.'):
               and node.targets[0].id.startswith(CONSTANT_PREFIXES)):
             nodes.append(node)
     env = dict(
-        models=models, os=os, json=json, datetime=datetime, text=text, Optional=Optional,
+        models=models, os=os, json=json, datetime=datetime, utcnow=utcnow, text=text, Optional=Optional,
         HTTPException=HTTPException, app_version='test', secure_store=secrets,
         log_event=lambda *a, **k: None, _file_log=lambda *a, **k: None,
         normalize_preroll_id=normalize_preroll_id, remap_preroll_ids_json=remap_preroll_ids_json,
@@ -77,10 +79,26 @@ def load(secrets, prerolls_dir='.'):
     return env
 
 
+_opened = []
+
+
 def session(path):
     engine = create_engine(f'sqlite:///{path}')
     models.Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)()
+    db = sessionmaker(bind=engine)()
+    _opened.append((db, engine))
+    return db
+
+
+@pytest.fixture(autouse=True)
+def _close_databases():
+    # Unclosed SQLite connections raise ResourceWarning since Python 3.13 and
+    # keep the files open, which on Windows stops tmp_path from cleaning up.
+    yield
+    while _opened:
+        db, engine = _opened.pop()
+        db.close()
+        engine.dispose()
 
 
 @pytest.fixture
@@ -165,11 +183,15 @@ def test_the_system_backup_database_includes_commits_still_in_the_wal(tmp_path):
     con.commit()
     # A plain file copy misses the commit, which is what the backup used to take.
     shutil.copy(live, tmp_path / 'copied.db')
-    assert sqlite3.connect(tmp_path / 'copied.db').execute('SELECT count(*) FROM sqlite_master').fetchone()[0] == 0
+    with contextlib.closing(sqlite3.connect(tmp_path / 'copied.db')) as copied:
+        assert copied.execute('SELECT count(*) FROM sqlite_master').fetchone()[0] == 0
 
     snapshot = load(FakeSecrets())['_snapshot_sqlite'](str(live))
     try:
-        assert sqlite3.connect(snapshot).execute('SELECT name FROM categories').fetchall() == [('Late Addition',)]
+        # Closed before the unlink: Windows can't delete an open file, and
+        # since Python 3.13 an unclosed connection can outlive the statement.
+        with contextlib.closing(sqlite3.connect(snapshot)) as copy_con:
+            assert copy_con.execute('SELECT name FROM categories').fetchall() == [('Late Addition',)]
     finally:
         os.unlink(snapshot)
         con.close()
@@ -196,7 +218,8 @@ def test_a_restored_database_is_pointed_at_this_machines_folders_and_assets(tmp_
     nexup_root = str(tmp_path / 'NeXup')
     report = env['_fit_restored_database_to_this_install'](
         str(restored), str(own_folder), nexup_root, ['nexup/dynamic_prerolls/assets/logo.png'])
-    row = dict(zip(columns, sqlite3.connect(restored).execute(f"SELECT {', '.join(columns)} FROM settings").fetchone()))
+    with contextlib.closing(sqlite3.connect(restored)) as check:
+        row = dict(zip(columns, check.execute(f"SELECT {', '.join(columns)} FROM settings").fetchone()))
     assert row['preroll_folder'] == str(own_folder)
     assert row['nexup_storage_path'] == nexup_root and os.path.isdir(nexup_root)
     assert row['nexup_dynamic_preroll_custom_logo_path'] == os.path.join(nexup_root, 'dynamic_prerolls', 'assets', 'logo.png')

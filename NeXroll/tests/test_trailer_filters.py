@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from backend import models, scheduler as sched
 from backend.sequence_conditions import evaluate_rule, sequence_block_to_play
 from backend.trailer_filters import filter_trailer_ratings, migrate_trailer_ratings, refresh_trailer_ratings, has_trailer_policy
+from backend.timeutil import utcnow
 
 
 @pytest.fixture
@@ -152,7 +153,7 @@ def route(name, **extra):
     node.args.defaults = [ast.Constant(None) for _ in node.args.defaults]
     for arg in node.args.args:
         arg.annotation = None
-    env = dict(models=models, os=os, json=json, datetime=datetime, uuid=uuid,
+    env = dict(models=models, os=os, json=json, datetime=datetime, utcnow=utcnow, uuid=uuid,
                has_trailer_policy=has_trailer_policy, playback_context=sched.playback_context,
                resolve_sequence_paths=sched.resolve_sequence_paths,
                prerolls_for_category_query=sched.prerolls_for_category_query,

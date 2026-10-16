@@ -36,6 +36,7 @@ from typing import Optional
 
 import backend.models as models
 from backend import trailer_quotas as quotas
+from backend.timeutil import utcnow
 
 VIDEO_EXTS = (".mp4", ".mkv", ".m4v", ".mov", ".avi", ".webm")
 ROTATE_PER_SYNC = 3          # downloads swapped per sync once full
@@ -240,7 +241,7 @@ def movie_matches(movie: dict, config: dict, now: Optional[datetime.datetime] = 
         return False
     if config["recent_days"]:
         added = movie_added(movie)
-        cutoff = (now or datetime.datetime.utcnow()) - datetime.timedelta(days=config["recent_days"])
+        cutoff = (now or utcnow()) - datetime.timedelta(days=config["recent_days"])
         if not added or added < cutoff:
             return False
     return True
@@ -437,7 +438,7 @@ async def sync_library_trailers(db, movies: list, storage: str, config: dict, do
     ``download_trailer(url, title, tmdb_id=, year=)`` returning {"path",
     "size_mb", "duration"} or None; it is only used when downloading is on.
     """
-    now = now or datetime.datetime.utcnow()
+    now = now or utcnow()
     progress = progress if progress is not None else {}
     result = {"local_found": 0, "downloaded": 0, "removed": 0, "rotated": 0, "failed": 0, "candidates": 0}
     progress.setdefault("log", [])
@@ -783,7 +784,7 @@ def _event(progress: dict, kind: str, title, poster=None) -> None:
     """Add a line to the sync's activity feed (newest first, capped)."""
     log = progress.setdefault("log", [])
     log.insert(0, {"kind": kind, "title": title or "Unknown", "poster_url": poster,
-                   "at": datetime.datetime.utcnow().isoformat()})
+                   "at": utcnow().isoformat()})
     del log[LOG_KEEP:]
 
 
@@ -843,7 +844,7 @@ async def run_sync(db) -> dict:
         raise LibraryTrailerError("Set a NeX-Up storage folder in NeX-Up > Settings first.")
 
     sync_progress.update(running=True, stage="read", status="Reading your library from Radarr...", result=None,
-                         error=None, started_at=datetime.datetime.utcnow().isoformat(), finished_at=None,
+                         error=None, started_at=utcnow().isoformat(), finished_at=None,
                          log=[], counts=None, current=None, to_download=0, download_done=0, scanned=0, candidates=0)
     try:
         from backend.radarr_connector import TrailerDownloader
@@ -872,4 +873,4 @@ async def run_sync(db) -> dict:
         raise
     finally:
         sync_progress["running"] = False
-        sync_progress["finished_at"] = datetime.datetime.utcnow().isoformat()
+        sync_progress["finished_at"] = utcnow().isoformat()

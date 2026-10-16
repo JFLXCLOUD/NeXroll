@@ -80,6 +80,7 @@ class MultiServerFixture(unittest.TestCase):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
+        self.addCleanup(self.engine.dispose)
         models.Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         self.temp_dir = tempfile.TemporaryDirectory()
