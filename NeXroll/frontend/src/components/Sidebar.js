@@ -6,8 +6,10 @@ import {
   Library, Sparkles, Link as LinkIcon, ClipboardList, Settings,
   Globe, ArrowRight, HardDrive, Key, FileText, Users, Download, Info, FolderTree,
   Github, Heart, Archive, Star,
-  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, Search, CornerDownLeft, ArrowUpCircle
+  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, Search, CornerDownLeft, ArrowUpCircle,
+  Clapperboard,
 } from 'lucide-react';
+import { matchMovieQuote } from '../utils/easterEggs';
 
 /**
  * NeXroll v2 Sidebar
@@ -237,6 +239,7 @@ function Sidebar({
   update,
   apiUrl,
   favoriteScope = 'local',
+  onSecret,
 }) {
   const favorites = usePageFavorites(apiUrl, favoriteScope);
   const currentPage = SEARCH_INDEX.find(item => item.id === (activeTab === 'community-prerolls' ? 'community-prerolls/browse' : activeTab));
@@ -257,14 +260,26 @@ function Sidebar({
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const searchInputRef = useRef(null);
-  const results = useMemo(() => searchNav(query), [query]);
+  // A famous movie line typed into the search gets its own first result
+  // (utils/easterEggs.js): a reply, and usually a page it opens.
+  const results = useMemo(() => {
+    const quote = matchMovieQuote(query);
+    const pages = searchNav(query);
+    if (!quote) return pages;
+    const egg = {
+      id: quote.id, label: quote.reply, crumb: quote.id ? quote.label : null,
+      icon: Clapperboard, quote,
+    };
+    return [egg, ...pages.filter(item => item.id !== quote.id)];
+  }, [query]);
 
   // Keep the highlighted result in range as the list changes.
   useEffect(() => { setHighlight(0); }, [query]);
 
   const goToResult = (item) => {
     if (!item) return;
-    go(item.id);
+    if (item.quote && onSecret) onSecret(item.quote);
+    if (item.id) go(item.id);
     setQuery('');
   };
 
@@ -368,11 +383,11 @@ function Sidebar({
                     const Icon = item.icon;
                     return (
                       <button
-                        key={item.id + ':' + item.label}
+                        key={(item.id || 'quote') + ':' + item.label}
                         type="button"
                         role="option"
                         aria-selected={i === highlight}
-                        className={`nx-sidebar-search-item${i === highlight ? ' active' : ''}`}
+                        className={`nx-sidebar-search-item${i === highlight ? ' active' : ''}${item.quote ? ' is-quote' : ''}`}
                         onMouseEnter={() => setHighlight(i)}
                         onClick={() => goToResult(item)}
                         style={item.accent ? { '--nx-accent': item.accent } : undefined}

@@ -6,6 +6,8 @@ import LibraryTrailersTile from './components/LibraryTrailersTile';
 import { isAICommunitySource } from './utils/communityAI';
 import { COMMUNITY_LENGTH_PRESETS, appendCommunityLengthParams, formatPrerollLength } from './utils/communityLength';
 import { initialVersionPicks, platformLabel, rowVersions, versionView, wantedVersions } from './utils/communityVersions';
+import { isKonami, isTypingTarget, pushKey, readSecretThemes, saveSecretThemes } from './utils/easterEggs';
+import Intermission from './components/Intermission';
 import { genreMatchSummary, ratingSummary } from './utils/trailerRatings';
 import { youtubeThumbnail, youtubeVideoId } from './utils/youtube';
 import useHealthSummary from './hooks/useHealthSummary';
@@ -282,8 +284,11 @@ const THEMES = {
   terminal:  { label: 'Terminal',  base: 'dark',  blurb: 'Green phosphor CRT, dialled back to stay readable.', swatch: ['#080b08', '#1f7a33', '#4ade80'] },
   neon:      { label: 'Neon',      base: 'dark',  blurb: 'Synthwave violet-black, magenta and electric cyan.', swatch: ['#0b0714', '#ff2e97', '#00e5ff'] },
   carbon:    { label: 'Carbon',    base: 'dark',  blurb: 'True black for OLED panels, with an amber accent.', swatch: ['#000000', '#f0a020', '#3ecf6d'] },
+  // Secret: listed only once unlocked (the Konami code, or searching "drive-in").
+  drivein:   { label: 'Drive-In',  base: 'dark',  blurb: 'A drive-in at dusk: stars, a projector beam and neon signs.', swatch: ['#140f24', '#ff8a3d', '#4dff9a'], secret: true },
 };
 const THEME_IDS = Object.keys(THEMES);
+const visibleThemeIds = (unlocked) => THEME_IDS.filter(id => !THEMES[id].secret || unlocked.includes(id));
 const DEFAULT_THEME = 'midnight';
 const resolveTheme = (id) => (THEMES[id] ? id : DEFAULT_THEME);
 
@@ -544,6 +549,10 @@ export const bootQuotePool = (date = new Date()) => {
 
 const BOOT_QUOTE_POOL = bootQuotePool();
 const BOOT_QUOTE = BOOT_QUOTE_POOL[Math.floor(Math.random() * BOOT_QUOTE_POOL.length)];
+// About one load in twenty, the splash flashes a projectionist's cue marks:
+// the two dots in the top-right corner of the frame that signal a reel
+// changeover. Picked once per page load, like the quote.
+const BOOT_CUE_MARKS = Math.random() < 0.05;
 
 // Quick-pick chips rendered under the native time inputs in the schedule
 // create/edit forms. One click fills the input; the native picker stays for
@@ -2976,9 +2985,43 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     setShowInstallPrompt(false);
   };
  
+  // ---- Easter eggs (utils/easterEggs.js) ----
+  // Secret themes someone has unlocked in this browser.
+  const [secretThemes, setSecretThemes] = useState(() => readSecretThemes());
+  const unlockSecretTheme = useCallback((id) => {
+    setSecretThemes(list => {
+      if (list.includes(id)) return list;
+      const next = [...list, id];
+      saveSecretThemes(next);
+      return next;
+    });
+  }, []);
+  // The Konami code closes the curtain for an intermission and unlocks the
+  // Drive-In theme; `intermission` holds the theme it just unlocked, if any.
+  const [intermission, setIntermission] = useState(null);
+  const konamiKeys = useRef([]);
+  useEffect(() => {
+    const onKey = (event) => {
+      if (isTypingTarget(event.target) || event.ctrlKey || event.metaKey || event.altKey) return;
+      konamiKeys.current = pushKey(konamiKeys.current, event.key);
+      if (!isKonami(konamiKeys.current)) return;
+      konamiKeys.current = [];
+      const fresh = !readSecretThemes().includes('drivein');
+      unlockSecretTheme('drivein');
+      setIntermission({ unlockedTheme: fresh ? THEMES.drivein.label : null });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [unlockSecretTheme]);
+  // Sidebar search easter eggs (movie quotes); some unlock a secret theme.
+  const handleSidebarSecret = useCallback((entry) => {
+    if (entry?.unlock) unlockSecretTheme(entry.unlock);
+  }, [unlockSecretTheme]);
+
   // The topbar button cycles rather than toggles now that there are five themes.
   // The full picker lives in Settings > General > Appearance.
-  const nextThemeId = THEME_IDS[(THEME_IDS.indexOf(resolveTheme(theme)) + 1) % THEME_IDS.length];
+  const themeChoices = visibleThemeIds(secretThemes);
+  const nextThemeId = themeChoices[(themeChoices.indexOf(resolveTheme(theme)) + 1) % themeChoices.length];
   const cycleTheme = () => setTheme(nextThemeId);
 
   // === Timezone settings helpers (must be before useEffect) ===
@@ -29942,7 +29985,7 @@ const DashboardTiles = {
           Applies across every page. {THEMES[resolveTheme(theme)].blurb}
         </p>
         <div className="nx-theme-picker" role="radiogroup" aria-label="Interface theme">
-          {THEME_IDS.map(id => {
+          {visibleThemeIds(secretThemes).map(id => {
             const t = THEMES[id];
             const selected = resolveTheme(theme) === id;
             return (
@@ -29951,7 +29994,7 @@ const DashboardTiles = {
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                className={`nx-theme-option${selected ? ' selected' : ''}`}
+                className={`nx-theme-option${selected ? ' selected' : ''}${t.secret ? ' is-secret' : ''}`}
                 onClick={() => setTheme(id)}
                 title={t.blurb}
               >
@@ -29959,7 +30002,7 @@ const DashboardTiles = {
                   {t.swatch.map((color, index) => <i key={index} style={{ background: color }} />)}
                 </span>
                 <span className="nx-theme-option-name">{t.label}</span>
-                <span className="nx-theme-option-base">{t.base}</span>
+                <span className="nx-theme-option-base">{t.secret ? 'secret' : t.base}</span>
                 {selected && <Check size={13} className="nx-theme-option-check" />}
               </button>
             );
@@ -36916,6 +36959,7 @@ const DashboardTiles = {
             {BOOT_QUOTE}
           </div>
         </div>
+        {BOOT_CUE_MARKS && <span className="nx-cue-mark" aria-hidden="true" />}
       </div>
     );
   }
@@ -37517,7 +37561,11 @@ const DashboardTiles = {
         update={showUpdateBanner && updateInfo ? updateInfo : null}
         apiUrl={apiUrl}
         favoriteScope={authStatus.auth_enabled ? `user:${authStatus.user?.id}` : 'local'}
+        onSecret={handleSidebarSecret}
       />
+      {intermission && (
+        <Intermission unlockedTheme={intermission.unlockedTheme} onClose={() => setIntermission(null)} />
+      )}
       <div className={`nx-content nx-content-${activeSection}`}>
         {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
         <div className="nx-topbar">

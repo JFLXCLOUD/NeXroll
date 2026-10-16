@@ -12453,3 +12453,578 @@ body.light .nx-content .nx-add-trailer-btn svg { color: var(--error-color); }
   .nx-comm-version-chip { height: 30px; padding: 0 11px; font-size: 12px; }
 }
 
+/* ====================================================================
+   Intermission: the Konami code easter egg (components/Intermission.js).
+   Fixed theater colors on purpose - it is a velvet curtain, not part of the
+   interface theme. The folds are moved by the component's physics loop;
+   stages: is-closing -> is-open (card up) -> is-lifting -> is-leaving.
+   Motion is dropped for prefers-reduced-motion.
+   ==================================================================== */
+.nx-intermission {
+  position: fixed; inset: 0; z-index: 10000;
+  display: grid; place-items: center; overflow: hidden;
+  background: rgba(4, 2, 2, .8);
+  cursor: pointer; outline: none;
+  animation: nx-house-lights-down .7s ease both;
+}
+/* The house lights come up as the curtain flies out. */
+.nx-intermission.is-lifting { animation: nx-house-lights-up .9s .15s ease both; }
+.nx-intermission.is-leaving { animation: none; background: rgba(4, 2, 2, 0); }
+@keyframes nx-house-lights-down { from { background: rgba(4, 2, 2, 0); } }
+@keyframes nx-house-lights-up { to { background: rgba(4, 2, 2, 0); } }
+
+.nx-intermission-stage { position: absolute; inset: 0; overflow: hidden; }
+/* One fold of velvet: lit down the middle, shadowed into its neighbours, with
+   a weighted, gold-trimmed hem (seen as the curtain flies out). */
+.nx-intermission-fold {
+  position: absolute; top: -3vh; left: 0; height: 106vh;
+  transform-origin: 50% 0; will-change: transform;
+  background:
+    linear-gradient(180deg, transparent calc(100% - 12px), #c99a3c calc(100% - 12px), #8a6420 calc(100% - 3px), #3a2a0e 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, .42), transparent 22%, transparent 76%, rgba(0, 0, 0, .5) calc(100% - 12px)),
+    linear-gradient(90deg, #3c050c 0%, #74101b 20%, #a51c2b 40%, #b9243a 50%, #a51c2b 60%, #74101b 80%, #3c050c 100%);
+  box-shadow: -6px 0 18px rgba(0, 0, 0, .35);
+}
+.nx-intermission-fold.is-right { box-shadow: 6px 0 18px rgba(0, 0, 0, .35); }
+
+/* The drape across the top, with a scalloped edge and gold trim. */
+.nx-intermission-valance {
+  position: absolute; inset: 0 0 auto 0; height: 74px; z-index: 1;
+  filter: drop-shadow(0 4px 0 #c99a3c) drop-shadow(0 10px 12px rgba(0, 0, 0, .55));
+  animation: nx-valance-drop .6s .2s ease-out both;
+}
+.nx-intermission-valance > span {
+  display: block; height: 100%;
+  background: linear-gradient(180deg, #33050b, #7a101c 72%, #95192a);
+  -webkit-mask: linear-gradient(#000 0 0) 0 0 / 100% 50px no-repeat, radial-gradient(26px 24px at 50% 0, #000 97%, transparent) 0 50px / 48px 24px repeat-x;
+  mask: linear-gradient(#000 0 0) 0 0 / 100% 50px no-repeat, radial-gradient(26px 24px at 50% 0, #000 97%, transparent) 0 50px / 48px 24px repeat-x;
+}
+.nx-intermission.is-leaving .nx-intermission-valance { animation: nx-valance-lift .5s ease-in both; }
+@keyframes nx-valance-drop { from { transform: translateY(-100%); } }
+@keyframes nx-valance-lift { to { transform: translateY(-100%); } }
+
+/* The marquee card, ringed with chasing bulbs. */
+.nx-intermission-card {
+  position: relative; z-index: 2;
+  display: grid; justify-items: center; gap: 8px;
+  max-width: min(520px, calc(100vw - 48px));
+  padding: 26px 38px 24px; border: 3px solid #c99a3c; border-radius: 14px;
+  background: radial-gradient(circle at 50% 0, rgba(255, 214, 140, .13), transparent 62%), #170b08;
+  box-shadow: 0 0 0 7px #170b08, 0 0 0 9px #7a5a22, 0 26px 70px rgba(0, 0, 0, .65), 0 0 90px rgba(255, 190, 90, .14);
+  color: #f6e6c6; text-align: center; cursor: default;
+  opacity: 0; transform: translateY(26px) scale(.94);
+  transition: opacity .45s ease, transform .75s cubic-bezier(.2, .9, .3, 1.3);
+}
+.nx-intermission.is-open .nx-intermission-card { opacity: 1; transform: none; }
+.nx-intermission.is-lifting .nx-intermission-card,
+.nx-intermission.is-leaving .nx-intermission-card { opacity: 0; transform: translateY(18px) scale(.96); transition: opacity .25s ease-in, transform .3s ease-in; }
+.nx-intermission-card::before {
+  content: ""; position: absolute; inset: -26px; padding: 14px; border-radius: 24px; pointer-events: none;
+  background: radial-gradient(circle, #ffe9ad 0 2.6px, #b98a2e 3px, transparent 3.6px) 0 0 / 14px 14px space;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: nx-bulb-twinkle 1.6s steps(2) infinite;
+}
+@keyframes nx-bulb-twinkle { 50% { filter: brightness(.6); } }
+
+.nx-intermission-kicker { color: #d9b56e; font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+.nx-intermission-card h2 {
+  margin: 0 -.1em 0 0; font-size: clamp(28px, 6vw, 44px); font-weight: 900; line-height: 1;
+  letter-spacing: .1em; text-transform: uppercase;
+  background: linear-gradient(180deg, #fff6da, #e4b45c 70%, #b98a2e);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 14px rgba(255, 200, 100, .35));
+}
+.nx-intermission-card p { margin: 0; max-width: 34ch; color: #e8d6b2; font-size: 14px; line-height: 1.5; }
+.nx-intermission-card .nx-intermission-unlock {
+  margin-top: 4px; padding: 7px 12px; border: 1px solid rgba(125, 255, 176, .4); border-radius: 999px;
+  background: rgba(125, 255, 176, .08); color: #8dffbd; font-size: 12.5px; font-weight: 700;
+}
+.nx-intermission-hint { margin-top: 6px; color: rgba(232, 214, 178, .55); font-size: 11.5px; animation: nx-hint-breathe 2.4s ease-in-out infinite; }
+@keyframes nx-hint-breathe { 50% { opacity: .45; } }
+
+/* A dancing popcorn bucket. */
+.nx-intermission-popcorn { position: relative; width: 74px; height: 90px; margin-bottom: 2px; transform-origin: 50% 100%; animation: nx-popcorn-dance 1.2s ease-in-out infinite; }
+.nx-intermission-popcorn .bucket {
+  position: absolute; left: 7px; right: 7px; bottom: 0; height: 56px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, .18)), repeating-linear-gradient(90deg, #d7263d 0 10px, #fff3e6 10px 20px);
+  clip-path: polygon(0 0, 100% 0, 86% 100%, 14% 100%);
+}
+.nx-intermission-popcorn .kernels { position: absolute; inset: 0 0 auto 0; height: 44px; }
+.nx-intermission-popcorn .kernels i {
+  position: absolute; width: 22px; height: 20px; border-radius: 50%;
+  background: radial-gradient(circle at 34% 32%, #fffef6, #f7e6b6 58%, #e0bf74);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .25);
+}
+.nx-intermission-popcorn .kernels i:nth-child(1) { left: 5px; top: 22px; }
+.nx-intermission-popcorn .kernels i:nth-child(2) { left: 20px; top: 13px; }
+.nx-intermission-popcorn .kernels i:nth-child(3) { left: 37px; top: 15px; }
+.nx-intermission-popcorn .kernels i:nth-child(4) { left: 49px; top: 23px; }
+.nx-intermission-popcorn .kernels i:nth-child(5) { left: 13px; top: 26px; }
+.nx-intermission-popcorn .kernels i:nth-child(6) { left: 29px; top: 25px; }
+.nx-intermission-popcorn .kernels i:nth-child(7) { left: 27px; top: 2px; animation: nx-kernel-pop 1.2s .1s ease-in-out infinite; }
+.nx-intermission-popcorn .kernels i:nth-child(8) { left: 12px; top: 6px; animation: nx-kernel-pop 1.2s .5s ease-in-out infinite; }
+.nx-intermission-popcorn .kernels i:nth-child(9) { left: 43px; top: 5px; animation: nx-kernel-pop 1.2s .8s ease-in-out infinite; }
+@keyframes nx-popcorn-dance {
+  0%, 100% { transform: rotate(-7deg); }
+  25% { transform: rotate(0) translateY(-7px); }
+  50% { transform: rotate(7deg); }
+  75% { transform: rotate(0) translateY(-7px); }
+}
+@keyframes nx-kernel-pop { 0%, 55%, 100% { transform: translateY(0); } 72% { transform: translateY(-12px) rotate(24deg); } }
+
+/* Reduced motion gets the gentle version: the curtain still closes and rises
+   (smoothly, from the component), but nothing bounces, sways, dances or
+   twinkles; the card and the valance fade instead of moving. */
+@media (prefers-reduced-motion: reduce) {
+  .nx-intermission-popcorn, .nx-intermission-popcorn .kernels i,
+  .nx-intermission-card::before, .nx-intermission-hint { animation: none !important; }
+  .nx-intermission-card { transform: none !important; transition: opacity .45s ease !important; }
+  .nx-intermission-valance { animation: nx-intermission-fade-in .5s ease both !important; }
+  .nx-intermission.is-leaving .nx-intermission-valance { animation: nx-intermission-fade-out .4s ease both !important; }
+}
+@keyframes nx-intermission-fade-in { from { opacity: 0; } }
+@keyframes nx-intermission-fade-out { to { opacity: 0; } }
+@media (max-width: 600px) {
+  .nx-intermission-card { padding: 22px 20px 20px; }
+}
+
+/* ====================================================================
+   Drive-In: the secret theme (unlocked by the Konami code, or by searching
+   "drive-in"). Dusk over the lot: purple sky, an orange horizon, neon green.
+   ==================================================================== */
+body.theme-drivein {
+  color-scheme: dark;
+  --bg-color: #140f24;
+  --card-bg: #1e1733;
+  --raised-bg: #271e40;
+  --input-bg: #18122b;
+  --header-bg: #1e1733;
+  --hover-bg: #2c2247;
+  --border-color: #3a2e57;
+  --text-color: #f3ecff;
+  --text-secondary: #b6a8d4;
+  --text-muted: #85789f;
+  --shadow: rgba(4, 2, 12, 0.45);
+  --button-bg: #bf672e;
+  --button-hover: #a85a28;
+  --button-secondary-bg: #2c2247;
+  --button-text: #fff7f0;
+  --accent-color: #ff8a3d;
+  --success-color: #4dff9a;
+  --warning-color: #ffd166;
+  --error-color: #ff5c7a;
+  --success-soft: rgba(77, 255, 154, 0.11);
+  --warning-soft: rgba(255, 209, 102, 0.12);
+  --error-soft: rgba(255, 92, 122, 0.12);
+  --neutral-soft: rgba(182, 168, 212, 0.09);
+  --header-icon-color: #f3ecff;
+  --sb-deep: #0e0a1a;
+  --sb-surface: #18122b;
+  --sb-text: #efe6ff;
+  --sb-text-2: #b0a2cf;
+  --sb-text-3: #85789f;
+  --sb-border: #3a2e57;
+  --sb-border-strong: #4a3c6c;
+  --sb-hover: #2c2247;
+  --sb-action: #ff8a3d;
+  --sb-active: rgba(255, 138, 61, 0.16);
+  --nx-sec-library: #ff8a3d; --nx-sec-schedules: #4dff9a; --nx-sec-nexup: #ffd166;
+  --nx-sec-connect: #5ec8ff; --nx-sec-community: #ff5c8a; --nx-sec-settings: #ff8a3d;
+  --nx-sec-schedules-btn: #2b8f56; --nx-sec-nexup-btn: #967b3c; --nx-sec-connect-btn: #3f86ab;
+  --nx-sec-community-btn: #d64d74;
+  --success-btn: #2b8f56; --warning-btn: #967b3c; --error-btn: #d94e68;
+}
+/* --------------------------------------------------------------------
+   The Drive-In skin: the app sits in a drive-in lot at dusk. Everything
+   here is scoped to body.theme-drivein.
+   * Sky: the page background (night overhead, sunset on the horizon), with
+     two star fields twinkling out of step and the odd shooting star.
+   * Projector beam: a soft shaft of light across the app from the lot in
+     the bottom-left, flickering a little, with dust drifting in it. Above
+     the content with pointer-events off; modals (z 1000+) stay clean.
+   * Film grain over the whole app.
+   * Neon page titles that flicker on, marquee letterboard section labels
+     with chasing bulbs, glass cards with a chrome edge, glowing buttons,
+     a neon sidebar edge and a lit active item, and the lot itself (screen,
+     parked cars, speaker posts) at the foot of the sidebar.
+   Layers: the sky is on the canvas (body), stars and the shooting star are
+   fixed at z-index -1 (above the canvas, under the app), beam/dust 901 and
+   grain 902 (over the sidebar's 900, under modals). Only opacity and
+   transform animate, so nothing repaints per frame except the small bulb
+   strips. Reduced motion gets a gentle version (end of this block).
+   -------------------------------------------------------------------- */
+body.theme-drivein {
+  background-color: #0e0a1c;
+  background-image:
+    radial-gradient(120% 55% at 50% 118%, rgba(255, 128, 64, .30), rgba(214, 77, 116, .15) 38%, transparent 68%),
+    radial-gradient(70% 40% at 88% -6%, rgba(94, 200, 255, .07), transparent 70%),
+    linear-gradient(180deg, #0a0716 0%, #120c24 38%, #1c1132 72%, #2a1538 100%);
+  background-attachment: fixed;
+}
+html:has(> body.theme-drivein) { scrollbar-color: #6e3b6c #0b0816; }
+body.theme-drivein .nx-shell,
+body.theme-drivein .nx-content { background: transparent; }
+body.theme-drivein ::selection { background: rgba(255, 92, 138, .42); color: #fff; }
+body.theme-drivein :is(.nx-sidebar, .nx-content, .nx-content *) { scrollbar-color: #5d3360 transparent; }
+
+/* Stars: two fields with different tiles so the pattern doesn't show,
+   fading out towards the horizon. */
+body.theme-drivein::before,
+body.theme-drivein .nx-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 40%, transparent 80%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 40%, transparent 80%);
+}
+body.theme-drivein::before {
+  background-image:
+    radial-gradient(1.6px 1.6px at 12% 18%, rgba(255, 255, 255, .95), transparent),
+    radial-gradient(1.2px 1.2px at 47% 9%, rgba(255, 255, 255, .8), transparent),
+    radial-gradient(1.8px 1.8px at 78% 41%, rgba(255, 244, 222, .9), transparent),
+    radial-gradient(1.1px 1.1px at 31% 63%, rgba(255, 255, 255, .7), transparent),
+    radial-gradient(1.4px 1.4px at 91% 77%, rgba(220, 232, 255, .85), transparent),
+    radial-gradient(1px 1px at 63% 88%, rgba(255, 255, 255, .6), transparent);
+  background-size: 331px 269px;
+  opacity: .8;
+  animation: nx-di-twinkle 4.8s ease-in-out infinite alternate;
+}
+body.theme-drivein .nx-shell::before {
+  background-image:
+    radial-gradient(1.3px 1.3px at 22% 34%, rgba(255, 255, 255, .85), transparent),
+    radial-gradient(2px 2px at 68% 22%, rgba(255, 236, 214, .9), transparent),
+    radial-gradient(1.1px 1.1px at 84% 66%, rgba(255, 255, 255, .7), transparent),
+    radial-gradient(1.5px 1.5px at 39% 81%, rgba(214, 228, 255, .8), transparent),
+    radial-gradient(1px 1px at 6% 72%, rgba(255, 255, 255, .6), transparent);
+  background-size: 223px 191px;
+  opacity: .55;
+  animation: nx-di-twinkle 6.6s 1.3s ease-in-out infinite alternate-reverse;
+}
+@keyframes nx-di-twinkle { from { opacity: .3; } to { opacity: .95; } }
+
+/* A shooting star now and then, heading down towards the lot. */
+body.theme-drivein .nx-shell::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  top: 10vh;
+  left: 68vw;
+  width: 170px;
+  height: 2px;
+  border-radius: 2px;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(255, 255, 255, .95), rgba(255, 220, 190, .35) 30%, rgba(255, 255, 255, 0));
+  transform-origin: 0 50%;
+  opacity: 0;
+  animation: nx-di-shoot 17s 5s linear infinite;
+}
+@keyframes nx-di-shoot {
+  0% { opacity: 0; transform: translate3d(0, 0, 0) rotate(-24deg) scaleX(.15); }
+  .8% { opacity: 1; }
+  5% { opacity: 0; transform: translate3d(-380px, 169px, 0) rotate(-24deg) scaleX(1); }
+  100% { opacity: 0; transform: translate3d(-380px, 169px, 0) rotate(-24deg) scaleX(1); }
+}
+
+/* The projector beam and the dust in it. */
+body.theme-drivein .nx-content::before,
+body.theme-drivein .nx-content::after {
+  content: "";
+  position: fixed;
+  z-index: 901;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+body.theme-drivein .nx-content::before {
+  inset: 0;
+  background:
+    conic-gradient(from 31deg at 8% 103%,
+      transparent 0deg, rgba(255, 232, 206, .07) 3deg, rgba(255, 240, 220, .19) 7.5deg,
+      rgba(255, 232, 206, .07) 12deg, transparent 15deg, transparent 360deg),
+    conic-gradient(from 20deg at 8% 103%,
+      transparent 0deg, rgba(255, 214, 180, .035) 14deg, rgba(255, 214, 180, .035) 23deg,
+      transparent 37deg, transparent 360deg);
+  -webkit-mask-image: radial-gradient(farthest-corner at 8% 103%, #000 0%, rgba(0, 0, 0, .55) 45%, rgba(0, 0, 0, .2) 100%);
+  mask-image: radial-gradient(farthest-corner at 8% 103%, #000 0%, rgba(0, 0, 0, .55) 45%, rgba(0, 0, 0, .2) 100%);
+  animation: nx-di-projector 7.5s ease-in-out infinite;
+}
+body.theme-drivein .nx-content::after {
+  inset: -90px;
+  background-image:
+    radial-gradient(1.6px 1.6px at 20% 30%, rgba(255, 242, 224, .95), transparent),
+    radial-gradient(1.2px 1.2px at 70% 58%, rgba(255, 242, 224, .8), transparent),
+    radial-gradient(2px 2px at 44% 86%, rgba(255, 242, 224, .55), transparent),
+    radial-gradient(1.2px 1.2px at 88% 14%, rgba(255, 242, 224, .7), transparent);
+  background-size: 190px 170px;
+  -webkit-mask-image: conic-gradient(from 31deg at calc(8% + 90px) calc(103% - 90px), transparent 0deg, #000 4deg, #000 11deg, transparent 15deg, transparent 360deg);
+  mask-image: conic-gradient(from 31deg at calc(8% + 90px) calc(103% - 90px), transparent 0deg, #000 4deg, #000 11deg, transparent 15deg, transparent 360deg);
+  opacity: .55;
+  animation: nx-di-dust 32s ease-in-out infinite alternate;
+}
+@keyframes nx-di-projector {
+  0%, 100% { opacity: .82; }
+  18% { opacity: 1; }
+  19% { opacity: .74; }
+  20.5% { opacity: 1; }
+  52% { opacity: .88; }
+  68% { opacity: 1; }
+  69.2% { opacity: .78; }
+  70.4% { opacity: .96; }
+}
+@keyframes nx-di-dust { to { transform: translate3d(26px, -38px, 0); } }
+
+/* Film grain. */
+body.theme-drivein::after {
+  content: "";
+  position: fixed;
+  inset: -12%;
+  z-index: 902;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: .13;
+  mix-blend-mode: overlay;
+  animation: nx-di-grain 1s steps(1) infinite;
+}
+@keyframes nx-di-grain {
+  0% { transform: translate3d(0, 0, 0); }
+  12.5% { transform: translate3d(-4%, 3%, 0); }
+  25% { transform: translate3d(3%, -5%, 0); }
+  37.5% { transform: translate3d(-6%, -2%, 0); }
+  50% { transform: translate3d(5%, 4%, 0); }
+  62.5% { transform: translate3d(-2%, 6%, 0); }
+  75% { transform: translate3d(6%, -1%, 0); }
+  87.5% { transform: translate3d(-5%, -6%, 0); }
+}
+
+/* Top bar: dark glass with a neon tube along the bottom. */
+body.theme-drivein .nx-content .nx-topbar {
+  background: linear-gradient(180deg, rgba(10, 7, 22, .88), rgba(14, 10, 28, .72));
+  border-bottom-color: transparent;
+}
+body.theme-drivein .nx-content .nx-topbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(255, 92, 138, 0), #ff5c8a 16%, #ff8a3d 42%, #ffd166 60%, #5ec8ff 84%, rgba(94, 200, 255, 0));
+  box-shadow: 0 0 7px rgba(255, 120, 90, .6), 0 0 18px rgba(255, 92, 138, .3);
+}
+
+/* Neon titles: they flicker on when a page opens, then hum, with a rare buzz. */
+body.theme-drivein .nx-page-header-title,
+body.theme-drivein .nx-dash-greeting {
+  --nx-di-neon: var(--nx-section-accent);
+  color: #fff8f1;
+  text-shadow:
+    0 0 1px #fff,
+    0 0 7px color-mix(in srgb, var(--nx-di-neon) 85%, transparent),
+    0 0 18px color-mix(in srgb, var(--nx-di-neon) 55%, transparent),
+    0 0 40px color-mix(in srgb, var(--nx-di-neon) 30%, transparent);
+  animation: nx-di-neon-on 1.5s ease-out 1 both, nx-di-neon-buzz 12s 4s linear infinite;
+}
+body.theme-drivein .nx-dash-greeting { --nx-di-neon: var(--nx-sec-community); }
+body.theme-drivein .nx-page-header-title .header-icon { filter: drop-shadow(0 0 6px var(--nx-section-accent)); }
+@keyframes nx-di-neon-on {
+  0% { opacity: .12; }
+  7% { opacity: 1; }
+  9% { opacity: .25; }
+  15% { opacity: .95; }
+  17% { opacity: .4; }
+  26%, 100% { opacity: 1; }
+}
+@keyframes nx-di-neon-buzz {
+  0%, 92%, 93.4%, 95%, 100% { opacity: 1; }
+  92.7% { opacity: .5; }
+  94.2% { opacity: .78; }
+}
+
+/* Section labels as a lit marquee letterboard, framed by chasing bulbs. */
+body.theme-drivein .nx-page-header-inner { padding-top: 37px; }
+body.theme-drivein .nx-page-header-inner::before,
+body.theme-drivein .nx-page-header-eyebrow,
+body.theme-drivein .nx-dash-eyebrow {
+  display: inline-block;
+  width: max-content;
+  max-width: 100%;
+  padding: 2px 11px 1px;
+  border: 5px solid transparent;
+  border-radius: 4px;
+  color: #23142f !important;
+  font-family: "Arial Black", "Arial Bold", Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .16em;
+  line-height: 1.6;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background:
+    radial-gradient(circle, #fff7dc 0 1.1px, #ffb84d 1.8px, transparent 2.6px) 0 0 / 9px 5px repeat-x border-box,
+    radial-gradient(circle, #fff7dc 0 1.1px, #ffb84d 1.8px, transparent 2.6px) 0 100% / 9px 5px repeat-x border-box,
+    linear-gradient(180deg, #fffaf0, #f2e0bb) padding-box,
+    linear-gradient(#1c1129, #1c1129) border-box;
+  box-shadow: 0 0 0 1px rgba(255, 190, 90, .3), 0 0 18px rgba(255, 168, 60, .3);
+  animation: nx-di-chase .9s steps(3) infinite;
+}
+body.theme-drivein .nx-content-schedules .nx-page-header-inner::before { content: "Now showing: Schedules"; }
+body.theme-drivein .nx-content-nexup .nx-page-header-inner::before { content: "Now showing: NeX-Up"; }
+body.theme-drivein .nx-content-connect .nx-page-header-inner::before { content: "Now showing: Connect"; }
+body.theme-drivein .nx-content-community .nx-page-header-inner::before { content: "Now showing: Community"; }
+body.theme-drivein .nx-content-settings .nx-page-header-inner::before { content: "Now showing: Settings"; }
+body.theme-drivein .nx-page-header-eyebrow::before { content: "Now showing: "; }
+@keyframes nx-di-chase {
+  to { background-position: 9px 0, -9px 100%, 0 0, 0 0; }
+}
+
+/* Glass: cards and panels let the sky through a little. Menus, dialogs and
+   anything that floats over content stay solid. */
+body.theme-drivein .nx-content {
+  --card-bg: rgba(30, 22, 52, .88);
+  --raised-bg: rgba(41, 31, 68, .9);
+}
+body.theme-drivein .nx-content :is([class*="modal"], [class*="dialog"], [class*="menu"], [class*="dropdown"], [class*="popover"], [class*="picker"], [role="dialog"], [role="menu"], [role="listbox"]) {
+  --card-bg: #1e1733;
+  --raised-bg: #271e40;
+}
+body.theme-drivein .nx-content :is(.card, .nx-hybrid-command, .nx-hybrid-list-view, .nx-command-toolbar, .nx-command-rows, .nx-today-rail, .nx-connect-card, .nx-ap-service-card, .nx-conn-banner) {
+  border-color: rgba(176, 146, 240, .2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 16px 36px -20px rgba(0, 0, 0, .8);
+}
+body.theme-drivein .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card { border-color: rgba(176, 146, 240, .2) !important; }
+body.theme-drivein .nx-content .card:hover,
+body.theme-drivein .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card:hover {
+  border-color: color-mix(in srgb, var(--nx-section-accent) 42%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 26px -10px color-mix(in srgb, var(--nx-section-accent) 70%, transparent), 0 16px 36px -20px rgba(0, 0, 0, .8);
+}
+
+/* Buttons: a lit face and a glow in the section's colour. */
+body.theme-drivein .nx-content .button:not(.button-secondary) {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .2), rgba(255, 255, 255, 0) 58%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .24), 0 6px 18px -8px color-mix(in srgb, var(--nx-section-accent) 85%, transparent);
+  transition: box-shadow .2s ease, filter .2s ease;
+}
+body.theme-drivein .nx-content .button:not(.button-secondary):hover {
+  filter: brightness(1.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 0 0 1px color-mix(in srgb, var(--nx-section-accent) 55%, transparent), 0 0 24px -3px color-mix(in srgb, var(--nx-section-accent) 75%, transparent);
+}
+body.theme-drivein .nx-content .button-secondary:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--nx-section-accent) 40%, transparent), 0 0 16px -6px color-mix(in srgb, var(--nx-section-accent) 70%, transparent);
+}
+body.theme-drivein .nx-sidebar-search-box:focus-within,
+body.theme-drivein .nx-content :is(input, select, textarea):focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-section-accent) 20%, transparent), 0 0 16px -2px color-mix(in srgb, var(--nx-section-accent) 55%, transparent) !important;
+}
+
+/* Sidebar: night sky with a neon tube down its edge, and the lot at its foot. */
+body.theme-drivein .nx-sidebar {
+  background:
+    radial-gradient(1.3px 1.3px at 16% 7%, rgba(255, 255, 255, .7), transparent),
+    radial-gradient(1px 1px at 72% 4%, rgba(255, 255, 255, .55), transparent),
+    radial-gradient(1.5px 1.5px at 88% 15%, rgba(255, 240, 220, .6), transparent),
+    radial-gradient(1px 1px at 41% 22%, rgba(255, 255, 255, .4), transparent),
+    linear-gradient(180deg, #0a0715 0%, #110a20 55%, #1b0f2b 100%);
+  border-right-color: transparent;
+  box-shadow: inset -1px 0 0 rgba(255, 92, 138, .85), 1px 0 9px rgba(255, 92, 138, .38), 5px 0 30px rgba(255, 92, 138, .12);
+}
+body.theme-drivein .nx-sidebar-logo { filter: drop-shadow(0 0 6px rgba(255, 120, 90, .55)); }
+body.theme-drivein .nx-sidebar::after {
+  content: "";
+  order: 1;
+  flex: 0 1 calc(var(--nx-sidebar-w) * .4333);
+  min-height: 0;
+  pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cdefs%3E%3ClinearGradient id='s' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23f4ecff'/%3E%3Cstop offset='.55' stop-color='%23ffd9c2'/%3E%3Cstop offset='1' stop-color='%23ff9d7a'/%3E%3C/linearGradient%3E%3ClinearGradient id='b' x1='0' y1='1' x2='0' y2='0'%3E%3Cstop offset='0' stop-color='%23fff1dc' stop-opacity='.16'/%3E%3Cstop offset='1' stop-color='%23fff1dc' stop-opacity='.02'/%3E%3C/linearGradient%3E%3ClinearGradient id='h' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23ff7a59' stop-opacity='0'/%3E%3Cstop offset='.7' stop-color='%23ff6f61' stop-opacity='.26'/%3E%3Cstop offset='1' stop-color='%23ff9a5c' stop-opacity='.42'/%3E%3C/linearGradient%3E%3ClinearGradient id='l' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%2321162e'/%3E%3Cstop offset='1' stop-color='%2307050d'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-40%25' y='-60%25' width='180%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='7'/%3E%3C/filter%3E%3Cfilter id='t' x='-200%25' y='-300%25' width='500%25' height='700%25'%3E%3CfeGaussianBlur stdDeviation='1.6'/%3E%3C/filter%3E%3C/defs%3E%3Crect x='0' y='30' width='240' height='60' fill='url(%23h)'/%3E%3Cpath d='M0,80 C8,74 14,77 22,73 C30,70 36,76 46,74 C56,71 60,77 70,76 L170,76 C180,72 188,77 198,73 C208,69 216,75 226,72 C232,71 236,74 240,73 V104 H0 Z' fill='%230b0717'/%3E%3Crect x='0' y='78' width='240' height='26' fill='url(%23l)'/%3E%3Crect x='78' y='60' width='4' height='28' fill='%230a0714'/%3E%3Crect x='158' y='60' width='4' height='28' fill='%230a0714'/%3E%3Cpath d='M82,66 L158,82 M82,82 L158,66' stroke='%230a0714' stroke-width='1.6'/%3E%3Cpath d='M114,104 L126,104 L179,11 L61,11 Z' fill='url(%23b)'/%3E%3Crect x='60' y='10' width='120' height='50' fill='%23ffc9a8' opacity='.35' filter='url(%23g)'/%3E%3Crect x='57' y='8' width='126' height='56' rx='1.5' fill='%230a0714'/%3E%3Crect x='61' y='11' width='118' height='49' fill='url(%23s)' opacity='.84'/%3E%3Cg fill='none' stroke='%235a2a3a' stroke-opacity='.32'%3E%3Ccircle cx='120' cy='35.5' r='17' stroke-width='1.2'/%3E%3Ccircle cx='120' cy='35.5' r='13' stroke-width='.7'/%3E%3Cpath d='M61,35.5 H179 M120,11 V60' stroke-width='.6'/%3E%3C/g%3E%3Ctext x='120' y='41.5' text-anchor='middle' font-family='Arial,Helvetica,sans-serif' font-weight='700' font-size='17' fill='%235a2a3a' fill-opacity='.42'%3E3%3C/text%3E%3Cpath d='M31,87.8 L31,82.8 L32.1,78.8 L35.4,81.4 C36.1,76.3 37.5,75.2 44,75.2 C50.5,75.2 51.9,76.3 52.6,81.4 L55.9,78.8 L57,82.8 L57,87.8 Z M33.2,87.5 H37.5 V90 H33.2 Z M50.5,87.5 H54.8 V90 H50.5 Z' fill='%230d0919'/%3E%3Cpath d='M37.9,80.6 C38.2,77.3 39.3,76.8 44,76.8 C48.7,76.8 49.8,77.3 50.1,80.6 Z' fill='rgba(214,222,255,.09)'/%3E%3Cpath d='M31,82.8 L32.1,78.8 L35.4,81.4 C36.1,76.3 37.5,75.2 44,75.2 C50.5,75.2 51.9,76.3 52.6,81.4 L55.9,78.8 L57,82.8' fill='none' stroke='rgba(255,206,184,.26)' stroke-width='0.6' stroke-linejoin='round'/%3E%3Cpath d='M83,87.8 L83,82.8 L84.1,78.8 L87.4,81.4 C88.1,76.3 89.5,75.2 96,75.2 C102.5,75.2 103.9,76.3 104.6,81.4 L107.9,78.8 L109,82.8 L109,87.8 Z M85.2,87.5 H89.5 V90 H85.2 Z M102.5,87.5 H106.8 V90 H102.5 Z' fill='%230d0919'/%3E%3Cpath d='M89.9,80.6 C90.2,77.3 91.3,76.8 96,76.8 C100.7,76.8 101.8,77.3 102.1,80.6 Z' fill='rgba(214,222,255,.09)'/%3E%3Cpath d='M83,82.8 L84.1,78.8 L87.4,81.4 C88.1,76.3 89.5,75.2 96,75.2 C102.5,75.2 103.9,76.3 104.6,81.4 L107.9,78.8 L109,82.8' fill='none' stroke='rgba(255,206,184,.26)' stroke-width='0.6' stroke-linejoin='round'/%3E%3Cpath d='M133,87.8 L133,82.8 L134.1,78.8 L137.4,81.4 C138.1,76.3 139.5,75.2 146,75.2 C152.5,75.2 153.9,76.3 154.6,81.4 L157.9,78.8 L159,82.8 L159,87.8 Z M135.2,87.5 H139.5 V90 H135.2 Z M152.5,87.5 H156.8 V90 H152.5 Z' fill='%230d0919'/%3E%3Cpath d='M139.9,80.6 C140.2,77.3 141.3,76.8 146,76.8 C150.7,76.8 151.8,77.3 152.1,80.6 Z' fill='rgba(214,222,255,.09)'/%3E%3Cpath d='M133,82.8 L134.1,78.8 L137.4,81.4 C138.1,76.3 139.5,75.2 146,75.2 C152.5,75.2 153.9,76.3 154.6,81.4 L157.9,78.8 L159,82.8' fill='none' stroke='rgba(255,206,184,.26)' stroke-width='0.6' stroke-linejoin='round'/%3E%3Cpath d='M185,87.8 L185,82.8 L186.1,78.8 L189.4,81.4 C190.1,76.3 191.5,75.2 198,75.2 C204.5,75.2 205.9,76.3 206.6,81.4 L209.9,78.8 L211,82.8 L211,87.8 Z M187.2,87.5 H191.5 V90 H187.2 Z M204.5,87.5 H208.8 V90 H204.5 Z' fill='%230d0919'/%3E%3Cpath d='M191.9,80.6 C192.2,77.3 193.3,76.8 198,76.8 C202.7,76.8 203.8,77.3 204.1,80.6 Z' fill='rgba(214,222,255,.09)'/%3E%3Cpath d='M185,82.8 L186.1,78.8 L189.4,81.4 C190.1,76.3 191.5,75.2 198,75.2 C204.5,75.2 205.9,76.3 206.6,81.4 L209.9,78.8 L211,82.8' fill='none' stroke='rgba(255,206,184,.26)' stroke-width='0.6' stroke-linejoin='round'/%3E%3Crect x='19.4' y='85' width='1.1' height='15' fill='%2305030a'/%3E%3Crect x='17.8' y='82' width='4.4' height='3.4' rx='.7' fill='%2305030a'/%3E%3Crect x='69.5' y='85' width='1.1' height='15' fill='%2305030a'/%3E%3Crect x='67.8' y='82' width='4.4' height='3.4' rx='.7' fill='%2305030a'/%3E%3Crect x='119.5' y='85' width='1.1' height='15' fill='%2305030a'/%3E%3Crect x='117.8' y='82' width='4.4' height='3.4' rx='.7' fill='%2305030a'/%3E%3Crect x='169.4' y='85' width='1.1' height='15' fill='%2305030a'/%3E%3Crect x='167.8' y='82' width='4.4' height='3.4' rx='.7' fill='%2305030a'/%3E%3Crect x='219.4' y='85' width='1.1' height='15' fill='%2305030a'/%3E%3Crect x='217.8' y='82' width='4.4' height='3.4' rx='.7' fill='%2305030a'/%3E%3Cpath d='M-20,101 L-20,94 L-18.5,88.5 L-14,92 C-13,85 -11,83.5 -2,83.5 C7,83.5 9,85 10,92 L14.5,88.5 L16,94 L16,101 Z M-17,100.5 H-11 V104 H-17 Z M7,100.5 H13 V104 H7 Z' fill='%2305030a'/%3E%3Cpath d='M-10.5,91 C-10,86.4 -8.5,85.6 -2,85.6 C4.5,85.6 6,86.4 6.5,91 Z' fill='rgba(214,222,255,.13)'/%3E%3Cpath d='M-20,94 L-18.5,88.5 L-14,92 C-13,85 -11,83.5 -2,83.5 C7,83.5 9,85 10,92 L14.5,88.5 L16,94' fill='none' stroke='rgba(255,206,184,.42)' stroke-width='0.8' stroke-linejoin='round'/%3E%3Crect x='-19.2' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Crect x='12.2' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Cpath d='M28,101 L28,94 L29.5,88.5 L34,92 C35,85 37,83.5 46,83.5 C55,83.5 57,85 58,92 L62.5,88.5 L64,94 L64,101 Z M31,100.5 H37 V104 H31 Z M55,100.5 H61 V104 H55 Z' fill='%2305030a'/%3E%3Cpath d='M37.5,91 C38,86.4 39.5,85.6 46,85.6 C52.5,85.6 54,86.4 54.5,91 Z' fill='rgba(214,222,255,.13)'/%3E%3Cpath d='M28,94 L29.5,88.5 L34,92 C35,85 37,83.5 46,83.5 C55,83.5 57,85 58,92 L62.5,88.5 L64,94' fill='none' stroke='rgba(255,206,184,.42)' stroke-width='0.8' stroke-linejoin='round'/%3E%3Crect x='28.8' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Crect x='60.2' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Cpath d='M76,101 L76,94 L77.5,88.5 L82,92 C83,85 85,83.5 94,83.5 C103,83.5 105,85 106,92 L110.5,88.5 L112,94 L112,101 Z M79,100.5 H85 V104 H79 Z M103,100.5 H109 V104 H103 Z' fill='%2305030a'/%3E%3Cpath d='M85.5,91 C86,86.4 87.5,85.6 94,85.6 C100.5,85.6 102,86.4 102.5,91 Z' fill='rgba(214,222,255,.13)'/%3E%3Cpath d='M76,94 L77.5,88.5 L82,92 C83,85 85,83.5 94,83.5 C103,83.5 105,85 106,92 L110.5,88.5 L112,94' fill='none' stroke='rgba(255,206,184,.42)' stroke-width='0.8' stroke-linejoin='round'/%3E%3Crect x='76.8' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Crect x='108.2' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Cpath d='M128,101 L128,94 L129.5,88.5 L134,92 C135,85 137,83.5 146,83.5 C155,83.5 157,85 158,92 L162.5,88.5 L164,94 L164,101 Z M131,100.5 H137 V104 H131 Z M155,100.5 H161 V104 H155 Z' fill='%2305030a'/%3E%3Cpath d='M137.5,91 C138,86.4 139.5,85.6 146,85.6 C152.5,85.6 154,86.4 154.5,91 Z' fill='rgba(214,222,255,.13)'/%3E%3Cpath d='M128,94 L129.5,88.5 L134,92 C135,85 137,83.5 146,83.5 C155,83.5 157,85 158,92 L162.5,88.5 L164,94' fill='none' stroke='rgba(255,206,184,.42)' stroke-width='0.8' stroke-linejoin='round'/%3E%3Crect x='128.8' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Crect x='160.2' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Cpath d='M176,101 L176,94 L177.5,88.5 L182,92 C183,85 185,83.5 194,83.5 C203,83.5 205,85 206,92 L210.5,88.5 L212,94 L212,101 Z M179,100.5 H185 V104 H179 Z M203,100.5 H209 V104 H203 Z' fill='%2305030a'/%3E%3Cpath d='M185.5,91 C186,86.4 187.5,85.6 194,85.6 C200.5,85.6 202,86.4 202.5,91 Z' fill='rgba(214,222,255,.13)'/%3E%3Cpath d='M176,94 L177.5,88.5 L182,92 C183,85 185,83.5 194,83.5 C203,83.5 205,85 206,92 L210.5,88.5 L212,94' fill='none' stroke='rgba(255,206,184,.42)' stroke-width='0.8' stroke-linejoin='round'/%3E%3Crect x='176.8' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Crect x='208.2' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Cpath d='M224,101 L224,94 L225.5,88.5 L230,92 C231,85 233,83.5 242,83.5 C251,83.5 253,85 254,92 L258.5,88.5 L260,94 L260,101 Z M227,100.5 H233 V104 H227 Z M251,100.5 H257 V104 H251 Z' fill='%2305030a'/%3E%3Cpath d='M233.5,91 C234,86.4 235.5,85.6 242,85.6 C248.5,85.6 250,86.4 250.5,91 Z' fill='rgba(214,222,255,.13)'/%3E%3Cpath d='M224,94 L225.5,88.5 L230,92 C231,85 233,83.5 242,83.5 C251,83.5 253,85 254,92 L258.5,88.5 L260,94' fill='none' stroke='rgba(255,206,184,.42)' stroke-width='0.8' stroke-linejoin='round'/%3E%3Crect x='224.8' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Crect x='256.2' y='92.8' width='3' height='1.7' rx='0.8' fill='%23ff3b5c'/%3E%3Crect x='28.8' y='92.8' width='3' height='1.7' fill='%23ff3b5c' opacity='.8' filter='url(%23t)'/%3E%3Crect x='60.2' y='92.8' width='3' height='1.7' fill='%23ff3b5c' opacity='.8' filter='url(%23t)'/%3E%3Crect x='76.8' y='92.8' width='3' height='1.7' fill='%23ff3b5c' opacity='.8' filter='url(%23t)'/%3E%3Crect x='108.2' y='92.8' width='3' height='1.7' fill='%23ff3b5c' opacity='.8' filter='url(%23t)'/%3E%3Crect x='128.8' y='92.8' width='3' height='1.7' fill='%23ff3b5c' opacity='.8' filter='url(%23t)'/%3E%3Crect x='160.2' y='92.8' width='3' height='1.7' fill='%23ff3b5c' opacity='.8' filter='url(%23t)'/%3E%3Crect x='176.8' y='92.8' width='3' height='1.7' fill='%23ff3b5c' opacity='.8' filter='url(%23t)'/%3E%3Crect x='208.2' y='92.8' width='3' height='1.7' fill='%23ff3b5c' opacity='.8' filter='url(%23t)'/%3E%3C/svg%3E") center bottom / 100% auto no-repeat;
+}
+body.theme-drivein .nx-sidebar-footer { order: 2; border-top-color: transparent; background: #06040b; }
+body.theme-drivein .nx-sidebar.collapsed::after { display: none; }
+body.theme-drivein .nx-sidebar.collapsed .nx-sidebar-footer { background: none; }
+body.theme-drivein .nx-sidebar-parent.active,
+body.theme-drivein .nx-sidebar-section:first-child .nx-sidebar-parent.active {
+  color: #fff;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--nx-accent) 26%, transparent), color-mix(in srgb, var(--nx-accent) 5%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent) 52%, transparent), 0 0 18px -4px color-mix(in srgb, var(--nx-accent) 55%, transparent);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 85%, transparent);
+}
+body.theme-drivein .nx-sidebar-parent.active .nx-sidebar-icon,
+body.theme-drivein .nx-sidebar-child.active .nx-sidebar-icon { filter: drop-shadow(0 0 5px var(--nx-accent)); }
+body.theme-drivein .nx-sidebar-parent.active::before {
+  left: -0.42rem;
+  top: 3px;
+  bottom: 3px;
+  width: 5px;
+  border-radius: 3px;
+  background: radial-gradient(circle, #fff7dc 0 1px, var(--nx-accent) 1.7px, transparent 2.5px) 50% 0 / 5px 6px repeat-y;
+  animation: nx-di-chase-y .9s steps(3) infinite;
+}
+@keyframes nx-di-chase-y { to { background-position: 50% 6px; } }
+body.theme-drivein .nx-sidebar-child.active {
+  color: #fff;
+  background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
+  text-shadow: 0 0 9px color-mix(in srgb, var(--nx-accent) 80%, transparent);
+}
+@media (max-width: 900px) {
+  body.theme-drivein .nx-sidebar:not(.mobile-open) { box-shadow: none; }
+}
+
+/* The theme picker shows Drive-In as a tiny lot at dusk, in any theme. */
+.nx-theme-option.is-secret { border-color: rgba(255, 92, 138, .45); box-shadow: 0 0 16px -6px rgba(255, 92, 138, .6); }
+.nx-theme-option.is-secret .nx-theme-option-base { color: #ff5c8a; text-shadow: 0 0 8px rgba(255, 92, 138, .55); }
+.nx-theme-option.is-secret .nx-theme-swatch {
+  border-color: rgba(255, 92, 138, .5);
+  background:
+    linear-gradient(#fff3e6, #ffb38c) 50% 5px / 16px 8px no-repeat,
+    linear-gradient(#06040b, #06040b) 50% 100% / 100% 6px no-repeat,
+    radial-gradient(1px 1px at 18% 20%, #fff, transparent),
+    radial-gradient(1px 1px at 82% 30%, #fff, transparent),
+    linear-gradient(180deg, #0b0816, #2a1538 65%, #6a2a48);
+}
+.nx-theme-option.is-secret .nx-theme-swatch i { display: none; }
+
+/* Reduced motion: the gentle version. The stars still twinkle and the beam
+   still breathes (slow fades), but nothing moves, flickers or chases: no
+   shooting star, no drifting dust, no jittering grain, steady neon, still
+   bulbs. */
+@media (prefers-reduced-motion: reduce) {
+  body.theme-drivein .nx-shell::after { display: none; }
+  body.theme-drivein .nx-content::before { animation: nx-di-breathe 9s ease-in-out infinite alternate; }
+  body.theme-drivein::after,
+  body.theme-drivein .nx-content::after,
+  body.theme-drivein .nx-page-header-inner::before,
+  body.theme-drivein .nx-page-header-eyebrow,
+  body.theme-drivein .nx-dash-eyebrow,
+  body.theme-drivein .nx-sidebar-parent.active::before { animation: none; }
+  body.theme-drivein .nx-page-header-title,
+  body.theme-drivein .nx-dash-greeting { animation: nx-di-breathe-in .8s ease-out 1 both; }
+}
+@keyframes nx-di-breathe { from { opacity: .75; } to { opacity: 1; } }
+@keyframes nx-di-breathe-in { from { opacity: .2; } }
+
+/* Sidebar search: a movie line's reply (utils/easterEggs.js). */
+.nx-sidebar-search-item.is-quote .nx-sidebar-search-item-label { font-style: italic; white-space: normal; overflow: visible; }
+.nx-sidebar-search-item.is-quote .nx-sidebar-search-item-icon { color: var(--warning-color); }
+
+/* Cue marks on the loading splash (about one load in twenty, App.js
+   BOOT_CUE_MARKS): two quick flashes of a projectionist's changeover dot in
+   the top-right corner, as on a film print. Hard cuts, no fades. Skipped for
+   prefers-reduced-motion. */
+.nx-cue-mark {
+  position: fixed; top: 7vh; right: 6vw; width: 26px; height: 26px;
+  border-radius: 47% 53% 51% 49%; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle at 46% 44%, rgba(255, 249, 232, .95) 0 32%, rgba(236, 222, 192, .6) 50%, rgba(20, 14, 10, .85) 66%, transparent 73%);
+  animation: nx-cue-marks 2.4s .6s linear 1 both;
+}
+@keyframes nx-cue-marks {
+  0%, 1.9% { opacity: 0; }
+  2%, 10% { opacity: 1; }
+  10.1%, 51.9% { opacity: 0; }
+  52%, 60% { opacity: 1; }
+  60.1%, 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .nx-cue-mark { display: none; } }
