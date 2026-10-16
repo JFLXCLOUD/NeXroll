@@ -1954,7 +1954,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     maxItems: 8,
     bgColor: '#141428',
     textColor: '#ffffff',
-    accentColor: '#00d4ff',
+    accentColor: 'var(--nx-sec-connect)',
     serverName: '',
     autoRegen: false, // Auto-regenerate when Radarr/Sonarr syncs
     autoRegenLayout: 'both', // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
@@ -7714,7 +7714,7 @@ const DashboardTiles = {
         </div>
         {connected.length > 1 ? (
           <>
-            <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <p className="nx-tile-status" style={{ color: 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
               {describeServers(connected)}
               <span className="nx-chip nx-status ok" style={{ fontSize: '0.72rem' }}>{connected.length} connected</span>
             </p>
@@ -7738,7 +7738,7 @@ const DashboardTiles = {
           </>
         ) : LABEL[s] ? (
           <>
-            <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <p className="nx-tile-status" style={{ color: 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               {LABEL[s]}
               <span className="nx-chip nx-status ok" style={{ fontSize: '0.72rem' }}>Connected</span>
             </p>
@@ -7827,7 +7827,7 @@ const DashboardTiles = {
         </p>
         <div className="nx-tile-rows">
           <div className="nx-tile-row">
-            <span className="nx-tile-row-k"><CheckCircle size={14} style={{ color: 'var(--success-color, #28a745)' }} /> Enabled</span>
+            <span className="nx-tile-row-k"><CheckCircle size={14} style={{ color: 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))' }} /> Enabled</span>
             <span className="nx-tile-row-v">{enabled.length}</span>
           </div>
           <div className="nx-tile-row">
@@ -7835,10 +7835,10 @@ const DashboardTiles = {
             <span className="nx-tile-row-v">{disabled.length}</span>
           </div>
           <ConflictLink className="nx-tile-row" onOpen={openScheduleConflicts}>
-            <span className="nx-tile-row-k" style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined}>
-              <AlertTriangle size={14} style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined} /> Conflicting
+            <span className="nx-tile-row-k" style={withConflicts.length > 0 ? { color: 'var(--warning-color)' } : undefined}>
+              <AlertTriangle size={14} style={withConflicts.length > 0 ? { color: 'var(--warning-color)' } : undefined} /> Conflicting
             </span>
-            <span className="nx-tile-row-v" style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined}>{withConflicts.length}</span>
+            <span className="nx-tile-row-v" style={withConflicts.length > 0 ? { color: 'var(--warning-color)' } : undefined}>{withConflicts.length}</span>
           </ConflictLink>
           {withConflicts.length > 0 && (
             <button
@@ -7847,8 +7847,8 @@ const DashboardTiles = {
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 16px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
-                background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
-                color: '#ef4444', border: '1px solid rgba(239,68,68,0.4)', cursor: 'pointer', marginTop: '0.5rem',
+                background: 'linear-gradient(135deg, color-mix(in srgb, var(--error-color) 15%, transparent), color-mix(in srgb, var(--warning-color) 15%, transparent))',
+                color: 'color-mix(in srgb, var(--error-color) 88%, #000)', border: '1px solid color-mix(in srgb, var(--error-color) 40%, transparent)', cursor: 'pointer', marginTop: '0.5rem',
                 transition: 'all 0.2s ease', letterSpacing: '0.01em'
               }}
               onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(239,68,68,0.25), rgba(245,158,11,0.25))'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.6)'; }}
@@ -7895,12 +7895,12 @@ const DashboardTiles = {
           className="nx-tile-headbtn"
           onClick={toggleScheduler}
           title={schedulerStatus.running ? 'Stop scheduler' : 'Start scheduler'}
-          style={{ color: schedulerStatus.running ? 'var(--error-color, #dc3545)' : 'var(--success-color, #28a745)' }}
+          style={{ color: schedulerStatus.running ? 'var(--error-color, color-mix(in srgb, var(--error-color) 81%, #000))' : 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))' }}
         >
           {schedulerStatus.running ? <Square size={14} /> : <Play size={14} />}
         </button>
       </div>
-      <p className="nx-tile-status" style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
+      <p className="nx-tile-status" style={{ color: schedulerStatus.running ? 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))' : 'var(--error-color, color-mix(in srgb, var(--error-color) 81%, #000))' }}>
         {schedulerStatus.running ? 'Running' : 'Stopped'}
       </p>
       <div className="nx-tile-rows">
@@ -7934,7 +7934,7 @@ const DashboardTiles = {
             <span className="nx-tile-row-k">
               <Play size={14} /> Now
             </span>
-            <span className="nx-tile-row-v" style={{ color: 'var(--success-color, #28a745)' }}>
+            <span className="nx-tile-row-v" style={{ color: 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))' }}>
               {activeCategory.active_schedule_name || activeCategory.name}
             </span>
           </div>
@@ -7945,7 +7945,7 @@ const DashboardTiles = {
               <ArrowRight size={14} /> Next
             </span>
             <span className="nx-tile-row-v">
-              <span style={{ color: '#007bff', fontWeight: 600 }}>{nextScheduleCountdown.name}</span>
+              <span style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)', fontWeight: 600 }}>{nextScheduleCountdown.name}</span>
               {nextScheduleCountdown.targetTime && (
                 <span style={{ color: 'var(--text-secondary, #888)', marginLeft: '0.35rem' }}>
                   {new Date(nextScheduleCountdown.targetTime).toLocaleString([], {
@@ -8016,7 +8016,7 @@ const DashboardTiles = {
                 <span className="nx-tile-row-k">
                   <BookOpen size={14} /> Indexed:
                 </span>
-                <span className="nx-tile-row-v" style={{ color: '#22c55e' }}>{indexedCount}</span>
+                <span className="nx-tile-row-v" style={{ color: 'color-mix(in srgb, var(--success-color) 91%, #000)' }}>{indexedCount}</span>
               </div>
             )}
             {matchedCount > 0 && (
@@ -8024,7 +8024,7 @@ const DashboardTiles = {
                 <span className="nx-tile-row-k">
                   <Link size={14} /> Matched:
                 </span>
-                <span className="nx-tile-row-v" style={{ color: '#3b82f6' }}>{matchedCount}</span>
+                <span className="nx-tile-row-v" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }}>{matchedCount}</span>
               </div>
             )}
             {indexExists && (
@@ -8032,7 +8032,7 @@ const DashboardTiles = {
                 <span className="nx-tile-row-k">
                   <Clock size={14} /> Index updated:
                 </span>
-                <span className="nx-tile-row-v" style={isStale ? { color: '#f59e0b' } : undefined}>{ageLabel}</span>
+                <span className="nx-tile-row-v" style={isStale ? { color: 'var(--warning-color)' } : undefined}>{ageLabel}</span>
               </div>
             )}
             {indexSizeMb > 0 && (
@@ -8050,11 +8050,11 @@ const DashboardTiles = {
                 gap: '0.35rem',
                 marginTop: '0.25rem',
                 padding: '0.35rem 0.5rem',
-                backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                border: '1px solid rgba(245, 158, 11, 0.3)',
+                backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--warning-color) 30%, transparent)',
                 borderRadius: '4px',
                 fontSize: '0.8rem',
-                color: '#f59e0b'
+                color: 'var(--warning-color)'
               }}>
                 <AlertTriangle size={12} />
                 <span>Stale ({Math.round(ageDays)}d old) — rebuild recommended</span>
@@ -8116,11 +8116,11 @@ const DashboardTiles = {
             <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
               <div className="nx-tile-row">
                 <span className="nx-tile-row-k">Movie Trailers:</span>
-                <span className="nx-tile-row-v" style={{ color: '#ffc230' }}>{movieCount}</span>
+                <span className="nx-tile-row-v" style={{ color: 'var(--warning-color)' }}>{movieCount}</span>
               </div>
               <div className="nx-tile-row">
                 <span className="nx-tile-row-k">TV Trailers:</span>
-                <span className="nx-tile-row-v" style={{ color: '#ffc230' }}>{tvCount}</span>
+                <span className="nx-tile-row-v" style={{ color: 'var(--warning-color)' }}>{tvCount}</span>
               </div>
             </div>
           )}
@@ -8134,7 +8134,7 @@ const DashboardTiles = {
                 <span className="nx-tile-row-v">{fmtGb(usedGb)} <span style={{ color: 'var(--text-secondary, #888)', fontWeight: 400 }}>of {fmtGb(capGb)} GB</span></span>
               </div>
               <div style={{ height: 4, borderRadius: 2, background: 'var(--hover-bg)', marginTop: '0.25rem', overflow: 'hidden' }}>
-                <div style={{ width: `${storagePct}%`, height: '100%', background: storagePct >= 90 ? '#ef4444' : '#ffc230' }} />
+                <div style={{ width: `${storagePct}%`, height: '100%', background: storagePct >= 90 ? 'color-mix(in srgb, var(--error-color) 88%, #000)' : 'var(--warning-color)' }} />
               </div>
             </div>
           )}
@@ -8221,11 +8221,11 @@ const DashboardTiles = {
     
     // Only show known resolutions (exclude Unknown from chart)
     const chartData = [
-      { name: '4K', count: stats['4K'], color: '#8b5cf6' },
-      { name: '1080p', count: stats['1080p'], color: '#10b981' },
-      { name: '720p', count: stats['720p'], color: '#3b82f6' },
-      { name: '480p', count: stats['480p'], color: '#f59e0b' },
-      { name: 'SD', count: stats['SD'], color: '#ef4444' }
+      { name: '4K', count: stats['4K'], color: 'var(--nx-sec-library)' },
+      { name: '1080p', count: stats['1080p'], color: 'var(--success-color)' },
+      { name: '720p', count: stats['720p'], color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' },
+      { name: '480p', count: stats['480p'], color: 'var(--warning-color)' },
+      { name: 'SD', count: stats['SD'], color: 'color-mix(in srgb, var(--error-color) 88%, #000)' }
     ].filter(d => d.count > 0);
     
     const total = Object.values(stats).reduce((a, b) => a + b, 0);
@@ -8361,11 +8361,11 @@ const DashboardTiles = {
       <div className="nx-library-trash">
         {/* Explainer */}
         <div className="card nx-trash-notice" style={{
-          backgroundColor: 'rgba(99, 102, 241, 0.08)',
-          border: '1px solid rgba(99, 102, 241, 0.2)',
+          backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 8%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--nx-sec-library) 20%, transparent)',
         }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-            <Archive size={20} style={{ color: '#6366f1', flexShrink: 0, marginTop: '2px' }} />
+            <Archive size={20} style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 93%, #000)', flexShrink: 0, marginTop: '2px' }} />
             <div>
               <strong style={{ color: 'var(--text-color)' }}>Deleted preroll files</strong>
               <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -8406,11 +8406,11 @@ const DashboardTiles = {
 
         {trashError && (
           <div className="card" style={{
-            backgroundColor: 'rgba(239, 68, 68, 0.08)',
-            border: '1px solid rgba(239, 68, 68, 0.25)',
+            backgroundColor: 'color-mix(in srgb, var(--error-color) 8%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--error-color) 25%, transparent)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--text-color)' }}>
-              <AlertTriangle size={18} style={{ color: '#ef4444', flexShrink: 0 }} />
+              <AlertTriangle size={18} style={{ color: 'color-mix(in srgb, var(--error-color) 88%, #000)', flexShrink: 0 }} />
               <span style={{ fontSize: '0.9rem' }}>{trashError}</span>
             </div>
           </div>
@@ -8469,7 +8469,7 @@ const DashboardTiles = {
                         {`Deleted ${formatTrashDate(entry.deleted_at)}`}
                         {entry.size_bytes ? ` - ${formatBytes(entry.size_bytes)}` : ''}
                         {daysLeft !== null && (
-                          <span style={{ color: expiring ? '#f59e0b' : 'inherit', fontWeight: expiring ? 600 : 400 }}>
+                          <span style={{ color: expiring ? 'var(--warning-color)' : 'inherit', fontWeight: expiring ? 600 : 400 }}>
                             {daysLeft === 0
                               ? ' - Removed on next scan'
                               : ` - ${daysLeft} day${daysLeft === 1 ? '' : 's'} left`}
@@ -9205,8 +9205,8 @@ const DashboardTiles = {
       <div className="nx-library-scaling">
         {/* Info Banner */}
         <div className="card nx-scaling-recommendation" style={{
-          backgroundColor: 'rgba(99, 102, 241, 0.08)', 
-          border: '1px solid rgba(99, 102, 241, 0.2)',
+          backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 8%, transparent)', 
+          border: '1px solid color-mix(in srgb, var(--nx-sec-library) 20%, transparent)',
           marginBottom: '1rem'
         }}>
           <div>
@@ -9232,14 +9232,14 @@ const DashboardTiles = {
                 padding: '0.75rem',
                 cursor: 'pointer',
                 border: scalingFilterResolution === res ? '2px solid var(--button-bg)' : '1px solid var(--border-color)',
-                backgroundColor: scalingFilterResolution === res ? 'rgba(99, 102, 241, 0.08)' : 'var(--card-bg)',
+                backgroundColor: scalingFilterResolution === res ? 'color-mix(in srgb, var(--nx-sec-library) 8%, transparent)' : 'var(--card-bg)',
                 transition: 'all 0.2s'
               }}
             >
               <div style={{ 
                 fontSize: '1.5rem', 
                 fontWeight: 'bold', 
-                color: res === '4K' ? '#8b5cf6' :
+                color: res === '4K' ? 'var(--nx-sec-library)' :
                        res === '1080p' ? '#3b82f6' :
                        res === '720p' ? '#10b981' :
                        res === '480p' ? '#f59e0b' :
@@ -9258,11 +9258,11 @@ const DashboardTiles = {
         {bulkScalingProgress.active ? (
           <div className="card nx-scaling-progress" style={{
             marginBottom: '1rem',
-            backgroundColor: 'rgba(59, 130, 246, 0.08)',
-            border: '1px solid rgba(59, 130, 246, 0.3)'
+            backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <Loader2 size={24} className="spin" style={{ color: '#3b82f6' }} />
+              <Loader2 size={24} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: '500', color: 'var(--text-color)', marginBottom: '0.25rem' }}>
                   Scaling {bulkScalingProgress.current} of {bulkScalingProgress.total}
@@ -9274,13 +9274,13 @@ const DashboardTiles = {
                   marginTop: '0.5rem',
                   height: '6px',
                   borderRadius: '3px',
-                  backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                  backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)',
                   overflow: 'hidden'
                 }}>
                   <div style={{
                     width: `${(bulkScalingProgress.current / bulkScalingProgress.total) * 100}%`,
                     height: '100%',
-                    backgroundColor: '#3b82f6',
+                    backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
                     transition: 'width 0.3s ease'
                   }} />
                 </div>
@@ -9335,7 +9335,7 @@ const DashboardTiles = {
         {scalingFilterResolution && (
           <div style={{ 
             padding: '0.5rem 0.75rem', 
-            backgroundColor: 'rgba(99, 102, 241, 0.08)',
+            backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 8%, transparent)',
             borderRadius: '6px',
             marginBottom: '1rem',
             display: 'flex',
@@ -9394,7 +9394,7 @@ const DashboardTiles = {
                   padding: '0.75rem',
                   cursor: 'pointer',
                   border: isSelected ? '2px solid var(--button-bg)' : '1px solid var(--border-color)',
-                  backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'var(--card-bg)',
+                  backgroundColor: isSelected ? 'color-mix(in srgb, var(--nx-sec-library) 8%, transparent)' : 'var(--card-bg)',
                   transition: 'all 0.15s'
                 }}
               >
@@ -9478,11 +9478,11 @@ const DashboardTiles = {
                             borderRadius: '4px',
                             fontSize: '0.7rem',
                             fontWeight: '600',
-                            backgroundColor: resLabel === '4K' ? 'rgba(139, 92, 246, 0.15)' :
+                            backgroundColor: resLabel === '4K' ? 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)' :
                                            resLabel === '1080p' ? 'rgba(59, 130, 246, 0.15)' :
                                            resLabel === '720p' ? 'rgba(16, 185, 129, 0.15)' :
                                            resLabel === '480p' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                            color: resLabel === '4K' ? '#8b5cf6' :
+                            color: resLabel === '4K' ? 'var(--nx-sec-library)' :
                                    resLabel === '1080p' ? '#3b82f6' :
                                    resLabel === '720p' ? '#10b981' :
                                    resLabel === '480p' ? '#f59e0b' : '#ef4444'
@@ -9494,7 +9494,7 @@ const DashboardTiles = {
                           </span>
                         </>
                       ) : info && info.success === false ? (
-                        <span style={{ fontSize: '0.7rem', color: '#ef4444' }} title={info.error || 'Failed to load video info'}>
+                        <span style={{ fontSize: '0.7rem', color: 'color-mix(in srgb, var(--error-color) 88%, #000)' }} title={info.error || 'Failed to load video info'}>
                           Unable to read
                         </span>
                       ) : (
@@ -10007,8 +10007,8 @@ const DashboardTiles = {
         (storageHealth.missing_files > 0 || storageHealth.duplicate_rows > 0) && (
         <div className="card" style={{
           marginBottom: '1rem',
-          background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(245, 158, 11, 0.08) 100%)',
-          border: '1px solid rgba(245, 158, 11, 0.4)',
+          background: 'linear-gradient(135deg, color-mix(in srgb, var(--error-color) 12%, transparent) 0%, color-mix(in srgb, var(--warning-color) 8%, transparent) 100%)',
+          border: '1px solid color-mix(in srgb, var(--warning-color) 40%, transparent)',
         }}>
           <div style={{
             display: 'flex',
@@ -10022,13 +10022,13 @@ const DashboardTiles = {
                 width: '48px',
                 height: '48px',
                 borderRadius: '12px',
-                backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                backgroundColor: 'color-mix(in srgb, var(--warning-color) 20%, transparent)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0
               }}>
-                <AlertTriangle size={24} style={{ color: '#f59e0b' }} />
+                <AlertTriangle size={24} style={{ color: 'var(--warning-color)' }} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <h3 style={{ margin: 0, marginBottom: '0.25rem' }}>
@@ -10251,11 +10251,11 @@ const DashboardTiles = {
 
         // Schedule type badge colors
         const typeBadgeColors = {
-          daily: { bg: 'rgba(59,130,246,0.12)', color: '#3b82f6' },
-          weekly: { bg: 'rgba(16,185,129,0.12)', color: '#10b981' },
-          monthly: { bg: 'rgba(245,158,11,0.12)', color: '#f59e0b' },
-          yearly: { bg: 'rgba(139,92,246,0.12)', color: '#8b5cf6' },
-          holiday: { bg: 'rgba(244,63,94,0.12)', color: '#f43f5e' },
+          daily: { bg: 'rgba(59,130,246,0.12)', color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' },
+          weekly: { bg: 'rgba(16,185,129,0.12)', color: 'var(--success-color)' },
+          monthly: { bg: 'rgba(245,158,11,0.12)', color: 'var(--warning-color)' },
+          yearly: { bg: 'rgba(139,92,246,0.12)', color: 'var(--nx-sec-library)' },
+          holiday: { bg: 'rgba(244,63,94,0.12)', color: 'color-mix(in srgb, var(--error-color) 92%, #000)' },
         };
 
         return (
@@ -10280,7 +10280,7 @@ const DashboardTiles = {
                   <div style={{
                     display: 'flex', alignItems: 'center', gap: '5px',
                     padding: '4px 10px', borderRadius: '20px',
-                    backgroundColor: darkMode ? 'rgba(59,130,246,0.12)' : 'rgba(59,130,246,0.08)',
+                    backgroundColor: darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 12%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)',
                     color: 'var(--button-bg)', fontSize: '0.75rem', fontWeight: 600
                   }}>
                     <Calendar size={12} /> {totalActiveThisWeek} schedule{totalActiveThisWeek !== 1 ? 's' : ''}
@@ -10289,7 +10289,7 @@ const DashboardTiles = {
                     <div style={{
                       display: 'flex', alignItems: 'center', gap: '5px',
                       padding: '4px 10px', borderRadius: '20px',
-                      backgroundColor: 'rgba(139,92,246,0.1)', color: '#8b5cf6',
+                      backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 10%, transparent)', color: 'var(--nx-sec-library)',
                       fontSize: '0.75rem', fontWeight: 600
                     }}>
                       <Shuffle size={12} /> Blend
@@ -10299,7 +10299,7 @@ const DashboardTiles = {
                     <div style={{
                       display: 'flex', alignItems: 'center', gap: '5px',
                       padding: '4px 10px', borderRadius: '20px',
-                      backgroundColor: 'rgba(20,184,166,0.1)', color: '#14B8A6',
+                      backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)',
                       fontSize: '0.75rem', fontWeight: 600
                     }}>
                       <Lock size={12} /> Exclusive
@@ -10311,7 +10311,7 @@ const DashboardTiles = {
                       style={{
                         display: 'flex', alignItems: 'center', gap: '5px',
                         padding: '4px 10px', borderRadius: '20px',
-                        backgroundColor: 'rgba(0,212,255,0.12)', color: '#00d4ff',
+                        backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 12%, transparent)', color: 'var(--nx-sec-connect)',
                         fontSize: '0.75rem', fontWeight: 600
                       }}
                     >
@@ -10322,7 +10322,7 @@ const DashboardTiles = {
                     <ConflictLink onOpen={openScheduleConflicts} style={{
                       display: 'flex', alignItems: 'center', gap: '5px',
                       padding: '4px 10px', borderRadius: '20px',
-                      backgroundColor: 'rgba(255,152,0,0.1)', color: '#ff9800',
+                      backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)', color: 'var(--warning-color)',
                       fontSize: '0.75rem', fontWeight: 600
                     }}>
                       <AlertTriangle size={12} /> {conflictDayCount} conflict{conflictDayCount !== 1 ? 's' : ''}
@@ -10335,8 +10335,8 @@ const DashboardTiles = {
                       style={{
                         display: 'flex', alignItems: 'center', gap: '4px',
                         padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600,
-                        background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(245,158,11,0.12))',
-                        color: '#ef4444', border: 'none', cursor: 'pointer'
+                        background: 'linear-gradient(135deg, color-mix(in srgb, var(--error-color) 12%, transparent), color-mix(in srgb, var(--warning-color) 12%, transparent))',
+                        color: 'color-mix(in srgb, var(--error-color) 88%, #000)', border: 'none', cursor: 'pointer'
                       }}
                       title="Open Conflict Resolution"
                     >
@@ -10417,13 +10417,13 @@ const DashboardTiles = {
                       fontSize: '0.85rem', fontWeight: isToday ? 800 : 600,
                       color: isToday ? '#fff' : 'var(--text-color)',
                       backgroundColor: isToday ? 'var(--button-bg)' : 'transparent',
-                      boxShadow: isToday ? '0 2px 8px rgba(59,130,246,0.35)' : 'none',
+                      boxShadow: isToday ? '0 2px 8px color-mix(in srgb, var(--nx-sec-connect) 35%, transparent)' : 'none',
                     }}>
                       {day.getDate()}
                     </div>
                     <div style={{
                       marginTop: '2px', fontSize: '0.6rem', fontWeight: 500,
-                      color: fillerAllDay ? '#00d4ff' : 'var(--text-muted)',
+                      color: fillerAllDay ? 'var(--nx-sec-connect)' : 'var(--text-muted)',
                       opacity: (schedCount > 0 || fillerAllDay) ? 1 : 0.5,
                     }}>
                       {schedCount > 0 ? `${schedCount} active` : (fillerAllDay ? '—' : 'none')}
@@ -10508,11 +10508,11 @@ const DashboardTiles = {
 
                 // Status icon
                 let statusIcon = null;
-                if (hasAnyExclusivesForSched) statusIcon = <Lock size={11} style={{ color: '#14B8A6', flexShrink: 0 }} />;
-                else if (hasAnyBlendsForSched) statusIcon = <Shuffle size={11} style={{ color: '#8b5cf6', flexShrink: 0 }} />;
+                if (hasAnyExclusivesForSched) statusIcon = <Lock size={11} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', flexShrink: 0 }} />;
+                else if (hasAnyBlendsForSched) statusIcon = <Shuffle size={11} style={{ color: 'var(--nx-sec-library)', flexShrink: 0 }} />;
                 else if (hasAnyConflictsForSched) statusIcon = (hasAnyWinsForSched || hasAnyNonExclusiveWins)
-                  ? <Crown size={11} style={{ color: '#ffd700', flexShrink: 0 }} />
-                  : <AlertTriangle size={11} style={{ color: '#ff9800', flexShrink: 0 }} />;
+                  ? <Crown size={11} style={{ color: 'var(--warning-color)', flexShrink: 0 }} />
+                  : <AlertTriangle size={11} style={{ color: 'var(--warning-color)', flexShrink: 0 }} />;
 
                 const tBadge = typeBadgeColors[sched.type] || { bg: 'rgba(107,114,128,0.12)', color: '#6b7280' };
 
@@ -10576,7 +10576,7 @@ const DashboardTiles = {
                           <div key={dayIdx} style={{
                             flex: 1, height: '100%', position: 'relative',
                             borderRight: dayIdx < 6 ? '1px solid var(--border-color)' : 'none',
-                            backgroundColor: isToday ? (darkMode ? 'rgba(59,130,246,0.05)' : 'rgba(59,130,246,0.03)') : 'transparent',
+                            backgroundColor: isToday ? (darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 5%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 3%, transparent)') : 'transparent',
                           }} />
                         );
                       })}
@@ -10669,10 +10669,10 @@ const DashboardTiles = {
                       padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '7px',
                       borderRight: '1px solid var(--border-color)', overflow: 'hidden',
                     }} title={`Filler plays whenever nothing is scheduled — ${fillerLabel()}`}>
-                      <Zap size={11} style={{ color: '#00d4ff', flexShrink: 0 }} />
+                      <Zap size={11} style={{ color: 'var(--nx-sec-connect)', flexShrink: 0 }} />
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{
-                          fontSize: '0.8rem', fontWeight: 600, color: '#00d4ff',
+                          fontSize: '0.8rem', fontWeight: 600, color: 'var(--nx-sec-connect)',
                           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                         }}>
                           Filler
@@ -10692,7 +10692,7 @@ const DashboardTiles = {
                           <div key={dayIdx} style={{
                             flex: 1, height: '100%',
                             borderRight: dayIdx < 6 ? '1px solid var(--border-color)' : 'none',
-                            backgroundColor: t === todayTime ? (darkMode ? 'rgba(59,130,246,0.05)' : 'rgba(59,130,246,0.03)') : 'transparent',
+                            backgroundColor: t === todayTime ? (darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 5%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 3%, transparent)') : 'transparent',
                           }} />
                         );
                       })}
@@ -10731,15 +10731,15 @@ const DashboardTiles = {
                               width: `${(dayCount * colWidth) - (colWidth * 0.16)}%`,
                               top: '7px', bottom: '7px',
                               display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              border: '1px dashed rgba(0,212,255,0.45)', borderRadius: '5px',
-                              background: 'repeating-linear-gradient(135deg, rgba(0,212,255,0.14) 0 6px, transparent 6px 12px)',
+                              border: '1px dashed color-mix(in srgb, var(--nx-sec-connect) 45%, transparent)', borderRadius: '5px',
+                              background: 'repeating-linear-gradient(135deg, color-mix(in srgb, var(--nx-sec-connect) 14%, transparent) 0 6px, transparent 6px 12px)',
                               overflow: 'hidden', zIndex: 1,
                             }}
                           >
                             <span style={{
                               padding: '1px 8px', borderRadius: '7px',
                               backgroundColor: darkMode ? 'rgba(10,16,22,0.75)' : 'rgba(255,255,255,0.8)',
-                              color: '#00d4ff', fontSize: '0.6rem', fontWeight: 700,
+                              color: 'var(--nx-sec-connect)', fontSize: '0.6rem', fontWeight: 700,
                               letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap',
                             }}>
                               {gapLabel}
@@ -10763,16 +10763,16 @@ const DashboardTiles = {
                 fontSize: '0.7rem', color: 'var(--text-muted)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  <Lock size={10} style={{ color: '#14B8A6' }} /> <span>Exclusive</span>
+                  <Lock size={10} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' }} /> <span>Exclusive</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  <Crown size={10} style={{ color: '#ffd700' }} /> <span>Winner</span>
+                  <Crown size={10} style={{ color: 'var(--warning-color)' }} /> <span>Winner</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  <Shuffle size={10} style={{ color: '#8b5cf6' }} /> <span>Blend</span>
+                  <Shuffle size={10} style={{ color: 'var(--nx-sec-library)' }} /> <span>Blend</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  <span style={{ opacity: 0.5 }}><AlertTriangle size={10} style={{ color: '#ff9800' }} /></span>
+                  <span style={{ opacity: 0.5 }}><AlertTriangle size={10} style={{ color: 'var(--warning-color)' }} /></span>
                   <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>Overridden</span>
                 </div>
               </div>
@@ -10970,9 +10970,9 @@ const DashboardTiles = {
                           {uploadProgress[file.name] && (
                             <span style={{ marginLeft: '0.25rem' }}>
                               {uploadProgress[file.name].status === 'completed' ? (
-                                <CheckCircle size={14} style={{ color: '#28a745' }} />
+                                <CheckCircle size={14} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
                               ) : uploadProgress[file.name].status === 'error' ? (
-                                <XCircle size={14} style={{ color: '#dc3545' }} />
+                                <XCircle size={14} style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }} />
                               ) : (
                                 <Loader2 size={14} className="spin" style={{ color: 'var(--accent-color)' }} />
                               )}
@@ -11079,9 +11079,9 @@ const DashboardTiles = {
             <div className="nx-add-import-notice" style={{
               marginBottom: '1rem',
               padding: '0.85rem 1rem',
-              backgroundColor: 'rgba(23, 162, 184, 0.1)',
+              backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
               borderRadius: '8px',
-              border: '1px solid #17a2b8',
+              border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 77%, #000)',
               fontSize: '0.85rem'
             }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>
@@ -11101,7 +11101,7 @@ const DashboardTiles = {
                       marginLeft: '0.35rem',
                       background: 'none',
                       border: 'none',
-                      color: '#17a2b8',
+                      color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)',
                       fontWeight: 600,
                       cursor: 'pointer',
                       textDecoration: 'underline',
@@ -11314,7 +11314,7 @@ const DashboardTiles = {
                   onClick={() => submitMapRoot(true)} 
                   disabled={mapRootLoading || !mapRootForm.root_path} 
                   style={{ 
-                    backgroundColor: '#28a745', 
+                    backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)', 
                     display: 'flex', 
                     alignItems: 'center', 
                     justifyContent: 'center', 
@@ -11357,22 +11357,22 @@ const DashboardTiles = {
               {mapRootResult && !mapRootLoading && (
                 <div className="nx-add-import-result" style={{
                   padding: '1rem', 
-                  background: mapRootResult.type === 'error' ? 'rgba(220, 53, 69, 0.1)' : 
+                  background: mapRootResult.type === 'error' ? 'color-mix(in srgb, var(--error-color) 10%, transparent)' : 
                               mapRootResult.type === 'dryrun' ? 'var(--bg-color)' : 'rgba(40, 167, 69, 0.1)', 
                   borderRadius: '8px',
-                  border: `1px solid ${mapRootResult.type === 'error' ? '#dc3545' : 
+                  border: `1px solid ${mapRootResult.type === 'error' ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : 
                                        mapRootResult.type === 'dryrun' ? 'var(--border-color)' : '#28a745'}`
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: mapRootResult.type === 'error' ? '0' : '0.75rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       {mapRootResult.type === 'error' ? (
-                        <AlertTriangle size={18} style={{ color: '#dc3545' }} />
+                        <AlertTriangle size={18} style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }} />
                       ) : mapRootResult.type === 'dryrun' ? (
                         <FlaskConical size={18} style={{ color: 'var(--accent-color)' }} />
                       ) : (
-                        <CheckCircle size={18} style={{ color: '#28a745' }} />
+                        <CheckCircle size={18} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
                       )}
-                      <span style={{ fontWeight: 600, color: mapRootResult.type === 'error' ? '#dc3545' : 'var(--text-color)' }}>
+                      <span style={{ fontWeight: 600, color: mapRootResult.type === 'error' ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : 'var(--text-color)' }}>
                         {mapRootResult.type === 'error' ? mapRootResult.message :
                          mapRootResult.type === 'dryrun' ? 'Dry Run Results' : 'Import Complete'}
                       </span>
@@ -11399,7 +11399,7 @@ const DashboardTiles = {
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Already Present</div>
                       </div>
                       <div style={{ padding: '0.75rem', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                        <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#28a745' }}>
+                        <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }}>
                           {mapRootResult.type === 'dryrun' ? mapRootResult.toAdd : mapRootResult.added}
                         </div>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -11407,7 +11407,7 @@ const DashboardTiles = {
                         </div>
                       </div>
                       <div style={{ padding: '0.75rem', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                        <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#17a2b8' }}>
+                        <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }}>
                           {mapRootResult.type === 'dryrun' ? mapRootResult.toTag : mapRootResult.tagged}
                         </div>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -11425,9 +11425,9 @@ const DashboardTiles = {
                         {mapRootResult.perCategory.map((row, i) => (
                           <span key={i} style={{
                             padding: '0.25rem 0.6rem',
-                            background: row.category === '(uncategorized)' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(99, 102, 241, 0.15)',
-                            color: row.category === '(uncategorized)' ? '#d97706' : '#6366f1',
-                            border: `1px solid ${row.category === '(uncategorized)' ? 'rgba(245, 158, 11, 0.4)' : 'rgba(99, 102, 241, 0.4)'}`,
+                            background: row.category === '(uncategorized)' ? 'color-mix(in srgb, var(--warning-color) 15%, transparent)' : 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)',
+                            color: row.category === '(uncategorized)' ? 'color-mix(in srgb, var(--warning-color) 77%, #000)' : 'color-mix(in srgb, var(--nx-sec-library) 93%, #000)',
+                            border: `1px solid ${row.category === '(uncategorized)' ? 'color-mix(in srgb, var(--warning-color) 40%, transparent)' : 'color-mix(in srgb, var(--nx-sec-library) 40%, transparent)'}`,
                             borderRadius: '999px',
                             fontSize: '0.85rem'
                           }}>
@@ -11445,7 +11445,7 @@ const DashboardTiles = {
                       <button
                         className="button"
                         onClick={() => { setMapRootResult(null); submitMapRoot(true); }}
-                        style={{ backgroundColor: '#28a745', padding: '0.6rem 1.5rem' }}
+                        style={{ backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)', padding: '0.6rem 1.5rem' }}
                       >
                         <Download size={14} style={{ marginRight: '0.35rem' }} />
                         Apply {mapRootResult.toAdd + mapRootResult.toTag} Change{(mapRootResult.toAdd + mapRootResult.toTag) !== 1 ? 's' : ''} Now
@@ -11750,7 +11750,7 @@ const DashboardTiles = {
                       title="Generated prerolls and downloaded trailers are hidden from this list by default"
                       style={{
                         background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                        font: 'inherit', color: 'var(--accent-color, #7c4dff)', textDecoration: 'underline',
+                        font: 'inherit', color: 'var(--accent-color, var(--nx-sec-library))', textDecoration: 'underline',
                       }}
                     >
                       {hiddenFromListCount} more hidden
@@ -11931,7 +11931,7 @@ const DashboardTiles = {
             alignItems: 'center', 
             gap: '0.5rem',
             padding: '0.6rem 1rem',
-            background: 'rgba(0, 212, 255, 0.1)',
+            background: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
             borderRadius: '8px',
             border: '1px solid var(--accent-color)'
           }}>
@@ -11951,7 +11951,7 @@ const DashboardTiles = {
             alignItems: 'center',
             gap: '0.5rem',
             padding: '0.6rem 1rem',
-            background: showNexupTrailersInLibrary ? 'rgba(0, 212, 255, 0.1)' : 'var(--card-bg)',
+            background: showNexupTrailersInLibrary ? 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)' : 'var(--card-bg)',
             borderRadius: '8px',
             border: '1px solid ' + (showNexupTrailersInLibrary ? 'var(--accent-color)' : 'var(--border-color)'),
             cursor: 'pointer',
@@ -12053,13 +12053,13 @@ const DashboardTiles = {
         <div style={{
           display: 'flex', alignItems: 'center', gap: '0.5rem',
           padding: '0.6rem 1rem', marginBottom: '0.75rem', borderRadius: '8px',
-          background: thumbnailProgress.phase === 'error' ? 'rgba(239,68,68,0.12)' : 'rgba(0,212,255,0.1)',
-          border: '1px solid ' + (thumbnailProgress.phase === 'error' ? 'rgba(239,68,68,0.4)' : 'var(--accent-color)'),
+          background: thumbnailProgress.phase === 'error' ? 'color-mix(in srgb, var(--error-color) 12%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
+          border: '1px solid ' + (thumbnailProgress.phase === 'error' ? 'color-mix(in srgb, var(--error-color) 40%, transparent)' : 'var(--accent-color)'),
         }}>
           {thumbnailProgress.phase === 'init'
             ? <Loader2 size={15} className="spin" />
             : thumbnailProgress.phase === 'error'
-              ? <AlertTriangle size={15} style={{ color: '#ef4444' }} />
+              ? <AlertTriangle size={15} style={{ color: 'color-mix(in srgb, var(--error-color) 88%, #000)' }} />
               : <CheckCircle size={15} style={{ color: 'var(--accent-color)' }} />}
           <span style={{ fontSize: '0.88rem' }}>{thumbnailProgress.status}</span>
         </div>
@@ -12287,8 +12287,8 @@ const DashboardTiles = {
                     alignItems: 'center',
                     gap: '0.4rem',
                     padding: '0.25rem 0.4rem 0.25rem 0.7rem',
-                    background: 'rgba(99, 102, 241, 0.12)',
-                    border: '1px solid rgba(99, 102, 241, 0.35)',
+                    background: 'color-mix(in srgb, var(--nx-sec-library) 12%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--nx-sec-library) 35%, transparent)',
                     borderRadius: '999px',
                     fontSize: '0.85rem',
                     color: 'var(--text-color)'
@@ -12308,7 +12308,7 @@ const DashboardTiles = {
                       height: '18px',
                       borderRadius: '50%',
                       border: 'none',
-                      background: 'rgba(99, 102, 241, 0.25)',
+                      background: 'color-mix(in srgb, var(--nx-sec-library) 25%, transparent)',
                       color: 'inherit',
                       cursor: 'pointer',
                       padding: 0,
@@ -12400,7 +12400,7 @@ const DashboardTiles = {
               disabled={selectedPrerollIds.length === 0}
               title="Delete all selected prerolls"
               style={{ 
-                background: selectedPrerollIds.length > 0 ? '#dc3545' : undefined,
+                background: selectedPrerollIds.length > 0 ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : undefined,
                 fontSize: '0.85rem', 
                 padding: '0.4rem 0.75rem',
                 display: 'flex',
@@ -12519,7 +12519,7 @@ const DashboardTiles = {
                   fontSize: '0.75rem', 
                   color: 'var(--text-color)',
                   display: 'inline-block',
-                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                  backgroundColor: 'color-mix(in srgb, var(--success-color) 15%, transparent)',
                   padding: '0.2rem 0.5rem',
                   borderRadius: '4px',
                   fontWeight: '500',
@@ -12533,7 +12533,7 @@ const DashboardTiles = {
                   fontSize: '0.75rem', 
                   color: 'var(--text-color)',
                   display: 'inline-block',
-                  backgroundColor: 'rgba(20, 184, 166, 0.15)',
+                  backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)',
                   padding: '0.2rem 0.5rem',
                   borderRadius: '4px',
                   fontWeight: '500',
@@ -12577,9 +12577,9 @@ const DashboardTiles = {
                           fontSize: '0.7rem',
                           padding: '0.2rem 0.5rem',
                           borderRadius: '12px',
-                          backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                          backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)',
                           color: 'var(--text-color)',
-                          border: '1px solid rgba(99, 102, 241, 0.3)',
+                          border: '1px solid color-mix(in srgb, var(--nx-sec-library) 30%, transparent)',
                           fontWeight: '500',
                           display: 'inline-flex',
                           alignItems: 'center'
@@ -12679,7 +12679,7 @@ const DashboardTiles = {
                  fontSize: '0.75rem', 
                  color: 'var(--text-color)',
                  display: 'inline-block',
-                 backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                 backgroundColor: 'color-mix(in srgb, var(--success-color) 15%, transparent)',
                  padding: '0.2rem 0.5rem',
                  borderRadius: '4px',
                  fontWeight: '500',
@@ -12693,7 +12693,7 @@ const DashboardTiles = {
                  fontSize: '0.75rem', 
                  color: 'var(--text-color)',
                  display: 'inline-block',
-                 backgroundColor: 'rgba(20, 184, 166, 0.15)',
+                 backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)',
                  padding: '0.2rem 0.5rem',
                  borderRadius: '4px',
                  fontWeight: '500',
@@ -12737,9 +12737,9 @@ const DashboardTiles = {
                          fontSize: '0.7rem',
                          padding: '0.2rem 0.5rem',
                          borderRadius: '12px',
-                         backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                         backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)',
                          color: 'var(--text-color)',
-                         border: '1px solid rgba(99, 102, 241, 0.3)',
+                         border: '1px solid color-mix(in srgb, var(--nx-sec-library) 30%, transparent)',
                          fontWeight: '500',
                          display: 'inline-flex',
                          alignItems: 'center'
@@ -13015,8 +13015,8 @@ const DashboardTiles = {
                 style={{
                   padding: '0.5rem 1rem',
                   fontSize: '0.85rem',
-                  backgroundColor: '#28a745',
-                  borderColor: '#28a745',
+                  backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
+                  borderColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.5rem'
@@ -13032,8 +13032,8 @@ const DashboardTiles = {
                 style={{
                   padding: '0.5rem 1rem',
                   fontSize: '0.85rem',
-                  backgroundColor: '#28a745',
-                  borderColor: '#28a745',
+                  backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
+                  borderColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.5rem'
@@ -13166,13 +13166,13 @@ const DashboardTiles = {
               background: conflictWizardResults.failed.length === 0
                 ? 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(20,184,166,0.1))'
                 : 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(239,68,68,0.1))',
-              border: `1px solid ${conflictWizardResults.failed.length === 0 ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)'}`,
+              border: `1px solid ${conflictWizardResults.failed.length === 0 ? 'color-mix(in srgb, var(--success-color) 30%, transparent)' : 'color-mix(in srgb, var(--warning-color) 30%, transparent)'}`,
               marginBottom: conflictWizardResults.applied.length > 0 ? '1rem' : 0
             }}>
               <div style={{ fontWeight: 600, fontSize: '1.05rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
                 {conflictWizardResults.failed.length === 0
-                  ? <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} style={{ color: '#10b981' }} /> All Fixes Applied Successfully</span>
-                  : <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} style={{ color: '#f59e0b' }} /> Some Fixes Had Issues</span>
+                  ? <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} style={{ color: 'var(--success-color)' }} /> All Fixes Applied Successfully</span>
+                  : <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} style={{ color: 'var(--warning-color)' }} /> Some Fixes Had Issues</span>
                 }
               </div>
               {conflictWizardResults.applied.length > 0 && (
@@ -13181,7 +13181,7 @@ const DashboardTiles = {
                 </div>
               )}
               {conflictWizardResults.failed.length > 0 && (
-                <div style={{ fontSize: '0.9rem', color: '#ef4444' }}>
+                <div style={{ fontSize: '0.9rem', color: 'color-mix(in srgb, var(--error-color) 88%, #000)' }}>
                   {conflictWizardResults.failed.length} fix{conflictWizardResults.failed.length !== 1 ? 'es' : ''} failed — try editing those schedules manually
                 </div>
               )}
@@ -13189,11 +13189,11 @@ const DashboardTiles = {
             {conflictWizardResults.applied.map(({ conflict, fix }) => (
               <div key={conflict.id} style={{
                 padding: '0.75rem 1rem', borderRadius: '8px',
-                background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)',
+                background: 'color-mix(in srgb, var(--success-color) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--success-color) 15%, transparent)',
                 display: 'flex', alignItems: 'center', gap: '0.75rem',
                 fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '0.5rem'
               }}>
-                <CheckCircle size={16} style={{ color: '#10b981', flexShrink: 0 }} />
+                <CheckCircle size={16} style={{ color: 'var(--success-color)', flexShrink: 0 }} />
                 <span><strong>{conflict.scheduleA.name}</strong> vs <strong>{conflict.scheduleB.name}</strong> — {fix.label}</span>
               </div>
             ))}
@@ -13213,13 +13213,13 @@ const DashboardTiles = {
             }}>
               <div style={{
                 width: 64, height: 64, borderRadius: '50%',
-                background: 'linear-gradient(135deg, rgba(16,185,129,0.2), rgba(20,184,166,0.15))',
+                background: 'linear-gradient(135deg, color-mix(in srgb, var(--success-color) 20%, transparent), color-mix(in srgb, var(--nx-sec-connect) 15%, transparent))',
                 display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}>
-                <Shield size={32} style={{ color: '#10b981' }} />
+                <Shield size={32} style={{ color: 'var(--success-color)' }} />
               </div>
               <div>
-                <div style={{ fontWeight: 700, fontSize: '1.2rem', color: '#10b981', marginBottom: '0.35rem' }}>
+                <div style={{ fontWeight: 700, fontSize: '1.2rem', color: 'var(--success-color)', marginBottom: '0.35rem' }}>
                   All Conflicts Resolved
                 </div>
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', lineHeight: 1.5 }}>
@@ -13234,7 +13234,7 @@ const DashboardTiles = {
                       type="button"
                       onClick={() => setShowIgnoredConflicts(prev => !prev)}
                       style={{
-                        background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer',
+                        background: 'none', border: 'none', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', cursor: 'pointer',
                         textDecoration: 'underline', padding: 0, fontSize: '0.85rem'
                       }}
                     >
@@ -13262,8 +13262,8 @@ const DashboardTiles = {
                             style={{
                               display: 'flex', alignItems: 'center', gap: '4px',
                               padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
-                              background: 'rgba(20,184,166,0.1)', color: '#14B8A6',
-                              border: '1px solid rgba(20,184,166,0.3)', cursor: 'pointer'
+                              background: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)',
+                              border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)', cursor: 'pointer'
                             }}
                           >
                             <Eye size={12} /> Restore
@@ -13293,7 +13293,7 @@ const DashboardTiles = {
                     style={{
                       padding: '0.45rem 1rem', fontSize: '0.85rem',
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
-                      background: 'linear-gradient(135deg, #14B8A6, #10b981)',
+                      background: 'linear-gradient(135deg, color-mix(in srgb, var(--nx-sec-connect) 76%, #000), var(--success-color))',
                       color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600,
                       cursor: 'pointer'
                     }}
@@ -13309,7 +13309,7 @@ const DashboardTiles = {
                     style={{
                       padding: '0.45rem 1rem', fontSize: '0.85rem',
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
-                      background: selectedCount > 0 ? '#28a745' : '#6b7280',
+                      background: selectedCount > 0 ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : '#6b7280',
                       color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600,
                       cursor: selectedCount > 0 ? 'pointer' : 'not-allowed',
                       opacity: conflictWizardApplying ? 0.7 : 1
@@ -13334,8 +13334,8 @@ const DashboardTiles = {
               return (
                 <div key={conflict.id} className="card" style={{
                   padding: 0, overflow: 'hidden',
-                  borderColor: selectedFix ? 'rgba(16,185,129,0.4)' : undefined,
-                  background: selectedFix ? 'rgba(16,185,129,0.03)' : undefined,
+                  borderColor: selectedFix ? 'color-mix(in srgb, var(--success-color) 40%, transparent)' : undefined,
+                  background: selectedFix ? 'color-mix(in srgb, var(--success-color) 3%, transparent)' : undefined,
                   transition: 'border-color 0.2s, background 0.2s'
                 }}>
                   {/* Conflict header */}
@@ -13368,7 +13368,7 @@ const DashboardTiles = {
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conflict.scheduleB.name}</span>
                       </div>
                     </div>
-                    {selectedFix && <CheckCircle size={16} style={{ color: '#10b981', flexShrink: 0 }} />}
+                    {selectedFix && <CheckCircle size={16} style={{ color: 'var(--success-color)', flexShrink: 0 }} />}
                   </div>
 
                   {/* Conflict body */}
@@ -13421,8 +13421,8 @@ const DashboardTiles = {
                           style={{
                             display: 'flex', alignItems: 'center', gap: '0.5rem',
                             padding: '0.5rem 0.75rem', borderRadius: '8px', cursor: 'pointer',
-                            border: `1px solid ${selectedFix === fix.id ? 'rgba(20,184,166,0.5)' : 'var(--border-color)'}`,
-                            background: selectedFix === fix.id ? 'rgba(20,184,166,0.08)' : 'transparent',
+                            border: `1px solid ${selectedFix === fix.id ? 'color-mix(in srgb, var(--nx-sec-connect) 50%, transparent)' : 'var(--border-color)'}`,
+                            background: selectedFix === fix.id ? 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)' : 'transparent',
                             transition: 'all 0.15s'
                           }}
                         >
@@ -13431,7 +13431,7 @@ const DashboardTiles = {
                             name={`conflict-page-${conflict.id}`}
                             checked={selectedFix === fix.id}
                             onChange={() => setConflictResolutions(prev => ({ ...prev, [conflict.id]: fix.id }))}
-                            style={{ accentColor: '#14B8A6', flexShrink: 0 }}
+                            style={{ accentColor: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', flexShrink: 0 }}
                           />
                           <span style={{ color: severityColors[conflict.severity], flexShrink: 0, display: 'flex' }}>
                             {fixIconMap[fix.icon] || <Wand2 size={14} />}
@@ -13527,8 +13527,8 @@ const DashboardTiles = {
                           style={{
                             display: 'flex', alignItems: 'center', gap: '4px',
                             padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
-                            background: 'rgba(20,184,166,0.1)', color: '#14B8A6',
-                            border: '1px solid rgba(20,184,166,0.3)', cursor: 'pointer', flexShrink: 0
+                            background: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)',
+                            border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)', cursor: 'pointer', flexShrink: 0
                           }}
                         >
                           <Eye size={12} /> Restore
@@ -13568,7 +13568,7 @@ const DashboardTiles = {
       <Modal
         title={
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <GitCompare size={20} style={{ color: '#14B8A6' }} />
+            <GitCompare size={20} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' }} />
             Conflict Resolution Wizard
           </span>
         }
@@ -13589,12 +13589,12 @@ const DashboardTiles = {
               background: conflictWizardResults.failed.length === 0
                 ? 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(20,184,166,0.1))'
                 : 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(239,68,68,0.1))',
-              border: `1px solid ${conflictWizardResults.failed.length === 0 ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)'}`
+              border: `1px solid ${conflictWizardResults.failed.length === 0 ? 'color-mix(in srgb, var(--success-color) 30%, transparent)' : 'color-mix(in srgb, var(--warning-color) 30%, transparent)'}`
             }}>
               <div style={{ fontWeight: 600, fontSize: '1.05rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
                 {conflictWizardResults.failed.length === 0
-                  ? <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} style={{ color: '#10b981' }} /> All Fixes Applied Successfully</span>
-                  : <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} style={{ color: '#f59e0b' }} /> Some Fixes Had Issues</span>
+                  ? <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} style={{ color: 'var(--success-color)' }} /> All Fixes Applied Successfully</span>
+                  : <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} style={{ color: 'var(--warning-color)' }} /> Some Fixes Had Issues</span>
                 }
               </div>
               {conflictWizardResults.applied.length > 0 && (
@@ -13603,7 +13603,7 @@ const DashboardTiles = {
                 </div>
               )}
               {conflictWizardResults.failed.length > 0 && (
-                <div style={{ fontSize: '0.9rem', color: '#ef4444' }}>
+                <div style={{ fontSize: '0.9rem', color: 'color-mix(in srgb, var(--error-color) 88%, #000)' }}>
                   {conflictWizardResults.failed.length} fix{conflictWizardResults.failed.length !== 1 ? 'es' : ''} failed — try editing those schedules manually
                 </div>
               )}
@@ -13614,12 +13614,12 @@ const DashboardTiles = {
               <div key={conflict.id} style={{
                 padding: '0.75rem 1rem',
                 borderRadius: '8px',
-                background: 'rgba(16,185,129,0.06)',
-                border: '1px solid rgba(16,185,129,0.15)',
+                background: 'color-mix(in srgb, var(--success-color) 6%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--success-color) 15%, transparent)',
                 display: 'flex', alignItems: 'center', gap: '0.75rem',
                 fontSize: '0.9rem', color: 'var(--text-color)'
               }}>
-                <CheckCircle size={16} style={{ color: '#10b981', flexShrink: 0 }} />
+                <CheckCircle size={16} style={{ color: 'var(--success-color)', flexShrink: 0 }} />
                 <span><strong>{conflict.scheduleA.name}</strong> vs <strong>{conflict.scheduleB.name}</strong> — {fix.label}</span>
               </div>
             ))}
@@ -13647,10 +13647,10 @@ const DashboardTiles = {
           }}>
             <div style={{
               width: 56, height: 56, borderRadius: '50%',
-              background: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(20,184,166,0.1))',
+              background: 'linear-gradient(135deg, color-mix(in srgb, var(--success-color) 15%, transparent), color-mix(in srgb, var(--nx-sec-connect) 10%, transparent))',
               display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
-              <CheckCircle size={28} style={{ color: '#10b981' }} />
+              <CheckCircle size={28} style={{ color: 'var(--success-color)' }} />
             </div>
             <div>
               <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-color)', marginBottom: '0.25rem' }}>No Conflicts Detected</div>
@@ -13663,7 +13663,7 @@ const DashboardTiles = {
                       type="button"
                       onClick={() => setShowIgnoredConflicts(prev => !prev)}
                       style={{
-                        background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer',
+                        background: 'none', border: 'none', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', cursor: 'pointer',
                         textDecoration: 'underline', padding: 0, fontSize: '0.85rem'
                       }}
                     >
@@ -13696,8 +13696,8 @@ const DashboardTiles = {
                         style={{
                           display: 'flex', alignItems: 'center', gap: '4px',
                           padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
-                          background: 'rgba(20,184,166,0.1)', color: '#14B8A6',
-                          border: '1px solid rgba(20,184,166,0.3)', cursor: 'pointer'
+                          background: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)',
+                          border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)', cursor: 'pointer'
                         }}
                       >
                         <Eye size={12} /> Restore
@@ -13742,7 +13742,7 @@ const DashboardTiles = {
                 style={{
                   padding: '0.45rem 1rem', fontSize: '0.85rem',
                   display: 'flex', alignItems: 'center', gap: '0.4rem',
-                  background: 'linear-gradient(135deg, #14B8A6, #10b981)',
+                  background: 'linear-gradient(135deg, color-mix(in srgb, var(--nx-sec-connect) 76%, #000), var(--success-color))',
                   color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600,
                   cursor: 'pointer'
                 }}
@@ -13762,8 +13762,8 @@ const DashboardTiles = {
                 return (
                   <div key={conflict.id} style={{
                     borderRadius: '10px',
-                    border: `1px solid ${selectedFix ? 'rgba(16,185,129,0.4)' : 'var(--border-color)'}`,
-                    background: selectedFix ? 'rgba(16,185,129,0.03)' : 'var(--card-bg)',
+                    border: `1px solid ${selectedFix ? 'color-mix(in srgb, var(--success-color) 40%, transparent)' : 'var(--border-color)'}`,
+                    background: selectedFix ? 'color-mix(in srgb, var(--success-color) 3%, transparent)' : 'var(--card-bg)',
                     transition: 'border-color 0.2s, background 0.2s'
                   }}>
                     {/* Conflict header */}
@@ -13798,7 +13798,7 @@ const DashboardTiles = {
                         </div>
                       </div>
                       {selectedFix && (
-                        <CheckCircle size={16} style={{ color: '#10b981', flexShrink: 0 }} />
+                        <CheckCircle size={16} style={{ color: 'var(--success-color)', flexShrink: 0 }} />
                       )}
                     </div>
 
@@ -13855,8 +13855,8 @@ const DashboardTiles = {
                             style={{
                               display: 'flex', alignItems: 'center', gap: '0.5rem',
                               padding: '0.5rem 0.75rem', borderRadius: '8px', cursor: 'pointer',
-                              border: `1px solid ${selectedFix === fix.id ? 'rgba(20,184,166,0.5)' : 'var(--border-color)'}`,
-                              background: selectedFix === fix.id ? 'rgba(20,184,166,0.08)' : 'transparent',
+                              border: `1px solid ${selectedFix === fix.id ? 'color-mix(in srgb, var(--nx-sec-connect) 50%, transparent)' : 'var(--border-color)'}`,
+                              background: selectedFix === fix.id ? 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)' : 'transparent',
                               transition: 'all 0.15s'
                             }}
                           >
@@ -13865,7 +13865,7 @@ const DashboardTiles = {
                               name={`conflict-${conflict.id}`}
                               checked={selectedFix === fix.id}
                               onChange={() => setConflictResolutions(prev => ({ ...prev, [conflict.id]: fix.id }))}
-                              style={{ accentColor: '#14B8A6', flexShrink: 0 }}
+                              style={{ accentColor: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', flexShrink: 0 }}
                             />
                             <span style={{ color: severityColors[conflict.severity], flexShrink: 0, display: 'flex' }}>
                               {fixIconMap[fix.icon] || <Wand2 size={14} />}
@@ -13969,8 +13969,8 @@ const DashboardTiles = {
                           style={{
                             display: 'flex', alignItems: 'center', gap: '4px',
                             padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
-                            background: 'rgba(20,184,166,0.1)', color: '#14B8A6',
-                            border: '1px solid rgba(20,184,166,0.3)', cursor: 'pointer',
+                            background: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)',
+                            border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)', cursor: 'pointer',
                             flexShrink: 0
                           }}
                         >
@@ -14015,7 +14015,7 @@ const DashboardTiles = {
                   onClick={() => applyAllConflictResolutions(visibleConflicts)}
                   style={{
                     padding: '0.55rem 1.25rem', fontSize: '0.9rem',
-                    background: selectedCount > 0 ? 'linear-gradient(135deg, #14B8A6, #10b981)' : '#6b7280',
+                    background: selectedCount > 0 ? 'linear-gradient(135deg, color-mix(in srgb, var(--nx-sec-connect) 76%, #000), var(--success-color))' : '#6b7280',
                     color: '#fff', border: 'none', borderRadius: '8px',
                     cursor: selectedCount > 0 ? 'pointer' : 'not-allowed',
                     opacity: conflictWizardApplying ? 0.7 : 1,
@@ -14366,8 +14366,8 @@ const DashboardTiles = {
       cursor: 'pointer',
       padding: '0.4rem 0.75rem',
       borderRadius: '6px',
-      backgroundColor: calendarShowConflictsOnly ? 'rgba(255, 152, 0, 0.15)' : 'transparent',
-      border: calendarShowConflictsOnly ? '1px solid #ff9800' : '1px solid var(--border-color)',
+      backgroundColor: calendarShowConflictsOnly ? 'color-mix(in srgb, var(--warning-color) 15%, transparent)' : 'transparent',
+      border: calendarShowConflictsOnly ? '1px solid var(--warning-color)' : '1px solid var(--border-color)',
       transition: 'all 0.2s ease'
     }}>
       <input 
@@ -14376,7 +14376,7 @@ const DashboardTiles = {
         onChange={(e) => setCalendarShowConflictsOnly(e.target.checked)}
         style={{ width: 16, height: 16 }}
       />
-      <AlertTriangle size={14} style={{ color: '#ff9800' }} />
+      <AlertTriangle size={14} style={{ color: 'var(--warning-color)' }} />
       <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Conflicts Only</span>
     </label>
     
@@ -14682,10 +14682,10 @@ const DashboardTiles = {
                 alignItems: 'center',
                 gap: '8px',
                 padding: '8px 12px',
-                backgroundColor: 'rgba(139, 92, 246, 0.15)',
-                border: '1px solid rgba(139, 92, 246, 0.5)',
+                backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--nx-sec-library) 50%, transparent)',
                 borderRadius: '8px',
-                color: '#8b5cf6'
+                color: 'var(--nx-sec-library)'
               }}>
                 <Shuffle size={16} />
                 <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Blend Mode</span>
@@ -14697,10 +14697,10 @@ const DashboardTiles = {
                 alignItems: 'center',
                 gap: '8px',
                 padding: '8px 12px',
-                backgroundColor: 'rgba(20, 184, 166, 0.15)',
-                border: '1px solid rgba(20, 184, 166, 0.5)',
+                backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 50%, transparent)',
                 borderRadius: '8px',
-                color: '#14B8A6'
+                color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)'
               }}>
                 <Lock size={16} />
                 <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Exclusive Schedule</span>
@@ -14712,10 +14712,10 @@ const DashboardTiles = {
                 alignItems: 'center',
                 gap: '8px',
                 padding: '8px 12px',
-                backgroundColor: 'rgba(255, 152, 0, 0.15)',
-                border: '1px solid rgba(255, 152, 0, 0.5)',
+                backgroundColor: 'color-mix(in srgb, var(--warning-color) 15%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--warning-color) 50%, transparent)',
                 borderRadius: '8px',
-                color: '#ff9800'
+                color: 'var(--warning-color)'
               }}>
                 <AlertTriangle size={16} />
                 <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Conflicts</span>
@@ -14737,20 +14737,20 @@ const DashboardTiles = {
               marginBottom: '1rem',
               padding: '1rem',
               borderRadius: '8px',
-              backgroundColor: 'rgba(255, 152, 0, 0.08)',
-              border: '1px solid rgba(255, 152, 0, 0.25)'
+              backgroundColor: 'color-mix(in srgb, var(--warning-color) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--warning-color) 25%, transparent)'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: '#ff9800' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: 'var(--warning-color)' }}>
                 <AlertTriangle size={18} />
                 <span>Schedule Conflicts Detected</span>
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{conflictHourCount} hour{conflictHourCount !== 1 ? 's' : ''}</strong> have overlapping schedules today.
                 Exclusive schedules win first; two or more blend-enabled schedules blend; otherwise highest priority wins, with end time used only as a tie-breaker. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
-                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
+                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'color-mix(in srgb, var(--warning-color) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--warning-color) 50%, transparent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <Crown size={12} /> = Active
                 </span>
                 <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.1)', opacity: 0.6 }}>
@@ -14766,14 +14766,14 @@ const DashboardTiles = {
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
                       padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
                       cursor: 'pointer', border: 'none', transition: 'all 0.2s',
-                      background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
-                      color: '#ef4444'
+                      background: 'linear-gradient(135deg, color-mix(in srgb, var(--error-color) 15%, transparent), color-mix(in srgb, var(--warning-color) 15%, transparent))',
+                      color: 'color-mix(in srgb, var(--error-color) 88%, #000)'
                     }}
                   >
                     <GitCompare size={14} />
                     Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
                     {highCount > 0 && (
-                      <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                      <span style={{ background: 'var(--error-btn)', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
                         {highCount}
                       </span>
                     )}
@@ -14782,7 +14782,7 @@ const DashboardTiles = {
                   <span style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
                     padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
-                    color: '#10b981'
+                    color: 'var(--success-color)'
                   }}>
                     <CheckCircle size={14} /> All Conflicts Resolved
                   </span>
@@ -14823,12 +14823,12 @@ const DashboardTiles = {
                     color: chipText,
                     fontSize: '0.8rem',
                     fontWeight: 500,
-                    border: hasSamePriorityConflict ? '2px solid #ff9800' : 'none',
-                    boxShadow: hasSamePriorityConflict ? '0 0 8px rgba(255, 152, 0, 0.5)' : 'none'
+                    border: hasSamePriorityConflict ? '2px solid var(--warning-color)' : 'none',
+                    boxShadow: hasSamePriorityConflict ? '0 0 8px color-mix(in srgb, var(--warning-color) 50%, transparent)' : 'none'
                   }}
                   title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nThese schedules share a priority during overlapping times.\nNeXroll's fixed tie-break order selects one.\nSet different priorities to make the intended winner explicit.` : ''}
                   >
-                    {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: chipText === '#fff' ? '#ffeb3b' : '#b45309' }} />}
+                    {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: chipText === '#fff' ? 'var(--warning-color)' : '#b45309' }} />}
                     {sched.exclusive && !hasSamePriorityConflict && <Lock size={12} />}
                     {sched.blend_enabled && !sched.exclusive && <Shuffle size={12} />}
                     <span>{sched.name}</span>
@@ -14878,7 +14878,7 @@ const DashboardTiles = {
                   fontSize: '0.85rem',
                   color: isCurrentHour ? 'var(--button-bg)' : 'var(--text-secondary)',
                   borderRight: '1px solid var(--border-color)',
-                  backgroundColor: isCurrentHour ? 'rgba(59, 130, 246, 0.15)' : 'transparent'
+                  backgroundColor: isCurrentHour ? 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)' : 'transparent'
                 }}>
                   {formatHour(hourData.hour)}
                   {isCurrentHour && <span style={{ marginLeft: '4px', color: 'var(--button-bg)' }}>●</span>}
@@ -14895,7 +14895,7 @@ const DashboardTiles = {
                   {!hasSchedules && (fillerSettings.enabled ? (
                     <span style={{ 
                       fontSize: '0.8rem', 
-                      color: '#00d4ff',
+                      color: 'var(--nx-sec-connect)',
                       fontStyle: 'italic',
                       display: 'flex',
                       alignItems: 'center',
@@ -14990,7 +14990,7 @@ const DashboardTiles = {
                                 : 'none'
                         }}
                       >
-                        {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: isSamePriorityLoser ? blockText : (blockText === '#fff' ? '#ffeb3b' : '#b45309') }} />}
+                        {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: isSamePriorityLoser ? blockText : (blockText === '#fff' ? 'var(--warning-color)' : '#b45309') }} />}
                         {isExclusive && !hasSamePriorityConflict && <Lock size={12} />}
                         {isWinner && hourData.hasConflict && !isExclusive && !isBlending && !hasSamePriorityConflict && <Crown size={12} />}
                         {isBlending && <Shuffle size={12} />}
@@ -15026,15 +15026,15 @@ const DashboardTiles = {
           <div style={{ fontWeight: 600, marginBottom: '8px', color: 'var(--text-color)' }}>Legend:</div>
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Lock size={14} style={{ color: '#14B8A6' }} />
+              <Lock size={14} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' }} />
               <span>Exclusive (overrides all)</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Crown size={14} style={{ color: '#ffd700' }} />
+              <Crown size={14} style={{ color: 'var(--warning-color)' }} />
               <span>Winner (highest priority)</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Shuffle size={14} style={{ color: '#8b5cf6' }} />
+              <Shuffle size={14} style={{ color: 'var(--nx-sec-library)' }} />
               <span>Blending</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -15168,7 +15168,7 @@ const DashboardTiles = {
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '5px 12px', borderRadius: '20px',
-                backgroundColor: darkMode ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.08)',
+                backgroundColor: darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)',
                 color: 'var(--button-bg)', fontSize: '0.8rem', fontWeight: 600
               }}>
                 <Calendar size={13} />
@@ -15178,8 +15178,8 @@ const DashboardTiles = {
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
                   padding: '5px 12px', borderRadius: '20px',
-                  backgroundColor: 'rgba(139, 92, 246, 0.12)',
-                  color: '#8b5cf6', fontSize: '0.8rem', fontWeight: 600
+                  backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 12%, transparent)',
+                  color: 'var(--nx-sec-library)', fontSize: '0.8rem', fontWeight: 600
                 }}>
                   <Shuffle size={13} /> Blend
                 </div>
@@ -15188,8 +15188,8 @@ const DashboardTiles = {
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
                   padding: '5px 12px', borderRadius: '20px',
-                  backgroundColor: 'rgba(20, 184, 166, 0.12)',
-                  color: '#14B8A6', fontSize: '0.8rem', fontWeight: 600
+                  backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 12%, transparent)',
+                  color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', fontSize: '0.8rem', fontWeight: 600
                 }}>
                   <Lock size={13} /> Exclusive
                 </div>
@@ -15198,8 +15198,8 @@ const DashboardTiles = {
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
                   padding: '5px 12px', borderRadius: '20px',
-                  backgroundColor: 'rgba(255, 152, 0, 0.12)',
-                  color: '#ff9800', fontSize: '0.8rem', fontWeight: 600
+                  backgroundColor: 'color-mix(in srgb, var(--warning-color) 12%, transparent)',
+                  color: 'var(--warning-color)', fontSize: '0.8rem', fontWeight: 600
                 }}>
                   <AlertTriangle size={13} /> {conflictDayCount} conflict{conflictDayCount !== 1 ? 's' : ''}
                 </div>
@@ -15220,20 +15220,20 @@ const DashboardTiles = {
               margin: '0.75rem 1.5rem',
               padding: '1rem',
               borderRadius: '8px',
-              backgroundColor: 'rgba(255, 152, 0, 0.08)',
-              border: '1px solid rgba(255, 152, 0, 0.25)'
+              backgroundColor: 'color-mix(in srgb, var(--warning-color) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--warning-color) 25%, transparent)'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: '#ff9800' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: 'var(--warning-color)' }}>
                 <AlertTriangle size={18} />
                 <span>Schedule Conflicts Detected</span>
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{conflictDayCount} day{conflictDayCount !== 1 ? 's' : ''}</strong> this week have overlapping schedules.
                 Exclusive schedules win first; two or more blend-enabled schedules blend; otherwise highest priority wins, with end time used only as a tie-breaker. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
-                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
+                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'color-mix(in srgb, var(--warning-color) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--warning-color) 50%, transparent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <Crown size={12} /> = Active
                 </span>
                 <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.1)', opacity: 0.6 }}>
@@ -15249,14 +15249,14 @@ const DashboardTiles = {
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
                       padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
                       cursor: 'pointer', border: 'none', transition: 'all 0.2s',
-                      background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
-                      color: '#ef4444'
+                      background: 'linear-gradient(135deg, color-mix(in srgb, var(--error-color) 15%, transparent), color-mix(in srgb, var(--warning-color) 15%, transparent))',
+                      color: 'color-mix(in srgb, var(--error-color) 88%, #000)'
                     }}
                   >
                     <GitCompare size={14} />
                     Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
                     {highCount > 0 && (
-                      <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                      <span style={{ background: 'var(--error-btn)', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
                         {highCount}
                       </span>
                     )}
@@ -15265,7 +15265,7 @@ const DashboardTiles = {
                   <span style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
                     padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
-                    color: '#10b981'
+                    color: 'var(--success-color)'
                   }}>
                     <CheckCircle size={14} /> All Conflicts Resolved
                   </span>
@@ -15357,7 +15357,7 @@ const DashboardTiles = {
                   fontWeight: isToday ? 800 : 600,
                   color: isToday ? '#fff' : 'var(--text-color)',
                   backgroundColor: isToday ? 'var(--button-bg)' : 'transparent',
-                  boxShadow: isToday ? '0 2px 8px rgba(59,130,246,0.35)' : 'none',
+                  boxShadow: isToday ? '0 2px 8px color-mix(in srgb, var(--nx-sec-connect) 35%, transparent)' : 'none',
                   transition: 'all 0.2s',
                 }}>
                   {day.getDate()}
@@ -15474,28 +15474,28 @@ const DashboardTiles = {
             let statusIcon = null;
             let statusLabel = '';
             if (hasSamePriorityConflict) {
-              statusIcon = <AlertTriangle size={13} style={{ color: '#ff9800', flexShrink: 0 }} />;
+              statusIcon = <AlertTriangle size={13} style={{ color: 'var(--warning-color)', flexShrink: 0 }} />;
               statusLabel = 'Conflict';
             } else if (hasAnyExclusivesForSched) {
-              statusIcon = <Lock size={13} style={{ color: '#14B8A6', flexShrink: 0 }} />;
+              statusIcon = <Lock size={13} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', flexShrink: 0 }} />;
               statusLabel = 'Exclusive';
             } else if (hasAnyBlends) {
-              statusIcon = <Shuffle size={13} style={{ color: '#8b5cf6', flexShrink: 0 }} />;
+              statusIcon = <Shuffle size={13} style={{ color: 'var(--nx-sec-library)', flexShrink: 0 }} />;
               statusLabel = 'Blend';
             } else if (hasAnyConflictsForSched) {
               statusIcon = (hasAnyWins || hasAnyNonExclusiveWins)
-                ? <Crown size={13} style={{ color: '#ffd700', flexShrink: 0 }} />
-                : <AlertTriangle size={13} style={{ color: '#ff9800', flexShrink: 0 }} />;
+                ? <Crown size={13} style={{ color: 'var(--warning-color)', flexShrink: 0 }} />
+                : <AlertTriangle size={13} style={{ color: 'var(--warning-color)', flexShrink: 0 }} />;
               statusLabel = (hasAnyWins || hasAnyNonExclusiveWins) ? 'Winner' : 'Overridden';
             }
 
             // Schedule type badge color
             const typeBadgeColors = {
-              daily: { bg: 'rgba(59,130,246,0.12)', color: '#3b82f6' },
-              weekly: { bg: 'rgba(16,185,129,0.12)', color: '#10b981' },
-              monthly: { bg: 'rgba(245,158,11,0.12)', color: '#f59e0b' },
-              yearly: { bg: 'rgba(139,92,246,0.12)', color: '#8b5cf6' },
-              holiday: { bg: 'rgba(244,63,94,0.12)', color: '#f43f5e' },
+              daily: { bg: 'rgba(59,130,246,0.12)', color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' },
+              weekly: { bg: 'rgba(16,185,129,0.12)', color: 'var(--success-color)' },
+              monthly: { bg: 'rgba(245,158,11,0.12)', color: 'var(--warning-color)' },
+              yearly: { bg: 'rgba(139,92,246,0.12)', color: 'var(--nx-sec-library)' },
+              holiday: { bg: 'rgba(244,63,94,0.12)', color: 'color-mix(in srgb, var(--error-color) 92%, #000)' },
             };
             const tBadge = typeBadgeColors[sched.type] || { bg: 'rgba(107,114,128,0.12)', color: '#6b7280' };
 
@@ -15752,20 +15752,20 @@ const DashboardTiles = {
             color: 'var(--text-muted)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Lock size={12} style={{ color: '#14B8A6' }} />
+              <Lock size={12} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' }} />
               <span>Exclusive</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Crown size={12} style={{ color: '#ffd700' }} />
+              <Crown size={12} style={{ color: 'var(--warning-color)' }} />
               <span>Winner</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Shuffle size={12} style={{ color: '#8b5cf6' }} />
+              <Shuffle size={12} style={{ color: 'var(--nx-sec-library)' }} />
               <span>Blend</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <span style={{ opacity: 0.5 }}>
-                <AlertTriangle size={12} style={{ color: '#ff9800' }} />
+                <AlertTriangle size={12} style={{ color: 'var(--warning-color)' }} />
               </span>
               <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>Overridden</span>
             </div>
@@ -15867,12 +15867,12 @@ const DashboardTiles = {
                 }}
                 title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nThese schedules share a priority during overlapping times.\nNeXroll's fixed tie-break order selects one.\nSet different priorities to make the intended winner explicit.` : ''}
                 >
-                  {hasSamePriorityConflict && <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} />}
-                  {sched.exclusive && !hasSamePriorityConflict && <Lock size={14} style={{ color: '#14B8A6', flexShrink: 0 }} />}
-                  {sched.blend_enabled && !sched.exclusive && <Shuffle size={14} style={{ color: '#8b5cf6', flexShrink: 0 }} />}
+                  {hasSamePriorityConflict && <AlertTriangle size={14} style={{ color: 'var(--warning-color)', flexShrink: 0 }} />}
+                  {sched.exclusive && !hasSamePriorityConflict && <Lock size={14} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', flexShrink: 0 }} />}
+                  {sched.blend_enabled && !sched.exclusive && <Shuffle size={14} style={{ color: 'var(--nx-sec-library)', flexShrink: 0 }} />}
                   {sched.name}
                 </div>
-                <div style={{ flex: 1, position: 'relative', height: '32px', display: 'flex', border: hasSamePriorityConflict ? '2px solid #ff9800' : '1px solid var(--border-color)', borderRadius: '4px' }}>
+                <div style={{ flex: 1, position: 'relative', height: '32px', display: 'flex', border: hasSamePriorityConflict ? '2px solid var(--warning-color)' : '1px solid var(--border-color)', borderRadius: '4px' }}>
                   {days.map((day, dayIdx) => (
                     <div key={dayIdx} style={{ 
                       flex: 1, 
@@ -15930,7 +15930,7 @@ const DashboardTiles = {
                 color: isToday ? 'var(--button-bg)' : 'var(--text-secondary)',
                 padding: '4px',
                 borderRadius: '4px',
-                backgroundColor: isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent'
+                backgroundColor: isToday ? (darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)') : 'transparent'
               }}>
                 {dayNum}
               </div>
@@ -16137,15 +16137,15 @@ const DashboardTiles = {
                   gap: '0.5rem',
                   padding: '0.5rem 1rem',
                   borderRadius: '8px',
-                  backgroundColor: 'rgba(255, 152, 0, 0.1)',
-                  border: '1px solid rgba(255, 152, 0, 0.3)',
+                  backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--warning-color) 30%, transparent)',
                   cursor: 'pointer'
                 }}
                 onClick={() => setCalendarShowConflictsOnly(!calendarShowConflictsOnly)}
                 title="Click to filter to conflict days only"
               >
-                <AlertTriangle size={16} style={{ color: '#ff9800' }} />
-                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#ff9800' }}>
+                <AlertTriangle size={16} style={{ color: 'var(--warning-color)' }} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--warning-color)' }}>
                   {totalConflicts} conflict{totalConflicts !== 1 ? 's' : ''}
                 </span>
               </div>
@@ -16159,13 +16159,13 @@ const DashboardTiles = {
                   gap: '0.5rem',
                   padding: '0.5rem 1rem',
                   borderRadius: '8px',
-                  backgroundColor: 'rgba(139, 92, 246, 0.1)',
-                  border: '1px solid rgba(139, 92, 246, 0.3)'
+                  backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 10%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--nx-sec-library) 30%, transparent)'
                 }}
                 title="Days with blended schedules"
               >
-                <Shuffle size={16} style={{ color: '#8b5cf6' }} />
-                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#8b5cf6' }}>
+                <Shuffle size={16} style={{ color: 'var(--nx-sec-library)' }} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--nx-sec-library)' }}>
                   {totalBlends} day{totalBlends !== 1 ? 's' : ''} blending
                 </span>
               </div>
@@ -16179,8 +16179,8 @@ const DashboardTiles = {
             marginBottom: '1rem',
             padding: '1rem',
             borderRadius: '8px',
-            backgroundColor: 'rgba(255, 152, 0, 0.08)',
-            border: '1px solid rgba(255, 152, 0, 0.25)'
+            backgroundColor: 'color-mix(in srgb, var(--warning-color) 8%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--warning-color) 25%, transparent)'
           }}>
             <div style={{ 
               display: 'flex', 
@@ -16188,7 +16188,7 @@ const DashboardTiles = {
               gap: '0.5rem', 
               marginBottom: '0.75rem',
               fontWeight: 600,
-              color: '#ff9800'
+              color: 'var(--warning-color)'
             }}>
               <AlertTriangle size={18} />
               <span>Schedule Conflicts Detected</span>
@@ -16201,14 +16201,14 @@ const DashboardTiles = {
             }}>
               <strong>{totalConflicts} day{totalConflicts !== 1 ? 's' : ''}</strong> have overlapping schedules. 
               Exclusive schedules win first; two or more blend-enabled schedules blend; otherwise highest priority wins, with end time used only as a tie-breaker. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
-              Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
+              Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
             </p>
             <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ 
                 padding: '0.25rem 0.5rem', 
                 borderRadius: '4px',
-                backgroundColor: 'rgba(255, 215, 0, 0.2)',
-                border: '1px solid rgba(255, 215, 0, 0.5)',
+                backgroundColor: 'color-mix(in srgb, var(--warning-color) 20%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--warning-color) 50%, transparent)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '4px'
@@ -16238,15 +16238,15 @@ const DashboardTiles = {
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
                       padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
                       cursor: 'pointer', border: 'none', transition: 'all 0.2s',
-                      background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
-                      color: '#ef4444'
+                      background: 'linear-gradient(135deg, color-mix(in srgb, var(--error-color) 15%, transparent), color-mix(in srgb, var(--warning-color) 15%, transparent))',
+                      color: 'color-mix(in srgb, var(--error-color) 88%, #000)'
                     }}
                   >
                     <GitCompare size={14} />
                     Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
                     {highCount > 0 && (
                       <span style={{
-                        background: '#ef4444', color: '#fff', fontSize: '0.65rem',
+                        background: 'var(--error-btn)', color: '#fff', fontSize: '0.65rem',
                         padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700
                       }}>
                         {highCount}
@@ -16257,7 +16257,7 @@ const DashboardTiles = {
                   <span style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
                     padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
-                    color: '#10b981'
+                    color: 'var(--success-color)'
                   }}>
                     <CheckCircle size={14} /> All Conflicts Resolved
                   </span>
@@ -16439,14 +16439,14 @@ const DashboardTiles = {
                       gap: '4px',
                       padding: '2px 6px',
                       borderRadius: '4px',
-                      backgroundColor: 'rgba(139, 92, 246, 0.15)',
-                      border: '1px solid rgba(139, 92, 246, 0.5)',
+                      backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)',
+                      border: '1px solid color-mix(in srgb, var(--nx-sec-library) 50%, transparent)',
                       cursor: 'help',
                       zIndex: 1
                     }}>
-                    <Shuffle size={12} style={{ color: '#8b5cf6' }} />
-                    {dayData.hasExclusive && <Lock size={10} style={{ color: '#8b5cf6', opacity: 0.7 }} />}
-                    <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#8b5cf6' }}>{dayData.blendScheds.length}{dayData.hasExclusive ? '+1' : ''}</span>
+                    <Shuffle size={12} style={{ color: 'var(--nx-sec-library)' }} />
+                    {dayData.hasExclusive && <Lock size={10} style={{ color: 'var(--nx-sec-library)', opacity: 0.7 }} />}
+                    <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--nx-sec-library)' }}>{dayData.blendScheds.length}{dayData.hasExclusive ? '+1' : ''}</span>
                   </div>
                 )}
                 
@@ -16465,13 +16465,13 @@ const DashboardTiles = {
                       gap: '4px',
                       padding: '2px 6px',
                       borderRadius: '4px',
-                      backgroundColor: dayData.exclusiveHasTimeRange ? 'rgba(20, 184, 166, 0.1)' : 'rgba(20, 184, 166, 0.15)',
-                      border: dayData.exclusiveHasTimeRange ? '1px dashed rgba(20, 184, 166, 0.5)' : '1px solid rgba(20, 184, 166, 0.5)',
+                      backgroundColor: dayData.exclusiveHasTimeRange ? 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)',
+                      border: dayData.exclusiveHasTimeRange ? '1px dashed color-mix(in srgb, var(--nx-sec-connect) 50%, transparent)' : '1px solid color-mix(in srgb, var(--nx-sec-connect) 50%, transparent)',
                       cursor: 'help',
                       zIndex: 1
                     }}>
-                    <Lock size={12} style={{ color: '#14B8A6' }} />
-                    {dayData.exclusiveHasTimeRange && <Clock size={10} style={{ color: '#14B8A6', opacity: 0.7 }} />}
+                    <Lock size={12} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' }} />
+                    {dayData.exclusiveHasTimeRange && <Clock size={10} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', opacity: 0.7 }} />}
                   </div>
                 )}
                 
@@ -16490,13 +16490,13 @@ const DashboardTiles = {
                       gap: '4px',
                       padding: '2px 6px',
                       borderRadius: '4px',
-                      backgroundColor: 'rgba(255, 152, 0, 0.15)',
-                      border: '1px solid rgba(255, 152, 0, 0.5)',
+                      backgroundColor: 'color-mix(in srgb, var(--warning-color) 15%, transparent)',
+                      border: '1px solid color-mix(in srgb, var(--warning-color) 50%, transparent)',
                       cursor: 'help',
                       zIndex: 1
                     }}>
-                    <AlertTriangle size={12} style={{ color: '#ff9800' }} />
-                    <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#ff9800' }}>{dayData.hasExclusive ? dayData.exclusiveScheds?.length : schedArray.length}</span>
+                    <AlertTriangle size={12} style={{ color: 'var(--warning-color)' }} />
+                    <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--warning-color)' }}>{dayData.hasExclusive ? dayData.exclusiveScheds?.length : schedArray.length}</span>
                   </div>
                 )}
                 
@@ -16507,7 +16507,7 @@ const DashboardTiles = {
                   fontSize: '0.95rem', 
                   fontWeight: isToday ? 700 : 600,
                   color: isToday ? 'var(--button-bg)' : (inMonth ? 'var(--text-color)' : 'var(--text-muted)'),
-                  backgroundColor: isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent',
+                  backgroundColor: isToday ? (darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)') : 'transparent',
                   padding: isToday ? '4px 8px' : '0',
                   borderRadius: isToday ? '12px' : '0',
                   minWidth: isToday ? '28px' : 'auto',
@@ -16637,7 +16637,7 @@ const DashboardTiles = {
                         alignItems: 'center',
                         gap: '3px'
                       }}>
-                        {hasSamePriorityConflict && <AlertTriangle size={10} style={{ flexShrink: 0, color: chipText === '#fff' ? '#ffeb3b' : '#b45309' }} />}
+                        {hasSamePriorityConflict && <AlertTriangle size={10} style={{ flexShrink: 0, color: chipText === '#fff' ? 'var(--warning-color)' : '#b45309' }} />}
                         {isExclusive && !hasSamePriorityConflict && <Lock size={10} style={{ flexShrink: 0, opacity: isTimeRestrictedExclusive ? 0.7 : 1 }} />}
                         {isExclusive && exclusiveTimeRange && (
                           <span style={{ fontSize: '0.55rem', opacity: 0.8, flexShrink: 0 }}>({exclusiveTimeRange})</span>
@@ -16750,7 +16750,7 @@ const DashboardTiles = {
                 height: 16, 
                 border: '2px solid var(--button-bg)',
                 borderRadius: 3,
-                backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)'
+                backgroundColor: darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)'
               }} />
               <span>Today</span>
             </div>
@@ -16758,12 +16758,12 @@ const DashboardTiles = {
               <div style={{
                 width: 16,
                 height: 16,
-                border: '2px solid #ff9800',
+                border: '2px solid var(--warning-color)',
                 borderRadius: 3,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: '#ff9800'
+                color: 'var(--warning-color)'
               }}><AlertTriangle size={10} /></div>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>Schedule Conflict (<Crown size={12} /> = Active)</span>
             </div>
@@ -16954,20 +16954,20 @@ const DashboardTiles = {
               marginBottom: '1rem',
               padding: '1rem',
               borderRadius: '8px',
-              backgroundColor: 'rgba(255, 152, 0, 0.08)',
-              border: '1px solid rgba(255, 152, 0, 0.25)'
+              backgroundColor: 'color-mix(in srgb, var(--warning-color) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--warning-color) 25%, transparent)'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: '#ff9800' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: 'var(--warning-color)' }}>
                 <AlertTriangle size={18} />
                 <span>Schedule Conflicts Detected</span>
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{totalYearConflicts} day{totalYearConflicts !== 1 ? 's' : ''}</strong> across {calendarYear} have overlapping schedules.
                 Exclusive schedules win first; two or more blend-enabled schedules blend; otherwise highest priority wins, with end time used only as a tie-breaker. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
-                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
+                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'color-mix(in srgb, var(--warning-color) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--warning-color) 50%, transparent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <Crown size={12} /> = Active
                 </span>
                 <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.1)', opacity: 0.6 }}>
@@ -16983,14 +16983,14 @@ const DashboardTiles = {
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
                       padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
                       cursor: 'pointer', border: 'none', transition: 'all 0.2s',
-                      background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
-                      color: '#ef4444'
+                      background: 'linear-gradient(135deg, color-mix(in srgb, var(--error-color) 15%, transparent), color-mix(in srgb, var(--warning-color) 15%, transparent))',
+                      color: 'color-mix(in srgb, var(--error-color) 88%, #000)'
                     }}
                   >
                     <GitCompare size={14} />
                     Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
                     {highCount > 0 && (
-                      <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                      <span style={{ background: 'var(--error-btn)', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
                         {highCount}
                       </span>
                     )}
@@ -16999,7 +16999,7 @@ const DashboardTiles = {
                   <span style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
                     padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
-                    color: '#10b981'
+                    color: 'var(--success-color)'
                   }}>
                     <CheckCircle size={14} /> All Conflicts Resolved
                   </span>
@@ -17026,7 +17026,7 @@ const DashboardTiles = {
                   background: 'var(--card-bg)',
                   transition: 'all 0.2s ease',
                   cursor: 'pointer',
-                  boxShadow: isCurrentMonth ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none',
+                  boxShadow: isCurrentMonth ? '0 0 12px color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)' : 'none',
                   overflow: 'hidden',
                   minWidth: 0
                 }}
@@ -17062,7 +17062,7 @@ const DashboardTiles = {
                       <span
                         title={`${entry.conflictDays} day${entry.conflictDays > 1 ? 's' : ''} with schedule conflicts`}
                         style={{
-                          color: '#ff9800',
+                          color: 'var(--warning-color)',
                           cursor: 'help',
                           display: 'inline-flex',
                           alignItems: 'center'
@@ -17292,7 +17292,7 @@ const DashboardTiles = {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                  Schedule Name <span style={{ color: '#dc3545' }}>*</span>
+                  Schedule Name <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                 </label>
                 <input
                   className="nx-input"
@@ -17312,7 +17312,7 @@ const DashboardTiles = {
               
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                  Schedule Type <span style={{ color: '#dc3545' }}>*</span>
+                  Schedule Type <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                 </label>
                 <select
                   className="nx-select"
@@ -17336,7 +17336,7 @@ const DashboardTiles = {
               {scheduleForm.type !== 'monthly' && scheduleForm.type !== 'yearly' && (
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                    Start Date & Time <span style={{ color: '#dc3545' }}>*</span>
+                    Start Date & Time <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                   </label>
                   <input
                     className="nx-input"
@@ -17372,7 +17372,7 @@ const DashboardTiles = {
               {scheduleForm.type === 'monthly' && (
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                    Active Months <span style={{ color: '#dc3545' }}>*</span>
+                    Active Months <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
                     {['January','February','March','April','May','June','July','August','September','October','November','December'].map((name, i) => {
@@ -17410,10 +17410,10 @@ const DashboardTiles = {
                     })}
                   </div>
                   {selectedMonths.length === 0 && (
-                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem' }}>Please select at least one month</p>
+                    <p style={{ fontSize: '0.85rem', color: 'color-mix(in srgb, var(--error-color) 81%, #000)', marginTop: '0.5rem' }}>Please select at least one month</p>
                   )}
                   {selectedMonths.length > 0 && (
-                    <p style={{ fontSize: '0.85rem', color: '#28a745', marginTop: '0.5rem' }}>
+                    <p style={{ fontSize: '0.85rem', color: 'color-mix(in srgb, var(--success-color) 76%, #000)', marginTop: '0.5rem' }}>
                       Active during: {selectedMonths.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1]).join(', ')}
                     </p>
                   )}
@@ -17493,7 +17493,7 @@ const DashboardTiles = {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                    Start Time <span style={{ color: '#dc3545' }}>*</span>
+                    Start Time <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                   </label>
                   <input
                     type="time"
@@ -17539,11 +17539,11 @@ const DashboardTiles = {
               <div style={{ 
                 marginTop: '1rem', 
                 padding: '0.75rem 1rem', 
-                backgroundColor: timeRange.start ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)', 
+                backgroundColor: timeRange.start ? 'color-mix(in srgb, var(--success-color) 10%, transparent)' : 'color-mix(in srgb, var(--error-color) 10%, transparent)', 
                 borderRadius: '6px',
-                border: '1px solid ' + (timeRange.start ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
+                border: '1px solid ' + (timeRange.start ? 'color-mix(in srgb, var(--success-color) 30%, transparent)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)')
               }}>
-                <p style={{ fontSize: '0.9rem', color: timeRange.start ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <p style={{ fontSize: '0.9rem', color: timeRange.start ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'color-mix(in srgb, var(--error-color) 81%, #000)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ display: 'flex', alignItems: 'center' }}>{timeRange.start ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
                   {timeRange.start
                     ? `Schedule will run daily ${timeRange.end ? `from ${timeRange.start} to ${timeRange.end}` : `at ${timeRange.start}`}`
@@ -17562,7 +17562,7 @@ const DashboardTiles = {
               </div>
               
               <label style={{ display: 'block', marginBottom: '1rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                Select Days of the Week <span style={{ color: '#dc3545' }}>*</span>
+                Select Days of the Week <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
               </label>
               
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
@@ -17611,11 +17611,11 @@ const DashboardTiles = {
               <div style={{ 
                 marginTop: '1rem', 
                 padding: '0.75rem 1rem', 
-                backgroundColor: weekDays.length > 0 ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)', 
+                backgroundColor: weekDays.length > 0 ? 'color-mix(in srgb, var(--success-color) 10%, transparent)' : 'color-mix(in srgb, var(--error-color) 10%, transparent)', 
                 borderRadius: '6px',
-                border: '1px solid ' + (weekDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
+                border: '1px solid ' + (weekDays.length > 0 ? 'color-mix(in srgb, var(--success-color) 30%, transparent)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)')
               }}>
-                <p style={{ fontSize: '0.9rem', color: weekDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <p style={{ fontSize: '0.9rem', color: weekDays.length > 0 ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'color-mix(in srgb, var(--error-color) 81%, #000)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ display: 'flex', alignItems: 'center' }}>{weekDays.length > 0 ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
                   {weekDays.length > 0
                     ? `Schedule will run every ${weekDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ')}`
@@ -17669,7 +17669,7 @@ const DashboardTiles = {
                   </div>
                 </div>
                 {timeRange.start && timeRange.end && (
-                  <p style={{ fontSize: '0.85rem', color: '#28a745', marginTop: '0.5rem' }}>
+                  <p style={{ fontSize: '0.85rem', color: 'color-mix(in srgb, var(--success-color) 76%, #000)', marginTop: '0.5rem' }}>
                     <Check size={14} style={{marginRight: '0.25rem', verticalAlign: 'middle'}} />
                     Schedule active from {timeRange.start} to {timeRange.end}
                   </p>
@@ -17688,7 +17688,7 @@ const DashboardTiles = {
               
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                 <label style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                  Select Days of the Month <span style={{ color: '#dc3545' }}>*</span>
+                  Select Days of the Month <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                 </label>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
@@ -17697,7 +17697,7 @@ const DashboardTiles = {
                     style={{
                       padding: '0.5rem 1rem',
                       fontSize: '0.85rem',
-                      backgroundColor: '#28a745',
+                      backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                       color: 'white',
                       border: 'none',
                       borderRadius: '6px',
@@ -17778,11 +17778,11 @@ const DashboardTiles = {
               <div style={{
                 marginTop: '1rem',
                 padding: '0.75rem 1rem',
-                backgroundColor: monthDays.length > 0 ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)',
+                backgroundColor: monthDays.length > 0 ? 'color-mix(in srgb, var(--success-color) 10%, transparent)' : 'color-mix(in srgb, var(--error-color) 10%, transparent)',
                 borderRadius: '6px',
-                border: '1px solid ' + (monthDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
+                border: '1px solid ' + (monthDays.length > 0 ? 'color-mix(in srgb, var(--success-color) 30%, transparent)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)')
               }}>
-                <p style={{ fontSize: '0.9rem', color: monthDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <p style={{ fontSize: '0.9rem', color: monthDays.length > 0 ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'color-mix(in srgb, var(--error-color) 81%, #000)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ display: 'flex', alignItems: 'center' }}>{monthDays.length > 0 ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
                   {monthDays.length > 0
                     ? `Schedule will run on day${monthDays.length > 1 ? 's' : ''} ${monthDays.join(', ')} of the selected months`
@@ -17838,11 +17838,11 @@ const DashboardTiles = {
               <div style={{ 
                 marginBottom: '1.5rem', 
                 padding: '1.25rem', 
-                backgroundColor: 'rgba(16, 185, 129, 0.08)', 
+                backgroundColor: 'color-mix(in srgb, var(--success-color) 8%, transparent)', 
                 borderRadius: '10px', 
-                border: '2px solid #10b981'
+                border: '2px solid var(--success-color)'
               }}>
-                <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '1rem', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '1rem', fontWeight: 600, color: 'var(--success-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <ListChecks size={20} /> Yearly (Seasonal) Schedule — How It Works
                 </h4>
                 <ul style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
@@ -17860,11 +17860,11 @@ const DashboardTiles = {
               <div style={{ 
                 marginBottom: '1.5rem', 
                 padding: '1.25rem', 
-                backgroundColor: 'rgba(245, 158, 11, 0.08)', 
+                backgroundColor: 'color-mix(in srgb, var(--warning-color) 8%, transparent)', 
                 borderRadius: '10px', 
-                border: '2px solid #f59e0b'
+                border: '2px solid var(--warning-color)'
               }}>
-                <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600, color: 'var(--warning-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <PartyPopper size={20} /> Holiday — API Auto-Update
                 </h4>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 1rem 0', lineHeight: '1.5' }}>
@@ -17875,7 +17875,7 @@ const DashboardTiles = {
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                      Holiday Name <span style={{ color: '#dc3545' }}>*</span>
+                      Holiday Name <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                     </label>
                     <input
                       className="nx-input"
@@ -17893,7 +17893,7 @@ const DashboardTiles = {
                   </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                      Country <span style={{ color: '#dc3545' }}>*</span>
+                      Country <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                     </label>
                     <input
                       className="nx-input"
@@ -17920,7 +17920,7 @@ const DashboardTiles = {
                     padding: '0.75rem 1.25rem',
                     fontSize: '0.95rem',
                     fontWeight: 600,
-                    backgroundColor: '#f59e0b',
+                    backgroundColor: 'var(--warning-color)',
                     color: 'white',
                     border: 'none',
                     borderRadius: '8px',
@@ -17945,7 +17945,7 @@ const DashboardTiles = {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', marginBottom: '1.5rem' }}>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                      Category <span style={{ color: '#dc3545' }}>*</span>
+                      Category <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                     </label>
                     <select
                       className="nx-select"
@@ -17969,7 +17969,7 @@ const DashboardTiles = {
                 
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                    Playback Mode <span style={{ color: '#dc3545' }}>*</span>
+                    Playback Mode <span style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>*</span>
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                     <label style={{
@@ -18092,7 +18092,7 @@ const DashboardTiles = {
                         className="button"
                         style={{ 
                           padding: '0.75rem 1.25rem',
-                          backgroundColor: '#dc3545',
+                          backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)',
                           whiteSpace: 'nowrap'
                         }}
                       >
@@ -18160,7 +18160,7 @@ const DashboardTiles = {
                     textAlign: 'center', 
                     fontWeight: 'bold',
                     fontSize: '1.1rem',
-                    color: scheduleForm.priority >= 8 ? '#ef4444' : scheduleForm.priority >= 5 ? '#14B8A6' : '#6b7280'
+                    color: scheduleForm.priority >= 8 ? 'color-mix(in srgb, var(--error-color) 88%, #000)' : scheduleForm.priority >= 5 ? 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' : '#6b7280'
                   }}>
                     {scheduleForm.priority}
                   </span>
@@ -18180,7 +18180,7 @@ const DashboardTiles = {
                       onChange={(e) => setScheduleForm({...scheduleForm, exclusive: e.target.checked, blend_enabled: e.target.checked ? false : scheduleForm.blend_enabled})}
                       style={{ width: 'auto' }}
                     />
-                    <Lock size={16} style={{ color: '#14B8A6' }} />
+                    <Lock size={16} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' }} />
                     Exclusive
                   </label>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
@@ -18196,7 +18196,7 @@ const DashboardTiles = {
                       disabled={scheduleForm.exclusive}
                       style={{ width: 'auto' }}
                     />
-                    <Shuffle size={16} style={{ color: scheduleForm.exclusive ? '#999' : '#a855f7' }} />
+                    <Shuffle size={16} style={{ color: scheduleForm.exclusive ? '#999' : 'var(--nx-sec-library)' }} />
                     Blend Mode
                   </label>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
@@ -18270,7 +18270,7 @@ const DashboardTiles = {
                       onClick={() => setScheduleForm({...scheduleForm, color: ''})}
                       style={{ 
                         padding: '0.75rem 1rem', 
-                        backgroundColor: '#dc3545',
+                        backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)',
                         borderRadius: '6px',
                         fontWeight: 600
                       }}
@@ -18382,8 +18382,8 @@ const DashboardTiles = {
                   width: '100%',
                   padding: '0.75rem',
                   fontSize: '0.95rem',
-                  backgroundColor: '#28a745',
-                  borderColor: '#28a745'
+                  backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
+                  borderColor: 'color-mix(in srgb, var(--success-color) 76%, #000)'
                 }}
               >
                 Create Simple Schedule →
@@ -18422,9 +18422,9 @@ const DashboardTiles = {
 
           <div style={{
             padding: '1rem',
-            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
             borderRadius: '8px',
-            border: '1px solid rgba(59, 130, 246, 0.3)'
+            border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)'
           }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
               <span style={{ fontSize: '1.5rem' }}><Lightbulb size={24} /></span>
@@ -18660,11 +18660,11 @@ const DashboardTiles = {
                 <div 
                   key={schedule.id} 
                   style={{ 
-                    border: isCurrentlyActive ? '2px solid #4CAF50' : '1px solid var(--border-color)', 
+                    border: isCurrentlyActive ? '2px solid color-mix(in srgb, var(--success-color) 84%, #000)' : '1px solid var(--border-color)', 
                     padding: '0.75rem 1rem', 
                     borderRadius: '0.375rem', 
-                    backgroundColor: isCurrentlyActive ? 'rgba(76, 175, 80, 0.1)' : 'var(--card-bg)',
-                    boxShadow: isCurrentlyActive ? '0 2px 8px rgba(76, 175, 80, 0.15)' : 'none',
+                    backgroundColor: isCurrentlyActive ? 'color-mix(in srgb, var(--success-color) 10%, transparent)' : 'var(--card-bg)',
+                    boxShadow: isCurrentlyActive ? '0 2px 8px color-mix(in srgb, var(--success-color) 15%, transparent)' : 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
@@ -18680,7 +18680,7 @@ const DashboardTiles = {
                         </h4>
                         {isCurrentlyActive && (
                           <span style={{
-                            backgroundColor: '#4CAF50',
+                            backgroundColor: 'color-mix(in srgb, var(--success-color) 84%, #000)',
                             color: 'white',
                             padding: '0.15rem 0.5rem',
                             borderRadius: '0.75rem',
@@ -18694,7 +18694,7 @@ const DashboardTiles = {
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', fontSize: '0.75rem' }}>
                         <span style={{
-                          backgroundColor: scheduleMode === 'sequence' ? '#3b82f6' : '#6366f1',
+                          backgroundColor: scheduleMode === 'sequence' ? 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' : 'color-mix(in srgb, var(--nx-sec-library) 93%, #000)',
                           color: 'white',
                           padding: '0.15rem 0.5rem',
                           borderRadius: '0.25rem',
@@ -18712,11 +18712,11 @@ const DashboardTiles = {
                           <Calendar size={14} /> {schedule.type.charAt(0).toUpperCase() + schedule.type.slice(1)}
                         </span>
                         {recurrenceText && (
-                          <span style={{ color: '#3b82f6', fontWeight: 500 }}>{recurrenceText}</span>
+                          <span style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)', fontWeight: 500 }}>{recurrenceText}</span>
                         )}
                         {schedule.blend_enabled && (
                           <span style={{
-                            backgroundColor: '#a855f7',
+                            backgroundColor: 'var(--nx-sec-library)',
                             color: 'white',
                             padding: '0.15rem 0.5rem',
                             borderRadius: '0.25rem',
@@ -18730,7 +18730,7 @@ const DashboardTiles = {
                         )}
                         {schedule.exclusive && (
                           <span style={{
-                            backgroundColor: '#14B8A6',
+                            backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)',
                             color: 'white',
                             padding: '0.15rem 0.5rem',
                             borderRadius: '0.25rem',
@@ -18749,7 +18749,7 @@ const DashboardTiles = {
                             return (
                               <span 
                                 style={{
-                                  backgroundColor: '#f59e0b',
+                                  backgroundColor: 'var(--warning-color)',
                                   color: 'white',
                                   padding: '0.15rem 0.5rem',
                                   borderRadius: '0.25rem',
@@ -18769,7 +18769,7 @@ const DashboardTiles = {
                         })()}
                         {(schedule.priority ?? 5) !== 5 && (
                           <span style={{
-                            backgroundColor: (schedule.priority ?? 5) >= 8 ? '#ef4444' : (schedule.priority ?? 5) >= 5 ? '#14B8A6' : '#6b7280',
+                            backgroundColor: (schedule.priority ?? 5) >= 8 ? 'color-mix(in srgb, var(--error-color) 88%, #000)' : (schedule.priority ?? 5) >= 5 ? 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' : '#6b7280',
                             color: 'white',
                             padding: '0.15rem 0.5rem',
                             borderRadius: '0.25rem',
@@ -18818,7 +18818,7 @@ const DashboardTiles = {
                       onClick={() => handleDeleteSchedule(schedule.id)}
                       style={{
                         padding: '0.5rem 0.75rem',
-                        backgroundColor: '#dc3545',
+                        backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)',
                         color: 'white',
                         border: 'none',
                         borderRadius: '0.25rem',
@@ -18842,11 +18842,11 @@ const DashboardTiles = {
               <div 
                 key={schedule.id} 
                 style={{ 
-                  border: isCurrentlyActive ? '2px solid #4CAF50' : '1px solid var(--border-color)', 
+                  border: isCurrentlyActive ? '2px solid color-mix(in srgb, var(--success-color) 84%, #000)' : '1px solid var(--border-color)', 
                   padding: '1.25rem', 
                   borderRadius: '0.5rem', 
-                  backgroundColor: isCurrentlyActive ? 'rgba(76, 175, 80, 0.1)' : 'var(--card-bg)',
-                  boxShadow: isCurrentlyActive ? '0 4px 12px rgba(76, 175, 80, 0.2)' : '0 2px 4px rgba(0,0,0,0.1)',
+                  backgroundColor: isCurrentlyActive ? 'color-mix(in srgb, var(--success-color) 10%, transparent)' : 'var(--card-bg)',
+                  boxShadow: isCurrentlyActive ? '0 4px 12px color-mix(in srgb, var(--success-color) 20%, transparent)' : '0 2px 4px rgba(0,0,0,0.1)',
                   position: 'relative',
                   transition: 'all 0.2s ease'
                 }}
@@ -18855,7 +18855,7 @@ const DashboardTiles = {
                 <div style={{ position: 'absolute', top: '1rem', right: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {isCurrentlyActive && (
                     <span style={{
-                      backgroundColor: '#4CAF50',
+                      backgroundColor: 'color-mix(in srgb, var(--success-color) 84%, #000)',
                       color: 'white',
                       padding: '0.35rem 0.75rem',
                       borderRadius: '1rem',
@@ -18894,7 +18894,7 @@ const DashboardTiles = {
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     {/* Mode Badge */}
                     <span style={{
-                      backgroundColor: scheduleMode === 'sequence' ? '#3b82f6' : '#6366f1',
+                      backgroundColor: scheduleMode === 'sequence' ? 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' : 'color-mix(in srgb, var(--nx-sec-library) 93%, #000)',
                       color: 'white',
                       padding: '0.25rem 0.75rem',
                       borderRadius: '0.25rem',
@@ -18940,7 +18940,7 @@ const DashboardTiles = {
                     {/* Playback Mode Badge */}
                     {!schedule.playlist && (
                       <span style={{
-                        backgroundColor: '#14B8A6',
+                        backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)',
                         color: 'white',
                         padding: '0.25rem 0.75rem',
                         borderRadius: '0.25rem',
@@ -18952,7 +18952,7 @@ const DashboardTiles = {
                     )}
                     {schedule.playlist && (
                       <span style={{
-                        backgroundColor: '#8b5cf6',
+                        backgroundColor: 'var(--nx-sec-library)',
                         color: 'white',
                         padding: '0.25rem 0.75rem',
                         borderRadius: '0.25rem',
@@ -18966,7 +18966,7 @@ const DashboardTiles = {
                     {/* Blend Mode Badge */}
                     {schedule.blend_enabled && (
                       <span style={{
-                        backgroundColor: '#a855f7',
+                        backgroundColor: 'var(--nx-sec-library)',
                         color: 'white',
                         padding: '0.25rem 0.75rem',
                         borderRadius: '0.25rem',
@@ -18983,7 +18983,7 @@ const DashboardTiles = {
                     {/* Exclusive Badge */}
                     {schedule.exclusive && (
                       <span style={{
-                        backgroundColor: '#14B8A6',
+                        backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)',
                         color: 'white',
                         padding: '0.25rem 0.75rem',
                         borderRadius: '0.25rem',
@@ -19004,7 +19004,7 @@ const DashboardTiles = {
                         return (
                           <span 
                             style={{
-                              backgroundColor: '#f59e0b',
+                              backgroundColor: 'var(--warning-color)',
                               color: 'white',
                               padding: '0.25rem 0.75rem',
                               borderRadius: '0.25rem',
@@ -19027,7 +19027,7 @@ const DashboardTiles = {
                     {/* Priority Badge (only show if not default) */}
                     {(schedule.priority ?? 5) !== 5 && (
                       <span style={{
-                        backgroundColor: (schedule.priority ?? 5) >= 8 ? '#ef4444' : (schedule.priority ?? 5) >= 5 ? '#14B8A6' : '#6b7280',
+                        backgroundColor: (schedule.priority ?? 5) >= 8 ? 'color-mix(in srgb, var(--error-color) 88%, #000)' : (schedule.priority ?? 5) >= 5 ? 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' : '#6b7280',
                         color: 'white',
                         padding: '0.25rem 0.75rem',
                         borderRadius: '0.25rem',
@@ -19056,7 +19056,7 @@ const DashboardTiles = {
                       <div>End: {new Date(schedule.end_date).toLocaleDateString()} {new Date(schedule.end_date).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
                     )}
                     {recurrenceText && (
-                      <div style={{ color: '#3b82f6', fontWeight: 500, marginTop: '0.25rem' }}>{recurrenceText}</div>
+                      <div style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)', fontWeight: 500, marginTop: '0.25rem' }}>{recurrenceText}</div>
                     )}
                   </div>
 
@@ -19130,7 +19130,7 @@ const DashboardTiles = {
                     onClick={() => handleDeleteSchedule(schedule.id)}
                     style={{
                       padding: '0.6rem 1rem',
-                      backgroundColor: '#dc3545',
+                      backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)',
                       color: 'white',
                       border: 'none',
                       borderRadius: '0.25rem',
@@ -19187,7 +19187,7 @@ const DashboardTiles = {
                   <>
                     {renderSectionHeader(
                       'Currently Running',
-                      <Play size={18} style={{ color: '#22c55e' }} />,
+                      <Play size={18} style={{ color: 'color-mix(in srgb, var(--success-color) 91%, #000)' }} />,
                       runningSchedules.length,
                       'rgba(34, 197, 94, 0.1)',
                       '#22c55e'
@@ -19201,7 +19201,7 @@ const DashboardTiles = {
                   <>
                     {renderSectionHeader(
                       'Enabled Schedules',
-                      <CheckCircle size={18} style={{ color: '#3b82f6' }} />,
+                      <CheckCircle size={18} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }} />,
                       enabledSchedules.length,
                       'rgba(59, 130, 246, 0.1)',
                       '#3b82f6'
@@ -21409,7 +21409,7 @@ const DashboardTiles = {
               marginBottom: '1rem'
             }}>
               <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', margin: 0 }}>
-                            <Lightbulb size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Tip:</strong> Playback mode (Random/Sequential) is controlled by individual schedules, not categories.
+                            <Lightbulb size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)'}} /> <strong>Tip:</strong> Playback mode (Random/Sequential) is controlled by individual schedules, not categories.
               </p>
             </div>
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
@@ -21427,7 +21427,7 @@ const DashboardTiles = {
               <button
                 type="submit"
                 className="button"
-                style={{ backgroundColor: '#28a745', borderColor: '#28a745' }}
+                style={{ backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)', borderColor: 'color-mix(in srgb, var(--success-color) 76%, #000)' }}
               >
                 Create Category
               </button>
@@ -21879,13 +21879,13 @@ const DashboardTiles = {
       <div className="card nx-plex-card">
         {/* Primary: Stable Token */}
         <div className="nx-conn-method-lead">
-          <Star size={18} style={{ color: '#14B8A6' }} /> Stable Token
+          <Star size={18} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 76%, #000)' }} /> Stable Token
           <span className="nx-chip recommend">Recommended</span>
         </div>
         <p className="nx-conn-method-sub">
           A non-expiring token stored securely — resilient to password changes. Best for local and Windows installs.
           {' '}Current status:{' '}
-          <strong style={{ color: stableTokenStatus.has_stable_token ? 'var(--success-color)' : '#f59e0b' }}>
+          <strong style={{ color: stableTokenStatus.has_stable_token ? 'var(--success-color)' : 'var(--warning-color)' }}>
             {stableTokenStatus.has_stable_token ? 'Configured' : 'Not configured'}
           </strong>
           {stableTokenStatus.provider ? ` (${stableTokenStatus.provider})` : ''}
@@ -22101,7 +22101,7 @@ const DashboardTiles = {
       {plexStatus === 'Connected' && (
         <div className="card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-            <Film size={20} style={{ color: '#f6685e' }} />
+            <Film size={20} style={{ color: 'var(--error-color)' }} />
             <h2 style={{ margin: 0 }}>Cinema Trailers</h2>
           </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: 0, marginBottom: '1rem' }}>
@@ -22175,7 +22175,7 @@ const DashboardTiles = {
                             <span style={{
                               fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase',
                               padding: '0.1rem 0.35rem', borderRadius: '4px',
-                              backgroundColor: 'rgba(229, 160, 13, 0.18)', color: '#e5a00d'
+                              backgroundColor: 'color-mix(in srgb, var(--warning-color) 18%, transparent)', color: 'color-mix(in srgb, var(--warning-color) 88%, #000)'
                             }}>Plex Pass</span>
                           )}
                         </div>
@@ -25884,9 +25884,9 @@ const DashboardTiles = {
             style={{
               padding: '0.75rem 1.5rem',
               border: 'none',
-              borderBottom: nexupUpcomingTab === 'shows' ? '3px solid #17a2b8' : '3px solid transparent',
+              borderBottom: nexupUpcomingTab === 'shows' ? '3px solid color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' : '3px solid transparent',
               backgroundColor: 'transparent',
-              color: nexupUpcomingTab === 'shows' ? '#17a2b8' : 'var(--text-color)',
+              color: nexupUpcomingTab === 'shows' ? 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' : 'var(--text-color)',
               cursor: 'pointer',
               fontSize: '0.95rem',
               fontWeight: nexupUpcomingTab === 'shows' ? 600 : 400,
@@ -25903,9 +25903,9 @@ const DashboardTiles = {
             style={{
               padding: '0.75rem 1.5rem',
               border: 'none',
-              borderBottom: nexupUpcomingTab === 'calendar' ? '3px solid #6f42c1' : '3px solid transparent',
+              borderBottom: nexupUpcomingTab === 'calendar' ? '3px solid color-mix(in srgb, var(--nx-sec-library) 77%, #000)' : '3px solid transparent',
               backgroundColor: 'transparent',
-              color: nexupUpcomingTab === 'calendar' ? '#6f42c1' : 'var(--text-color)',
+              color: nexupUpcomingTab === 'calendar' ? 'color-mix(in srgb, var(--nx-sec-library) 77%, #000)' : 'var(--text-color)',
               cursor: 'pointer',
               fontSize: '0.95rem',
               fontWeight: nexupUpcomingTab === 'calendar' ? 600 : 400,
@@ -25960,9 +25960,9 @@ const DashboardTiles = {
                       flexWrap: 'wrap',
                       gap: '1rem',
                       padding: '1rem',
-                      backgroundColor: movie.excluded_from_list ? 'rgba(220, 53, 69, 0.1)' : 'var(--bg-color)',
+                      backgroundColor: movie.excluded_from_list ? 'color-mix(in srgb, var(--error-color) 10%, transparent)' : 'var(--bg-color)',
                       borderRadius: '8px',
-                      border: `1px solid ${movie.excluded_from_list ? '#dc3545' : movie.downloaded ? '#28a745' : 'var(--border-color)'}`,
+                      border: `1px solid ${movie.excluded_from_list ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : movie.downloaded ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--border-color)'}`,
                       opacity: movie.excluded_from_list ? 0.7 : 1
                     }}
                   >
@@ -25993,7 +25993,7 @@ const DashboardTiles = {
                               borderRadius: '4px',
                               fontSize: '0.8rem',
                               fontWeight: 600,
-                              backgroundColor: '#28a745',
+                              backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                               color: '#fff',
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -26007,7 +26007,7 @@ const DashboardTiles = {
                               padding: '0.2rem 0.5rem',
                               borderRadius: '4px',
                               fontSize: '0.8rem',
-                              backgroundColor: movie.days_until_release <= 7 ? '#28a745' : movie.days_until_release <= 30 ? '#ffc107' : '#6c757d',
+                              backgroundColor: movie.days_until_release <= 7 ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : movie.days_until_release <= 30 ? 'var(--warning-color)' : '#6c757d',
                               color: movie.days_until_release <= 30 ? '#000' : '#fff'
                             }}>
                               {movie.days_until_release <= 0 ? 'Released!' : `In ${movie.days_until_release} days`}
@@ -26025,7 +26025,7 @@ const DashboardTiles = {
                         <span style={{ 
                           padding: '0.5rem 1rem',
                           borderRadius: '4px',
-                          backgroundColor: '#28a745',
+                          backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                           color: 'white',
                           fontSize: '0.85rem',
                           fontWeight: 500
@@ -26038,7 +26038,7 @@ const DashboardTiles = {
                           disabled={downloadingTrailerId === movie.radarr_id || nexupLoading}
                           className="button"
                           style={{ 
-                            backgroundColor: downloadingTrailerId === movie.radarr_id ? '#6c757d' : '#007bff',
+                            backgroundColor: downloadingTrailerId === movie.radarr_id ? '#6c757d' : 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)',
                             minWidth: '140px',
                             display: 'flex',
                             alignItems: 'center',
@@ -26071,8 +26071,8 @@ const DashboardTiles = {
                           onClick={() => handleToggleExclude(movie, 'movie')}
                           className="button"
                           style={{ 
-                            backgroundColor: movie.excluded_from_list ? '#dc3545' : 'transparent',
-                            border: '1px solid ' + (movie.excluded_from_list ? '#dc3545' : 'var(--border-color)'),
+                            backgroundColor: movie.excluded_from_list ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : 'transparent',
+                            border: '1px solid ' + (movie.excluded_from_list ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : 'var(--border-color)'),
                             color: movie.excluded_from_list ? 'white' : 'var(--text-color)',
                             fontSize: '0.8rem',
                             padding: '0.35rem 0.75rem',
@@ -26142,13 +26142,13 @@ const DashboardTiles = {
               {/* Legend */}
               <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: '#007bff', display: 'inline-block' }} /> Movie
+                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)', display: 'inline-block' }} /> Movie
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: '#17a2b8', display: 'inline-block' }} /> TV Show
+                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', display: 'inline-block' }} /> TV Show
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: '#28a745', display: 'inline-block' }} /> Available Now
+                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)', display: 'inline-block' }} /> Available Now
                 </span>
               </div>
 
@@ -26170,13 +26170,13 @@ const DashboardTiles = {
                     <div key={day} style={{
                       minHeight: '90px',
                       padding: '0.3rem',
-                      backgroundColor: isToday ? 'rgba(111, 66, 193, 0.08)' : 'var(--bg-color)',
+                      backgroundColor: isToday ? 'color-mix(in srgb, var(--nx-sec-library) 8%, transparent)' : 'var(--bg-color)',
                       borderRadius: '4px',
-                      border: isToday ? '2px solid #6f42c1' : '1px solid var(--border-color)',
+                      border: isToday ? '2px solid color-mix(in srgb, var(--nx-sec-library) 77%, #000)' : '1px solid var(--border-color)',
                       display: 'flex',
                       flexDirection: 'column'
                     }}>
-                      <div style={{ fontSize: '0.8rem', fontWeight: isToday ? 700 : 400, color: isToday ? '#6f42c1' : 'var(--text-secondary)', marginBottom: '0.2rem' }}>{day}</div>
+                      <div style={{ fontSize: '0.8rem', fontWeight: isToday ? 700 : 400, color: isToday ? 'color-mix(in srgb, var(--nx-sec-library) 77%, #000)' : 'var(--text-secondary)', marginBottom: '0.2rem' }}>{day}</div>
                       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                         {dayItems.slice(0, 3).map((item, j) => {
                           const isMovie = item._type === 'movie';
@@ -26249,9 +26249,9 @@ const DashboardTiles = {
                       display: 'flex',
                       gap: '1rem',
                       padding: '1rem',
-                      backgroundColor: show.excluded_from_list ? 'rgba(220, 53, 69, 0.1)' : 'var(--bg-color)',
+                      backgroundColor: show.excluded_from_list ? 'color-mix(in srgb, var(--error-color) 10%, transparent)' : 'var(--bg-color)',
                       borderRadius: '8px',
-                      border: `1px solid ${show.excluded_from_list ? '#dc3545' : show.downloaded ? '#28a745' : 'var(--border-color)'}`,
+                      border: `1px solid ${show.excluded_from_list ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : show.downloaded ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--border-color)'}`,
                       opacity: show.excluded_from_list ? 0.7 : 1
                     }}
                   >
@@ -26273,7 +26273,7 @@ const DashboardTiles = {
                         )}
                       </h3>
                       {show.season_number && (
-                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#17a2b8', fontWeight: 500 }}>
+                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', fontWeight: 500 }}>
                           Season {show.season_number} {show.release_type === 'season_premiere' ? '(Season Premiere)' : show.release_type === 'series_premiere' ? '(Series Premiere)' : ''}
                         </p>
                       )}
@@ -26287,7 +26287,7 @@ const DashboardTiles = {
                               borderRadius: '4px',
                               fontSize: '0.8rem',
                               fontWeight: 600,
-                              backgroundColor: '#28a745',
+                              backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                               color: '#fff',
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -26301,7 +26301,7 @@ const DashboardTiles = {
                               padding: '0.2rem 0.5rem',
                               borderRadius: '4px',
                               fontSize: '0.8rem',
-                              backgroundColor: show.days_until_release <= 7 ? '#28a745' : show.days_until_release <= 30 ? '#ffc107' : '#6c757d',
+                              backgroundColor: show.days_until_release <= 7 ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : show.days_until_release <= 30 ? 'var(--warning-color)' : '#6c757d',
                               color: show.days_until_release <= 30 ? '#000' : '#fff'
                             }}>
                               {show.days_until_release <= 0 ? 'Released!' : `In ${show.days_until_release} days`}
@@ -26320,7 +26320,7 @@ const DashboardTiles = {
                         <span style={{ 
                           padding: '0.5rem 1rem',
                           borderRadius: '4px',
-                          backgroundColor: '#28a745',
+                          backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                           color: 'white',
                           fontSize: '0.85rem',
                           fontWeight: 500
@@ -26333,7 +26333,7 @@ const DashboardTiles = {
                           disabled={downloadingTrailerId === `tv_${show.sonarr_id}_${show.season_number}` || nexupLoading}
                           className="button"
                           style={{ 
-                            backgroundColor: downloadingTrailerId === `tv_${show.sonarr_id}_${show.season_number}` ? '#6c757d' : '#17a2b8',
+                            backgroundColor: downloadingTrailerId === `tv_${show.sonarr_id}_${show.season_number}` ? '#6c757d' : 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)',
                             minWidth: '140px',
                             display: 'flex',
                             alignItems: 'center',
@@ -26356,8 +26356,8 @@ const DashboardTiles = {
                           onClick={() => handleToggleExclude(show, 'show')}
                           className="button"
                           style={{ 
-                            backgroundColor: show.excluded_from_list ? '#dc3545' : 'transparent',
-                            border: '1px solid ' + (show.excluded_from_list ? '#dc3545' : 'var(--border-color)'),
+                            backgroundColor: show.excluded_from_list ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : 'transparent',
+                            border: '1px solid ' + (show.excluded_from_list ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : 'var(--border-color)'),
                             color: show.excluded_from_list ? 'white' : 'var(--text-color)',
                             fontSize: '0.8rem',
                             padding: '0.35rem 0.75rem',
@@ -26523,11 +26523,11 @@ const DashboardTiles = {
               {nexupSyncProgress.phase === 'init' ? (
                 <Loader2 size={16} className="spin" style={{ color: 'var(--accent-color)' }} />
               ) : nexupSyncProgress.phase === 'error' ? (
-                <XCircle size={16} style={{ color: '#dc3545' }} />
+                <XCircle size={16} style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }} />
               ) : (
-                <CheckCircle size={16} style={{ color: '#28a745' }} />
+                <CheckCircle size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
               )}
-              <span style={{ color: nexupSyncProgress.phase === 'error' ? '#dc3545' : nexupSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+              <span style={{ color: nexupSyncProgress.phase === 'error' ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : nexupSyncProgress.phase === 'done' ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--text-secondary)' }}>
                 {nexupSyncProgress.status}
               </span>
             </div>
@@ -26578,7 +26578,7 @@ const DashboardTiles = {
                 onClick={handleConnectRadarr}
                 disabled={nexupLoading || !nexupRadarrUrl || !nexupRadarrApiKey}
                 className="button"
-                style={{ backgroundColor: '#ffc230' }}
+                style={{ backgroundColor: 'var(--warning-color)' }}
               >
                 {nexupLoading ? 'Connecting...' : 'Connect to Radarr'}
               </button>
@@ -26592,13 +26592,13 @@ const DashboardTiles = {
               gap: '1rem', 
               padding: '1rem', 
               backgroundColor: 'var(--card-bg)', 
-              border: '1px solid #ffc230', 
+              border: '1px solid var(--warning-color)', 
               borderRadius: '8px',
               marginBottom: '1rem'
             }}>
               <CheckCircle size={32} color="#ffc230" />
               <div style={{ flex: 1 }}>
-                <strong style={{ color: '#ffc230' }}>Connected to Radarr</strong>
+                <strong style={{ color: 'var(--warning-color)' }}>Connected to Radarr</strong>
                 <p style={{ margin: 0, fontSize: '0.9rem', color: '#666' }}>
                   {nexupSettings.radarr_url}
                 </p>
@@ -26613,7 +26613,7 @@ const DashboardTiles = {
                     />
                     <span className="nx-rockerswitch-slider"></span>
                   </label>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: nexupSettings.enabled ? '#ffc230' : '#666' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: nexupSettings.enabled ? 'var(--warning-color)' : '#666' }}>
                     {nexupSettings.enabled ? 'On' : 'Off'}
                   </span>
                 </div>
@@ -26641,7 +26641,7 @@ const DashboardTiles = {
                 onClick={handleSyncNexup}
                 disabled={nexupLoading || syncProgress}
                 className="button"
-                style={{ backgroundColor: '#ffc230', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                style={{ backgroundColor: 'var(--warning-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                 title="Automatically download trailers for upcoming movies"
               >
                 {syncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Auto-Download</>}
@@ -26674,17 +26674,17 @@ const DashboardTiles = {
                 color: 'var(--text-secondary)'
               }}>
                 {syncProgress.phase === 'done' ? (
-                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                  <CheckCircle size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
                 ) : syncProgress.phase === 'generating' ? (
-                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} />
                 ) : (
-                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'var(--warning-color)' }} />
                 )}
-                <span style={{ color: syncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                <span style={{ color: syncProgress.phase === 'done' ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--text-secondary)' }}>
                   {syncProgress.status}
                 </span>
                 {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
-                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#ffc230' }}>
+                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: 'var(--warning-color)' }}>
                     {syncProgress.downloaded || 0}/{syncProgress.total}
                   </span>
                 )}
@@ -26702,7 +26702,7 @@ const DashboardTiles = {
                 fontSize: '0.9rem',
                 color: 'var(--text-secondary)'
               }}>
-                <Loader2 size={16} className="spin" style={{ color: '#007bff' }} /> 
+                <Loader2 size={16} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)' }} /> 
                 <span><strong>{downloadProgress.title}</strong> - {downloadProgress.status}</span>
               </div>
             )}
@@ -26774,13 +26774,13 @@ const DashboardTiles = {
               gap: '1rem', 
               padding: '1rem', 
               backgroundColor: 'var(--card-bg)', 
-              border: '1px solid #17a2b8', 
+              border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', 
               borderRadius: '8px',
               marginBottom: '1rem'
             }}>
               <CheckCircle size={32} color="#17a2b8" />
               <div style={{ flex: 1 }}>
-                <strong style={{ color: '#17a2b8' }}>Connected to Sonarr</strong>
+                <strong style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }}>Connected to Sonarr</strong>
                 <p style={{ margin: 0, fontSize: '0.9rem', color: '#666' }}>
                   {nexupSettings.sonarr_url}
                 </p>
@@ -26795,7 +26795,7 @@ const DashboardTiles = {
                     />
                     <span className="nx-rockerswitch-slider"></span>
                   </label>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: nexupSettings.sonarr_enabled ? '#17a2b8' : '#666' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: nexupSettings.sonarr_enabled ? 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' : '#666' }}>
                     {nexupSettings.sonarr_enabled ? 'On' : 'Off'}
                   </span>
                 </div>
@@ -26823,7 +26823,7 @@ const DashboardTiles = {
                 onClick={handleSyncSonarr}
                 disabled={nexupLoading || tvSyncProgress}
                 className="button"
-                style={{ backgroundColor: '#17a2b8', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                style={{ backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                 title="Automatically download trailers for upcoming TV shows"
               >
                 {tvSyncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Auto-Download</>}
@@ -26856,17 +26856,17 @@ const DashboardTiles = {
                 color: 'var(--text-secondary)'
               }}>
                 {tvSyncProgress.phase === 'done' ? (
-                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                  <CheckCircle size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
                 ) : tvSyncProgress.phase === 'generating' ? (
-                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'var(--warning-color)' }} />
                 ) : (
-                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} />
                 )}
-                <span style={{ color: tvSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                <span style={{ color: tvSyncProgress.phase === 'done' ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--text-secondary)' }}>
                   {tvSyncProgress.status}
                 </span>
                 {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
-                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#17a2b8' }}>
+                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }}>
                     {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
                   </span>
                 )}
@@ -26939,7 +26939,7 @@ const DashboardTiles = {
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Video size={24} style={{ color: '#ffc230' }} /> Movie Trailers
+            <Video size={24} style={{ color: 'var(--warning-color)' }} /> Movie Trailers
           </div>
           <span style={{ fontSize: '1rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
             {nexupTrailers.length} trailer{nexupTrailers.length !== 1 ? 's' : ''}
@@ -26964,7 +26964,7 @@ const DashboardTiles = {
             <button
               onClick={() => setActiveTab('nexup')}
               className="button"
-              style={{ backgroundColor: '#ffc230' }}
+              style={{ backgroundColor: 'var(--warning-color)' }}
             >
               Go to Connections
             </button>
@@ -26978,7 +26978,7 @@ const DashboardTiles = {
               onClick={handleSyncNexup}
               disabled={nexupLoading || syncProgress}
               className="button"
-              style={{ backgroundColor: '#ffc230', color: '#1a1a1a' }}
+              style={{ backgroundColor: 'var(--warning-color)', color: '#1a1a1a' }}
             >
               {syncProgress ? <><Loader2 size={16} className="spin" />Syncing...</> : 'Download Trailers'}
             </button>
@@ -26994,17 +26994,17 @@ const DashboardTiles = {
                 fontSize: '0.9rem'
               }}>
                 {syncProgress.phase === 'done' ? (
-                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                  <CheckCircle size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
                 ) : syncProgress.phase === 'generating' ? (
-                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} />
                 ) : (
-                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'var(--warning-color)' }} />
                 )}
-                <span style={{ color: syncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                <span style={{ color: syncProgress.phase === 'done' ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--text-secondary)' }}>
                   {syncProgress.status}
                 </span>
                 {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
-                  <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: '#ffc230' }}>
+                  <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: 'var(--warning-color)' }}>
                     {syncProgress.downloaded || 0}/{syncProgress.total}
                   </span>
                 )}
@@ -27026,7 +27026,7 @@ const DashboardTiles = {
                 onClick={handleSyncNexup}
                 disabled={nexupLoading || syncProgress}
                 className="button"
-                style={{ backgroundColor: '#ffc230', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                style={{ backgroundColor: 'var(--warning-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
                 {syncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Sync</>}
               </button>
@@ -27050,17 +27050,17 @@ const DashboardTiles = {
                 fontSize: '0.9rem'
               }}>
                 {syncProgress.phase === 'done' ? (
-                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                  <CheckCircle size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
                 ) : syncProgress.phase === 'generating' ? (
-                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} />
                 ) : (
-                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'var(--warning-color)' }} />
                 )}
-                <span style={{ color: syncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                <span style={{ color: syncProgress.phase === 'done' ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--text-secondary)' }}>
                   {syncProgress.status}
                 </span>
                 {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
-                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#ffc230' }}>
+                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: 'var(--warning-color)' }}>
                     {syncProgress.downloaded || 0}/{syncProgress.total}
                   </span>
                 )}
@@ -27075,7 +27075,7 @@ const DashboardTiles = {
                     style={{ 
                       backgroundColor: 'var(--bg-color)',
                       borderRadius: '8px',
-                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)'}`,
                       opacity: trailer.is_enabled ? 1 : 0.7,
                       overflow: 'hidden'
                     }}
@@ -27140,7 +27140,7 @@ const DashboardTiles = {
                           className="button"
                           style={{
                             flex: 1,
-                            backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                            backgroundColor: trailer.is_enabled ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : '#6c757d',
                             padding: '0.35rem 0.5rem',
                             fontSize: '0.8rem'
                           }}
@@ -27150,7 +27150,7 @@ const DashboardTiles = {
                         <button
                           onClick={() => handleDeleteTrailer(trailer.id, trailer.title)}
                           className="button"
-                          style={{ backgroundColor: '#dc3545', padding: '0.35rem 0.5rem' }}
+                          style={{ backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)', padding: '0.35rem 0.5rem' }}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -27168,7 +27168,7 @@ const DashboardTiles = {
                       padding: '0.75rem 1rem',
                       backgroundColor: 'var(--bg-color)',
                       borderRadius: '8px',
-                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)'}`,
                       opacity: trailer.is_enabled ? 1 : 0.7
                     }}
                   >
@@ -27188,7 +27188,7 @@ const DashboardTiles = {
                         <button
                           onClick={() => setPlayingTrailer({ type: 'movie', trailer })}
                           className="button"
-                          style={{ backgroundColor: '#ffc230', padding: '0.4rem 0.75rem' }}
+                          style={{ backgroundColor: 'var(--warning-color)', padding: '0.4rem 0.75rem' }}
                           title="Play trailer"
                         >
                           <Play size={14} />
@@ -27198,7 +27198,7 @@ const DashboardTiles = {
                         onClick={() => handleToggleTrailer(trailer.id)}
                         className="button"
                         style={{ 
-                          backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                          backgroundColor: trailer.is_enabled ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : '#6c757d',
                           padding: '0.4rem 0.75rem',
                           fontSize: '0.85rem'
                         }}
@@ -27208,7 +27208,7 @@ const DashboardTiles = {
                       <button
                         onClick={() => handleDeleteTrailer(trailer.id, trailer.title)}
                         className="button"
-                        style={{ backgroundColor: '#dc3545', padding: '0.4rem 0.75rem' }}
+                        style={{ backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)', padding: '0.4rem 0.75rem' }}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -27225,7 +27225,7 @@ const DashboardTiles = {
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Tv size={24} style={{ color: '#17a2b8' }} /> TV Show Trailers
+            <Tv size={24} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} /> TV Show Trailers
           </div>
           <span style={{ fontSize: '1rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
             {nexupTVTrailers.length} trailer{nexupTVTrailers.length !== 1 ? 's' : ''}
@@ -27273,17 +27273,17 @@ const DashboardTiles = {
                 fontSize: '0.9rem'
               }}>
                 {tvSyncProgress.phase === 'done' ? (
-                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                  <CheckCircle size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
                 ) : tvSyncProgress.phase === 'generating' ? (
-                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'var(--warning-color)' }} />
                 ) : (
-                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} />
                 )}
-                <span style={{ color: tvSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                <span style={{ color: tvSyncProgress.phase === 'done' ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--text-secondary)' }}>
                   {tvSyncProgress.status}
                 </span>
                 {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
-                  <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: '#17a2b8' }}>
+                  <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }}>
                     {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
                   </span>
                 )}
@@ -27305,7 +27305,7 @@ const DashboardTiles = {
                 onClick={handleSyncSonarr}
                 disabled={nexupLoading || tvSyncProgress}
                 className="button"
-                style={{ backgroundColor: '#17a2b8', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                style={{ backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
                 {tvSyncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Sync</>}
               </button>
@@ -27322,17 +27322,17 @@ const DashboardTiles = {
                 fontSize: '0.9rem'
               }}>
                 {tvSyncProgress.phase === 'done' ? (
-                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                  <CheckCircle size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
                 ) : tvSyncProgress.phase === 'generating' ? (
-                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'var(--warning-color)' }} />
                 ) : (
-                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                  <Loader2 size={16} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} />
                 )}
-                <span style={{ color: tvSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                <span style={{ color: tvSyncProgress.phase === 'done' ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--text-secondary)' }}>
                   {tvSyncProgress.status}
                 </span>
                 {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
-                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#17a2b8' }}>
+                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }}>
                     {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
                   </span>
                 )}
@@ -27347,7 +27347,7 @@ const DashboardTiles = {
                     style={{ 
                       backgroundColor: 'var(--bg-color)',
                       borderRadius: '8px',
-                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)'}`,
                       opacity: trailer.is_enabled ? 1 : 0.7,
                       overflow: 'hidden'
                     }}
@@ -27412,7 +27412,7 @@ const DashboardTiles = {
                           className="button"
                           style={{ 
                             flex: 1,
-                            backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                            backgroundColor: trailer.is_enabled ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : '#6c757d',
                             padding: '0.35rem 0.5rem',
                             fontSize: '0.8rem'
                           }}
@@ -27422,7 +27422,7 @@ const DashboardTiles = {
                         <button
                           onClick={() => handleDeleteTVTrailer(trailer.id)}
                           className="button"
-                          style={{ backgroundColor: '#dc3545', padding: '0.35rem 0.5rem' }}
+                          style={{ backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)', padding: '0.35rem 0.5rem' }}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -27440,7 +27440,7 @@ const DashboardTiles = {
                       padding: '0.75rem 1rem',
                       backgroundColor: 'var(--bg-color)',
                       borderRadius: '8px',
-                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)'}`,
                       opacity: trailer.is_enabled ? 1 : 0.7
                     }}
                   >
@@ -27460,7 +27460,7 @@ const DashboardTiles = {
                         <button
                           onClick={() => setPlayingTrailer({ type: 'tv', trailer })}
                           className="button"
-                          style={{ backgroundColor: '#17a2b8', padding: '0.4rem 0.75rem' }}
+                          style={{ backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', padding: '0.4rem 0.75rem' }}
                           title="Play trailer"
                         >
                           <Play size={14} />
@@ -27470,7 +27470,7 @@ const DashboardTiles = {
                         onClick={() => handleToggleTVTrailer(trailer.id)}
                         className="button"
                         style={{ 
-                          backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                          backgroundColor: trailer.is_enabled ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : '#6c757d',
                           padding: '0.4rem 0.75rem',
                           fontSize: '0.85rem'
                         }}
@@ -27480,7 +27480,7 @@ const DashboardTiles = {
                       <button
                         onClick={() => handleDeleteTVTrailer(trailer.id)}
                         className="button"
-                        style={{ backgroundColor: '#dc3545', padding: '0.4rem 0.75rem' }}
+                        style={{ backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)', padding: '0.4rem 0.75rem' }}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -27567,9 +27567,9 @@ const DashboardTiles = {
             {/* PRIMARY METHOD: PO-Token Provider */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem',
-              backgroundColor: potoken.status?.usable ? 'rgba(40, 167, 69, 0.1)' : 'rgba(255, 193, 7, 0.1)',
+              backgroundColor: potoken.status?.usable ? 'color-mix(in srgb, var(--success-color) 10%, transparent)' : 'color-mix(in srgb, var(--warning-color) 10%, transparent)',
               borderRadius: '8px',
-              border: `1px solid ${potoken.status?.usable ? '#28a745' : '#ffc107'}`
+              border: `1px solid ${potoken.status?.usable ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--warning-color)'}`
             }}>
               <div style={{ width: '50px', display: 'flex', justifyContent: 'center' }}>
                 {potoken.loading
@@ -27601,16 +27601,16 @@ const DashboardTiles = {
                     <span key={chip.label} style={{
                       display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
                       fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: '999px',
-                      backgroundColor: chip.on ? 'rgba(40,167,69,0.15)' : 'rgba(255,255,255,0.06)',
-                      color: chip.on ? '#28a745' : '#999',
-                      border: `1px solid ${chip.on ? '#28a745' : 'var(--border-color)'}`
+                      backgroundColor: chip.on ? 'color-mix(in srgb, var(--success-color) 15%, transparent)' : 'rgba(255,255,255,0.06)',
+                      color: chip.on ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : '#999',
+                      border: `1px solid ${chip.on ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--border-color)'}`
                     }}>
                       {chip.on ? <CheckCircle size={12} /> : <AlertTriangle size={12} />} {chip.label}
                     </span>
                   ))}
                 </div>
                 {potoken.testResult && (
-                  <div style={{ fontSize: '0.78rem', marginTop: '0.4rem', color: potoken.testResult.ok ? '#28a745' : 'var(--error-color)' }}>
+                  <div style={{ fontSize: '0.78rem', marginTop: '0.4rem', color: potoken.testResult.ok ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--error-color)' }}>
                     {potoken.testResult.ok
                       ? `✓ Minted a fresh token${potoken.testResult.token_preview ? ' (' + potoken.testResult.token_preview + ')' : ''}.`
                       : `✗ ${potoken.testResult.reason || 'Test failed.'}`}
@@ -27648,9 +27648,9 @@ const DashboardTiles = {
               </summary>
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem', marginTop: '0.75rem',
-                backgroundColor: youtubeSetup.status?.configured ? 'rgba(40, 167, 69, 0.1)' : 'rgba(255, 255, 255, 0.04)',
+                backgroundColor: youtubeSetup.status?.configured ? 'color-mix(in srgb, var(--success-color) 10%, transparent)' : 'rgba(255, 255, 255, 0.04)',
                 borderRadius: '8px',
-                border: `1px solid ${youtubeSetup.status?.configured ? '#28a745' : 'var(--border-color)'}`
+                border: `1px solid ${youtubeSetup.status?.configured ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--border-color)'}`
               }}>
                 <div style={{ width: '40px', display: 'flex', justifyContent: 'center' }}>
                   {youtubeSetup.loading
@@ -27691,13 +27691,13 @@ const DashboardTiles = {
             {/* How it works */}
             <div style={{
               marginTop: '1rem', padding: '1rem',
-              backgroundColor: 'rgba(23, 162, 184, 0.1)', borderRadius: '8px',
-              border: '1px solid #17a2b8', fontSize: '0.9rem'
+              backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', borderRadius: '8px',
+              border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', fontSize: '0.9rem'
             }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
                 <Info size={20} color="#17a2b8" style={{ flexShrink: 0, marginTop: '2px' }} />
                 <div style={{ color: '#aaa', lineHeight: '1.5' }}>
-                  <strong style={{ color: '#17a2b8' }}>How this works.</strong> The PO-token provider answers
+                  <strong style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }}>How this works.</strong> The PO-token provider answers
                   YouTube's "confirm you're not a bot" challenge automatically, so trailers download without
                   signing in. If a specific trailer still fails it's usually age-restricted (use Advanced
                   sign-in above), region-locked, or your IP is briefly rate-limited.
@@ -27754,7 +27754,7 @@ const DashboardTiles = {
                         setNexupSettings(prev => ({ ...prev, storage_path: path }));
                         handleUpdateNexupSettings({ storage_path: path });
                       }}
-                      style={{ background: 'none', border: 'none', padding: 0, color: '#00a8e8', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+                      style={{ background: 'none', border: 'none', padding: 0, color: 'color-mix(in srgb, var(--nx-sec-connect) 89%, #000)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
                     >
                       use this
                     </button>
@@ -27766,10 +27766,10 @@ const DashboardTiles = {
                   && nexupMappingWarningDismissedFor !== nexupSettings.storage_path && (
                   <div style={{
                     marginTop: '0.6rem', padding: '0.75rem', borderRadius: '6px',
-                    border: '1px solid #f59e0b', background: 'rgba(245, 158, 11, 0.1)',
+                    border: '1px solid var(--warning-color)', background: 'color-mix(in srgb, var(--warning-color) 10%, transparent)',
                     display: 'flex', gap: '0.5rem', alignItems: 'flex-start'
                   }}>
-                    <AlertTriangle size={16} style={{ color: '#f59e0b', flexShrink: 0, marginTop: '0.1rem' }} />
+                    <AlertTriangle size={16} style={{ color: 'var(--warning-color)', flexShrink: 0, marginTop: '0.1rem' }} />
                     <div style={{ fontSize: '0.82rem', lineHeight: 1.5 }}>
                       This folder isn't inside your prerolls path and no Path Mapping covers it — your media
                       server likely can't see files stored here, so trailer sequences may fail to play even
@@ -27783,7 +27783,7 @@ const DashboardTiles = {
                               setNexupSettings(prev => ({ ...prev, storage_path: path }));
                               handleUpdateNexupSettings({ storage_path: path });
                             }}
-                            style={{ background: 'none', border: 'none', padding: 0, color: '#00a8e8', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+                            style={{ background: 'none', border: 'none', padding: 0, color: 'color-mix(in srgb, var(--nx-sec-connect) 89%, #000)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
                           >
                             Move to recommended folder
                           </button>
@@ -27791,7 +27791,7 @@ const DashboardTiles = {
                         <button
                           type="button"
                           onClick={() => setActiveTab('settings/paths')}
-                          style={{ background: 'none', border: 'none', padding: 0, color: '#00a8e8', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+                          style={{ background: 'none', border: 'none', padding: 0, color: 'color-mix(in srgb, var(--nx-sec-connect) 89%, #000)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
                         >
                           Add a Path Mapping instead
                         </button>
@@ -27828,7 +27828,7 @@ const DashboardTiles = {
                     <div style={{ 
                       height: '100%', 
                       width: `${Math.min(nexupStorage.percentage_used, 100)}%`,
-                      backgroundColor: nexupStorage.percentage_used > 90 ? '#dc3545' : nexupStorage.percentage_used > 70 ? '#ffc107' : '#28a745',
+                      backgroundColor: nexupStorage.percentage_used > 90 ? 'color-mix(in srgb, var(--error-color) 81%, #000)' : nexupStorage.percentage_used > 70 ? 'var(--warning-color)' : 'color-mix(in srgb, var(--success-color) 76%, #000)',
                       borderRadius: '5px',
                       transition: 'width 0.3s'
                     }} />
@@ -28063,11 +28063,11 @@ const DashboardTiles = {
 
                 <div style={{ 
                   padding: '0.75rem', 
-                  backgroundColor: 'rgba(255, 193, 7, 0.1)', 
+                  backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)', 
                   borderRadius: '8px',
-                  border: '1px solid rgba(255, 193, 7, 0.3)'
+                  border: '1px solid color-mix(in srgb, var(--warning-color) 30%, transparent)'
                 }}>
-                  <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0 }}>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--warning-color)', margin: 0 }}>
                     <strong>Tip:</strong> If YouTube blocks your downloads, try increasing the delay 
                     or wait a few hours before trying again. Using authenticated cookies can help prevent blocks.
                   </p>
@@ -28119,24 +28119,24 @@ const DashboardTiles = {
                     </button>
                   </div>
                   {tmdbKeyTest && !tmdbKeyTest.testing && (
-                    <p style={{ fontSize: '0.85rem', marginTop: '0.4rem', color: tmdbKeyTest.valid ? '#28a745' : '#dc3545', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <p style={{ fontSize: '0.85rem', marginTop: '0.4rem', color: tmdbKeyTest.valid ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'color-mix(in srgb, var(--error-color) 81%, #000)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                       {tmdbKeyTest.valid ? <CheckCircle size={14} /> : <XCircle size={14} />}
                       {tmdbKeyTest.message}
                     </p>
                   )}
                   <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
-                    Get a free API key from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" style={{ color: '#00d4ff' }}>themoviedb.org</a>
+                    Get a free API key from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--nx-sec-connect)' }}>themoviedb.org</a>
                   </p>
                 </div>
                 
                 {nexupSettings.tmdb_api_key && (
                   <div style={{ 
                     padding: '0.75rem', 
-                    backgroundColor: 'rgba(40, 167, 69, 0.1)', 
+                    backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)', 
                     borderRadius: '8px',
-                    border: '1px solid rgba(40, 167, 69, 0.3)'
+                    border: '1px solid color-mix(in srgb, var(--success-color) 30%, transparent)'
                   }}>
-                    <p style={{ fontSize: '0.85rem', color: '#28a745', margin: 0 }}>
+                    <p style={{ fontSize: '0.85rem', color: 'color-mix(in srgb, var(--success-color) 76%, #000)', margin: 0 }}>
                       Custom TMDB API key configured
                     </p>
                   </div>
@@ -28144,11 +28144,11 @@ const DashboardTiles = {
                 
                 <div style={{ 
                   padding: '0.75rem', 
-                  backgroundColor: 'rgba(255, 193, 7, 0.1)', 
+                  backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)', 
                   borderRadius: '8px',
-                  border: '1px solid rgba(255, 193, 7, 0.3)'
+                  border: '1px solid color-mix(in srgb, var(--warning-color) 30%, transparent)'
                 }}>
-                  <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0 }}>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--warning-color)', margin: 0 }}>
                     <strong>Note:</strong> TMDB is used to find trailer URLs for movies and TV shows. 
                     If trailers aren't being found, try adding your own API key. For TV shows, IMDB is used as a fallback.
                   </p>
@@ -28169,7 +28169,7 @@ const DashboardTiles = {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <Film size={16} style={{ color: '#ffc230' }} /> Include Unmonitored Movies
+                      <Film size={16} style={{ color: 'var(--warning-color)' }} /> Include Unmonitored Movies
                     </div>
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                       Show movies that are not monitored in Radarr
@@ -28189,7 +28189,7 @@ const DashboardTiles = {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <Tv size={16} style={{ color: '#17a2b8' }} /> Include Unmonitored TV Shows
+                      <Tv size={16} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} /> Include Unmonitored TV Shows
                     </div>
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                       Show TV shows that are not monitored in Sonarr
@@ -28316,7 +28316,7 @@ const DashboardTiles = {
           <button
             onClick={() => setActiveTab('nexup')}
             className="button"
-            style={{ backgroundColor: '#ffc230' }}
+            style={{ backgroundColor: 'var(--warning-color)' }}
           >
             Go to Connections
           </button>
@@ -28356,9 +28356,9 @@ const DashboardTiles = {
                 style={{
                   padding: '0.75rem 1.25rem',
                   border: 'none',
-                  borderBottom: generatorTab === tab.id ? '3px solid #00d4ff' : '3px solid transparent',
+                  borderBottom: generatorTab === tab.id ? '3px solid var(--nx-sec-connect)' : '3px solid transparent',
                   backgroundColor: generatorTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                  color: generatorTab === tab.id ? '#00d4ff' : 'var(--text-color)',
+                  color: generatorTab === tab.id ? 'var(--nx-sec-connect)' : 'var(--text-color)',
                   cursor: 'pointer',
                   fontSize: '0.9rem',
                   fontWeight: generatorTab === tab.id ? 600 : 400,
@@ -28401,8 +28401,8 @@ const DashboardTiles = {
             {!ffmpegAvailable ? (
               <div style={{ 
                 padding: '1rem', 
-                backgroundColor: '#fff3cd', 
-                border: '1px solid #ffc107', 
+                backgroundColor: 'color-mix(in srgb, var(--warning-color) 20%, var(--text-color))', 
+                border: '1px solid var(--warning-color)', 
                 borderRadius: '8px',
                 marginBottom: '1rem'
               }}>
@@ -28449,7 +28449,7 @@ const DashboardTiles = {
                             position: 'absolute',
                             top: '8px',
                             right: '8px',
-                            color: '#00d4ff',
+                            color: 'var(--nx-sec-connect)',
                             display: 'inline-flex'
                           }}><CheckCircle size={16} /></span>
                         )}
@@ -28623,18 +28623,18 @@ const DashboardTiles = {
                   border: '1px solid rgba(255,255,255,0.08)'
                 }}>
                   <div style={{ marginBottom: '0.5rem' }}>
-                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Layers size={15} style={{ color: '#00d4ff' }} /> Custom Logo Overlay</strong>
+                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Layers size={15} style={{ color: 'var(--nx-sec-connect)' }} /> Custom Logo Overlay</strong>
                     <span style={{ fontSize: '0.8rem', color: '#888' }}>
                       Upload a logo to replace the server name text in the generated video
                     </span>
                     <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                      <Info size={12} style={{ flexShrink: 0, color: '#00d4ff' }} />
+                      <Info size={12} style={{ flexShrink: 0, color: 'var(--nx-sec-connect)' }} />
                       <span>For best results, use a landscape-oriented logo (e.g. 800×200 px). PNG with transparent background recommended.</span>
                     </div>
                   </div>
                   {dynamicPrerollSettings.customLogoFilename ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', flexWrap: 'wrap' }}>
-                      <Layers size={13} style={{ color: '#00d4ff' }} />
+                      <Layers size={13} style={{ color: 'var(--nx-sec-connect)' }} />
                       <span style={{ color: 'var(--text-color)' }}>Logo: <strong>{dynamicPrerollSettings.customLogoFilename}</strong></span>
                       <button
                         onClick={async () => {
@@ -28647,7 +28647,7 @@ const DashboardTiles = {
                           } catch (err) { showAlert('Failed to remove custom logo', 'error'); }
                         }}
                         className="button"
-                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b' }}
+                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: 'color-mix(in srgb, var(--error-color) 94%, var(--text-color))', border: '1px solid color-mix(in srgb, var(--error-color) 94%, var(--text-color))' }}
                       >
                         <X size={12} /> Remove
                       </button>
@@ -28935,7 +28935,7 @@ const DashboardTiles = {
                   disabled={dynamicPrerollGenerating || !dynamicPrerollSettings.server_name.trim()}
                   className="button"
                   style={{ 
-                    backgroundColor: dynamicPrerollGenerating ? '#666' : '#28a745',
+                    backgroundColor: dynamicPrerollGenerating ? '#666' : 'color-mix(in srgb, var(--success-color) 76%, #000)',
                     padding: '0.75rem 1.5rem',
                     fontSize: '1rem',
                     fontWeight: 'bold'
@@ -28973,7 +28973,7 @@ const DashboardTiles = {
                   }}
                 >
                   {generatedPrerollsCollapsed ? <ChevronRight size={20} /> : <ChevronDown size={20} />}
-                  <Film size={20} style={{ color: '#ffd700' }} />
+                  <Film size={20} style={{ color: 'var(--warning-color)' }} />
                   Your Generated Prerolls ({generatedPrerolls.length})
                 </h3>
                 {!generatedPrerollsCollapsed && (
@@ -29000,7 +29000,7 @@ const DashboardTiles = {
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: '200px' }}>
-                          <Sparkles size={20} style={{ color: '#ffd700', flexShrink: 0 }} />
+                          <Sparkles size={20} style={{ color: 'var(--warning-color)', flexShrink: 0 }} />
                           <div>
                             <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
                               {templateName}
@@ -29015,7 +29015,7 @@ const DashboardTiles = {
                             onClick={() => setPreviewingDynamicPreroll(preroll)}
                             className="button"
                             style={{ 
-                              backgroundColor: '#007bff', 
+                              backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)', 
                               display: 'flex', 
                               alignItems: 'center', 
                               gap: '0.25rem',
@@ -29030,7 +29030,7 @@ const DashboardTiles = {
                             onClick={() => handleDeleteSpecificPreroll(preroll.filename)}
                             className="button"
                             style={{ 
-                              backgroundColor: '#dc3545', 
+                              backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)', 
                               display: 'flex', 
                               alignItems: 'center', 
                               gap: '0.25rem',
@@ -29065,8 +29065,8 @@ const DashboardTiles = {
             {!ffmpegAvailable ? (
               <div style={{ 
                 padding: '1rem', 
-                backgroundColor: '#fff3cd', 
-                border: '1px solid #ffc107', 
+                backgroundColor: 'color-mix(in srgb, var(--warning-color) 20%, var(--text-color))', 
+                border: '1px solid var(--warning-color)', 
                 borderRadius: '8px',
                 marginBottom: '1rem'
               }}>
@@ -29304,10 +29304,10 @@ const DashboardTiles = {
                       type="checkbox"
                       checked={comingSoonListSettings.includeAudio}
                       onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, includeAudio: e.target.checked }))}
-                      style={{ width: '18px', height: '18px', cursor: 'pointer', marginTop: '2px', accentColor: '#00d4ff' }}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer', marginTop: '2px', accentColor: 'var(--nx-sec-connect)' }}
                     />
                     <div style={{ flex: 1 }}>
-                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Music size={15} style={{ color: '#00d4ff' }} /> Background Music</strong>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Music size={15} style={{ color: 'var(--nx-sec-connect)' }} /> Background Music</strong>
                       <span style={{ fontSize: '0.8rem', color: '#888' }}>
                         Adds ambient background music with auto fade in/out
                       </span>
@@ -29355,7 +29355,7 @@ const DashboardTiles = {
                   {comingSoonListSettings.customAudioFilename && (
                     <div style={{ marginTop: '0.6rem', marginLeft: '30px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', flexWrap: 'wrap' }}>
-                        <Music size={13} style={{ color: '#00d4ff' }} />
+                        <Music size={13} style={{ color: 'var(--nx-sec-connect)' }} />
                         <span style={{ color: 'var(--text-color)' }}>Custom: <strong>{comingSoonListSettings.customAudioFilename}</strong></span>
                         <button
                           onClick={async () => {
@@ -29368,7 +29368,7 @@ const DashboardTiles = {
                             } catch (err) { showAlert('Failed to remove custom audio', 'error'); }
                           }}
                           className="button"
-                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b' }}
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: 'color-mix(in srgb, var(--error-color) 94%, var(--text-color))', border: '1px solid color-mix(in srgb, var(--error-color) 94%, var(--text-color))' }}
                         >
                           <X size={12} /> Remove
                         </button>
@@ -29385,7 +29385,7 @@ const DashboardTiles = {
                   border: '1px solid rgba(255,255,255,0.08)'
                 }}>
                   <div style={{ marginBottom: '0.5rem' }}>
-                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Layers size={15} style={{ color: '#00d4ff' }} /> Custom Logo Overlay</strong>
+                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Layers size={15} style={{ color: 'var(--nx-sec-connect)' }} /> Custom Logo Overlay</strong>
                     <span style={{ fontSize: '0.8rem', color: '#888' }}>
                       {comingSoonListSettings.logoMode === 'right' 
                         ? 'Logo appears to the right of "Coming Soon To"'
@@ -29394,14 +29394,14 @@ const DashboardTiles = {
                         : 'Adds a faded, centered watermark logo behind the text'}
                     </span>
                     <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                      <Info size={12} style={{ flexShrink: 0, color: '#00d4ff' }} />
+                      <Info size={12} style={{ flexShrink: 0, color: 'var(--nx-sec-connect)' }} />
                       <span>For best results, use a landscape-oriented logo (e.g. 800×200 px). PNG with transparent background recommended.</span>
                     </div>
                   </div>
                   {comingSoonListSettings.customLogoFilename ? (
                     <>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                      <Layers size={13} style={{ color: '#00d4ff' }} />
+                      <Layers size={13} style={{ color: 'var(--nx-sec-connect)' }} />
                       <span style={{ color: 'var(--text-color)' }}>Logo: <strong>{comingSoonListSettings.customLogoFilename}</strong></span>
                       <button
                         onClick={async () => {
@@ -29414,7 +29414,7 @@ const DashboardTiles = {
                           } catch (err) { showAlert('Failed to remove custom logo', 'error'); }
                         }}
                         className="button"
-                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b' }}
+                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: 'color-mix(in srgb, var(--error-color) 94%, var(--text-color))', border: '1px solid color-mix(in srgb, var(--error-color) 94%, var(--text-color))' }}
                       >
                         <X size={12} /> Remove
                       </button>
@@ -29430,9 +29430,9 @@ const DashboardTiles = {
                             padding: '0.2rem 0.6rem',
                             fontSize: '0.75rem',
                             borderRadius: '20px',
-                            border: `2px solid ${comingSoonListSettings.logoMode === opt.value ? '#00d4ff' : 'rgba(255,255,255,0.15)'}`,
-                            backgroundColor: comingSoonListSettings.logoMode === opt.value ? 'rgba(0,212,255,0.15)' : 'transparent',
-                            color: comingSoonListSettings.logoMode === opt.value ? '#00d4ff' : '#888',
+                            border: `2px solid ${comingSoonListSettings.logoMode === opt.value ? 'var(--nx-sec-connect)' : 'rgba(255,255,255,0.15)'}`,
+                            backgroundColor: comingSoonListSettings.logoMode === opt.value ? 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)' : 'transparent',
+                            color: comingSoonListSettings.logoMode === opt.value ? 'var(--nx-sec-connect)' : '#888',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease'
                           }}
@@ -29483,7 +29483,7 @@ const DashboardTiles = {
                 }}>
                   <div>
                     <div style={{ marginBottom: '0.5rem' }}>
-                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><CheckCircle size={15} style={{ color: '#00d4ff' }} /> Available Now! Settings</strong>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><CheckCircle size={15} style={{ color: 'var(--nx-sec-connect)' }} /> Available Now! Settings</strong>
                       <span style={{ fontSize: '0.8rem', color: '#888' }}>
                         Control how "Available Now!" items appear on the Coming Soon list
                       </span>
@@ -29555,10 +29555,10 @@ const DashboardTiles = {
                       type="checkbox"
                       checked={comingSoonListSettings.autoRegen}
                       onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, autoRegen: e.target.checked }))}
-                      style={{ width: '18px', height: '18px', cursor: 'pointer', marginTop: '2px', accentColor: '#00d4ff' }}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer', marginTop: '2px', accentColor: 'var(--nx-sec-connect)' }}
                     />
                     <div style={{ flex: 1 }}>
-                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><RefreshCw size={15} style={{ color: '#00d4ff' }} /> Auto-regenerate on Sync</strong>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><RefreshCw size={15} style={{ color: 'var(--nx-sec-connect)' }} /> Auto-regenerate on Sync</strong>
                       <span style={{ fontSize: '0.8rem', color: '#888' }}>
                         Automatically regenerate when Radarr/Sonarr trailers sync
                       </span>
@@ -29782,7 +29782,7 @@ const DashboardTiles = {
                   disabled={comingSoonListGenerating}
                   className="button"
                   style={{ 
-                    backgroundColor: comingSoonListGenerating ? '#666' : '#28a745',
+                    backgroundColor: comingSoonListGenerating ? '#666' : 'color-mix(in srgb, var(--success-color) 76%, #000)',
                     padding: '0.75rem 1.5rem',
                     fontSize: '1rem',
                     fontWeight: 'bold'
@@ -29824,7 +29824,7 @@ const DashboardTiles = {
                   }}
                 >
                   {comingSoonListsCollapsed ? <ChevronRight size={20} /> : <ChevronDown size={20} />}
-                  <Film size={20} style={{ color: '#ffd700' }} />
+                  <Film size={20} style={{ color: 'var(--warning-color)' }} />
                   Your Generated Coming Soon Lists ({generatedComingSoonLists.length})
                 </h3>
                 
@@ -29846,7 +29846,7 @@ const DashboardTiles = {
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: '200px' }}>
-                          <Film size={20} style={{ color: '#ffd700', flexShrink: 0 }} />
+                          <Film size={20} style={{ color: 'var(--warning-color)', flexShrink: 0 }} />
                           <div>
                             <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
                               {item.filename.includes('grid') ? 'Grid Layout' : 'List Layout'}
@@ -29864,7 +29864,7 @@ const DashboardTiles = {
                             onClick={() => setPreviewingComingSoonList(item)}
                             className="button"
                             style={{ 
-                              backgroundColor: '#007bff', 
+                              backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)', 
                               display: 'flex', 
                               alignItems: 'center', 
                               gap: '0.25rem',
@@ -29879,7 +29879,7 @@ const DashboardTiles = {
                             onClick={() => handleDeleteComingSoonList(item.filename)}
                             className="button"
                             style={{ 
-                              backgroundColor: '#dc3545', 
+                              backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)', 
                               display: 'flex', 
                               alignItems: 'center', 
                               gap: '0.25rem',
@@ -29914,7 +29914,7 @@ const DashboardTiles = {
           <button
             onClick={() => setActiveTab('nexup')}
             className="button"
-            style={{ backgroundColor: '#ffc230' }}
+            style={{ backgroundColor: 'var(--warning-color)' }}
           >
             Go to Connections
           </button>
@@ -29935,7 +29935,7 @@ const DashboardTiles = {
       {/* Theme Settings */}
       <div className="nx-setting-row nx-setting-row-theme">
         <div className="nx-setting-row-head">
-          {darkMode ? <Moon size={16} style={{ color: '#a78bfa' }} /> : <Sun size={16} style={{ color: '#fbbf24' }} />}
+          {darkMode ? <Moon size={16} style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 67%, var(--text-color))' }} /> : <Sun size={16} style={{ color: 'var(--warning-color)' }} />}
           <h3>Theme</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -29970,7 +29970,7 @@ const DashboardTiles = {
       {/* Timezone Settings */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
-          <Globe size={16} style={{ color: '#00d4ff' }} />
+          <Globe size={16} style={{ color: 'var(--nx-sec-connect)' }} />
           <h3>Timezone</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -30009,13 +30009,13 @@ const DashboardTiles = {
 
     <div className="card nx-settings-scheduler">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Sliders size={20} style={{ color: '#35d06f' }} /> Scheduler behavior
+        <Sliders size={20} style={{ color: 'var(--success-color)' }} /> Scheduler behavior
       </h2>
 
       {/* Coexistence Mode (Passive Mode) */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
-          <Users size={16} style={{ color: '#3b82f6' }} />
+          <Users size={16} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }} />
           <h3>Coexistence Mode</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -30036,16 +30036,16 @@ const DashboardTiles = {
           </span>
         </div>
         {passiveMode && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Check size={14} /> NeXroll will only apply prerolls during active schedules.
             </p>
           </div>
         )}
         {passiveMode && fillerSettings.enabled && (
-          <div style={{ marginTop: '0.5rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.35)', borderRadius: '6px' }}>
+          <div style={{ marginTop: '0.5rem', padding: '0.5rem 0.75rem', backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--warning-color) 35%, transparent)', borderRadius: '6px' }}>
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-color)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: '2px', color: '#f59e0b' }} />
+              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: '2px', color: 'var(--warning-color)' }} />
               <span>
                 Fallback Filler is also switched on, and the two ask for opposite things in the same moment:
                 filler plays when no schedule is active, and Coexistence Mode hands that moment to the other
@@ -30067,7 +30067,7 @@ const DashboardTiles = {
       {/* Clear When Inactive */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
-          <XCircle size={16} style={{ color: '#ef4444' }} />
+          <XCircle size={16} style={{ color: 'color-mix(in srgb, var(--error-color) 88%, #000)' }} />
           <h3>Clear Prerolls When Inactive</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -30085,15 +30085,15 @@ const DashboardTiles = {
           </label>
       </div>
         {passiveMode && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--warning-color) 30%, transparent)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--warning-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <AlertTriangle size={14} /> Disabled while Coexistence Mode is active.
             </p>
           </div>
         )}
         {!passiveMode && clearWhenInactive && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Check size={14} /> Movies will play without prerolls outside scheduled times.
             </p>
           </div>
@@ -30110,7 +30110,7 @@ const DashboardTiles = {
       {/* Plex playback guard */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
-          <Timer size={16} style={{ color: '#f59e0b' }} />
+          <Timer size={16} style={{ color: 'var(--warning-color)' }} />
           <h3>Playback Guard</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -30136,7 +30136,7 @@ const DashboardTiles = {
                 </option>
               ))}
           </select>
-          <p style={{ fontSize: '0.65rem', color: playbackGuardStatus === 'error' ? '#ef4444' : 'var(--text-secondary)', margin: '0.3rem 0 0' }}>
+          <p style={{ fontSize: '0.65rem', color: playbackGuardStatus === 'error' ? 'color-mix(in srgb, var(--error-color) 88%, #000)' : 'var(--text-secondary)', margin: '0.3rem 0 0' }}>
             {playbackGuardStatus === 'error'
               ? 'Could not save. Try again.'
               : (playbackGuardMinutes === 0 ? 'Changes apply right away.' : 'Longest wait per movie.')}
@@ -30145,9 +30145,9 @@ const DashboardTiles = {
           </p>
         </div>
         {playbackGuardMinutes === 0 && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px' }}>
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--warning-color) 30%, transparent)', borderRadius: '6px' }}>
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-color)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: '2px', color: '#f59e0b' }} />
+              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: '2px', color: 'var(--warning-color)' }} />
               <span>
                 With the guard off, a rotation or schedule change that lands while someone is watching prerolls
                 can make Plex hang on the next preroll instead of playing it.
@@ -30160,13 +30160,13 @@ const DashboardTiles = {
 
     <div className="card nx-settings-interface">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <LayoutDashboard size={20} style={{ color: '#00d4ff' }} /> Interface behavior
+        <LayoutDashboard size={20} style={{ color: 'var(--nx-sec-connect)' }} /> Interface behavior
       </h2>
 
       {/* Confirmation Dialogs */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
-          <AlertCircle size={16} style={{ color: '#f59e0b' }} />
+          <AlertCircle size={16} style={{ color: 'var(--warning-color)' }} />
           <h3>Confirmation Dialogs</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -30190,7 +30190,7 @@ const DashboardTiles = {
       {/* Notification Preferences */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
-          <Bell size={16} style={{ color: '#22c55e' }} />
+          <Bell size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 91%, #000)' }} />
           <h3>Notifications</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -30219,13 +30219,13 @@ const DashboardTiles = {
       {/* Verbose Logging */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
-          <Terminal size={16} style={{ color: '#a78bfa' }} />
+          <Terminal size={16} style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 67%, var(--text-color))' }} />
           <h3>Verbose Logging</h3>
           <span style={{
             fontSize: '0.65rem',
             padding: '0.15rem 0.4rem',
-            backgroundColor: 'rgba(139, 92, 246, 0.2)',
-            color: '#a78bfa',
+            backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 20%, transparent)',
+            color: 'color-mix(in srgb, var(--nx-sec-library) 67%, var(--text-color))',
             borderRadius: '4px',
             fontWeight: 600
           }}>
@@ -30250,8 +30250,8 @@ const DashboardTiles = {
           </span>
         </div>
         {verboseLogging && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--success-color) 30%, transparent)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'color-mix(in srgb, var(--success-color) 91%, #000)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Check size={14} /> Check the console (F12) and application logs for detailed information.
             </p>
           </div>
@@ -30261,12 +30261,12 @@ const DashboardTiles = {
 
     <div className="card nx-settings-filler">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Layers size={20} style={{ color: '#f7c948' }} /> Fallback filler
+        <Layers size={20} style={{ color: 'var(--warning-color)' }} /> Fallback filler
       </h2>
 
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
-          <Layers size={16} style={{ color: '#f7c948' }} />
+          <Layers size={16} style={{ color: 'var(--warning-color)' }} />
           <h3>Enable Fallback Filler</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -30288,8 +30288,8 @@ const DashboardTiles = {
         </div>
         
         {(passiveMode || clearWhenInactive) && (
-          <div style={{ padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ padding: '0.5rem 0.75rem', backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--warning-color) 30%, transparent)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--warning-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <AlertTriangle size={14} /> Filler is disabled because {passiveMode ? 'Coexistence Mode' : 'Clear When Inactive'} is active.
             </p>
           </div>
@@ -30417,8 +30417,8 @@ const DashboardTiles = {
               </div>
             )}
 
-            <div style={{ marginTop: '1rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: '6px' }}>
-              <p style={{ margin: 0, fontSize: '0.8rem', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ marginTop: '1rem', padding: '0.5rem 0.75rem', backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--success-color) 30%, transparent)', borderRadius: '6px' }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'color-mix(in srgb, var(--success-color) 91%, #000)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Check size={14} /> Filler will be applied when no schedules are active.
               </p>
             </div>
@@ -30435,7 +30435,7 @@ const DashboardTiles = {
     {/* Path Mappings Card */}
     <div className="card nx-settings-panel nx-settings-path-rules" style={{ marginBottom: '1.5rem' }}>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FolderSync size={20} style={{ color: '#00d4ff' }} /> Path Mappings (Plex)
+        <FolderSync size={20} style={{ color: 'var(--nx-sec-connect)' }} /> Path Mappings (Plex)
       </h2>
       <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
         Plex plays prerolls straight from its own disk, so it needs every file's path as the Plex server sees it.
@@ -30467,8 +30467,8 @@ const DashboardTiles = {
           marginBottom: '1.5rem', padding: '0.75rem 0.9rem', borderRadius: '8px',
           fontSize: '0.85rem', lineHeight: 1.55,
           color: darkMode ? '#cfd8dc' : '#455a64',
-          backgroundColor: darkMode ? 'rgba(0, 212, 255, 0.08)' : 'rgba(0, 150, 200, 0.06)',
-          border: `1px solid ${darkMode ? 'rgba(0, 212, 255, 0.2)' : 'rgba(0, 150, 200, 0.15)'}`
+          backgroundColor: darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 6%, transparent)',
+          border: `1px solid ${darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)'}`
         }}>
           <strong>Nothing to do here for {named}.</strong>{' '}
           These rules only affect Plex, which plays prerolls from its own filesystem and so needs a
@@ -30482,7 +30482,7 @@ const DashboardTiles = {
       {/* Mappings List */}
       <div className="nx-setting-row">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-          <Layers size={16} style={{ color: '#00d4ff' }} />
+          <Layers size={16} style={{ color: 'var(--nx-sec-connect)' }} />
           <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>Path Translation Rules</span>
         </div>
         
@@ -30508,7 +30508,7 @@ const DashboardTiles = {
                   style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-color)' }}
                 />
               </div>
-              <ArrowRight size={18} style={{ color: '#00d4ff', flexShrink: 0 }} />
+              <ArrowRight size={18} style={{ color: 'var(--nx-sec-connect)', flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Same folder as Plex sees it</label>
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -30533,9 +30533,9 @@ const DashboardTiles = {
                 className="button"
                 onClick={() => removeMappingRow(idx)}
                 style={{ 
-                  backgroundColor: 'rgba(220, 53, 69, 0.1)',
-                  border: '1px solid rgba(220, 53, 69, 0.3)',
-                  color: '#dc3545',
+                  backgroundColor: 'color-mix(in srgb, var(--error-color) 10%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--error-color) 30%, transparent)',
+                  color: 'color-mix(in srgb, var(--error-color) 81%, #000)',
                   padding: '0.5rem',
                   flexShrink: 0,
                   marginTop: '1.1rem'
@@ -30554,9 +30554,9 @@ const DashboardTiles = {
             className="button" 
             onClick={addMappingRow}
             style={{ 
-              backgroundColor: 'rgba(0, 212, 255, 0.1)',
-              border: '1px solid rgba(0, 212, 255, 0.3)',
-              color: '#00d4ff'
+              backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)',
+              color: 'var(--nx-sec-connect)'
             }}
           >
             <Plus size={14} style={{marginRight: '0.35rem'}} /> Add Mapping
@@ -30580,9 +30580,9 @@ const DashboardTiles = {
             onClick={savePathMappings} 
             disabled={pathMappingsLoading} 
             style={{ 
-              backgroundColor: 'rgba(34, 197, 94, 0.15)',
-              border: '1px solid rgba(34, 197, 94, 0.4)',
-              color: '#22c55e'
+              backgroundColor: 'color-mix(in srgb, var(--success-color) 15%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--success-color) 40%, transparent)',
+              color: 'color-mix(in srgb, var(--success-color) 91%, #000)'
             }}
           >
             <Save size={14} style={{marginRight: '0.35rem'}} /> Save Mappings
@@ -30601,7 +30601,7 @@ const DashboardTiles = {
     {/* Test Translation Card */}
     <div className="card nx-settings-panel nx-settings-path-test">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FlaskConical size={20} style={{ color: '#a855f7' }} /> Test Translation
+        <FlaskConical size={20} style={{ color: 'var(--nx-sec-library)' }} /> Test Translation
       </h2>
       <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
         Paste the full path of one or more prerolls as NeXroll sees them, one per line. NeXroll shows the path it
@@ -30630,9 +30630,9 @@ const DashboardTiles = {
             className="button" 
             onClick={runMappingsTest}
             style={{ 
-              backgroundColor: 'rgba(168, 85, 247, 0.15)',
-              border: '1px solid rgba(168, 85, 247, 0.4)',
-              color: '#a855f7'
+              backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--nx-sec-library) 40%, transparent)',
+              color: 'var(--nx-sec-library)'
             }}
           >
             <FlaskConical size={14} style={{marginRight: '0.35rem'}} /> Run Test
@@ -30647,21 +30647,21 @@ const DashboardTiles = {
             border: '1px solid var(--border-color)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              <CheckCircle size={16} style={{ color: '#22c55e' }} />
+              <CheckCircle size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 91%, #000)' }} />
               <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Translation Results</span>
             </div>
             <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
               {mappingTestResults.map((r, i) => (
                 <li key={i} style={{ 
                   fontSize: '0.85rem', 
-                  color: r.matched ? '#22c55e' : 'var(--text-secondary)',
+                  color: r.matched ? 'color-mix(in srgb, var(--success-color) 91%, #000)' : 'var(--text-secondary)',
                   marginBottom: '0.35rem',
                   fontFamily: 'monospace'
                 }}>
                   <code style={{ color: 'var(--text-color)' }}>{r.input}</code>
                   {/* A text arrow, not an icon, so the pair survives being copied into a support thread. */}
                   <span style={{ margin: '0 0.5rem' }}>{'→'}</span>
-                  <code style={{ color: r.matched ? '#22c55e' : 'var(--text-secondary)' }}>{r.output || '(no change)'}</code>
+                  <code style={{ color: r.matched ? 'color-mix(in srgb, var(--success-color) 91%, #000)' : 'var(--text-secondary)' }}>{r.output || '(no change)'}</code>
                   {!r.matched && <span className="nx-plexpath-inline-note"> (no mapping matched, so Plex gets the same path)</span>}
                   {r.plex && (
                     <div className="nx-plexpath-test-plex">
@@ -30688,22 +30688,22 @@ const DashboardTiles = {
         <div style={{
           padding: '1rem',
           marginBottom: '1.5rem',
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
-          border: '1px solid rgba(59, 130, 246, 0.3)',
+          backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)',
           borderRadius: '8px'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <div style={{
               width: '24px',
               height: '24px',
-              border: '3px solid rgba(59, 130, 246, 0.3)',
-              borderTopColor: '#3b82f6',
+              border: '3px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)',
+              borderTopColor: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
               borderRadius: '50%',
               animation: 'spin 1s linear infinite',
               flexShrink: 0
             }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, color: '#3b82f6' }}>
+              <div style={{ fontWeight: 600, color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }}>
                 {(() => {
                   const t = backupProgress.type || '';
                   if (t.includes('backup')) return 'Backing up…';
@@ -30716,15 +30716,15 @@ const DashboardTiles = {
               </div>
             </div>
             {backupProgress.percent != null && (
-              <div style={{ fontWeight: 700, color: '#3b82f6', fontSize: '1.1rem', minWidth: '3.2rem', textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontWeight: 700, color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)', fontSize: '1.1rem', minWidth: '3.2rem', textAlign: 'right', flexShrink: 0 }}>
                 {backupProgress.percent}%
               </div>
             )}
           </div>
           {backupProgress.percent != null && (
             <div style={{ marginTop: '0.75rem' }}>
-              <div style={{ height: '8px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '999px', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${backupProgress.percent}%`, backgroundColor: '#3b82f6', borderRadius: '999px', transition: 'width 0.2s ease' }} />
+              <div style={{ height: '8px', backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)', borderRadius: '999px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${backupProgress.percent}%`, backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)', borderRadius: '999px', transition: 'width 0.2s ease' }} />
               </div>
               {backupProgress.total > 0 && (
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem', textAlign: 'right' }}>
@@ -30747,7 +30747,7 @@ const DashboardTiles = {
           flexDirection: 'column'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Database size={18} style={{ color: '#3b82f6' }} />
+            <Database size={18} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }} />
             <h3>Database Backup</h3>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', flex: 1 }}>
@@ -30774,7 +30774,7 @@ const DashboardTiles = {
           flexDirection: 'column'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <HardDrive size={18} style={{ color: '#22c55e' }} />
+            <HardDrive size={18} style={{ color: 'color-mix(in srgb, var(--success-color) 91%, #000)' }} />
             <h3>System & Files Backup</h3>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
@@ -30794,7 +30794,7 @@ const DashboardTiles = {
             onClick={handleBackupFiles} 
             className="button"
             disabled={backupProgress.active}
-            style={{ width: '100%', backgroundColor: '#22c55e' }}
+            style={{ width: '100%', backgroundColor: 'color-mix(in srgb, var(--success-color) 91%, #000)' }}
           >
             <Package size={14} style={{marginRight: '0.35rem'}} /> Download System Backup
           </button>
@@ -30810,7 +30810,7 @@ const DashboardTiles = {
         borderRadius: '8px'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          <RotateCw size={18} style={{ color: '#f59e0b' }} />
+          <RotateCw size={18} style={{ color: 'var(--warning-color)' }} />
           <h3>Restore from Backup</h3>
         </div>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
@@ -30835,14 +30835,14 @@ const DashboardTiles = {
             <div style={{ 
               marginTop: '0.75rem', 
               padding: '0.5rem 0.75rem', 
-              backgroundColor: 'rgba(59, 130, 246, 0.1)', 
+              backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)', 
               borderRadius: '4px',
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',
               fontSize: '0.85rem'
             }}>
-              <FileText size={14} style={{ color: '#3b82f6' }} />
+              <FileText size={14} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }} />
               <span><strong>Selected:</strong> {backupFile.name}</span>
               <span style={{ color: 'var(--text-secondary)' }}>
                 ({(backupFile.size / 1024 / 1024).toFixed(2)} MB)
@@ -30858,7 +30858,7 @@ const DashboardTiles = {
             disabled={backupProgress.active || !backupFile || !backupFile.name.endsWith('.json')}
             style={{ 
               flex: '1 1 200px',
-              backgroundColor: backupFile?.name?.endsWith('.json') ? '#3b82f6' : undefined,
+              backgroundColor: backupFile?.name?.endsWith('.json') ? 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' : undefined,
               opacity: (!backupFile || !backupFile.name.endsWith('.json')) ? 0.5 : 1
             }}
           >
@@ -30870,7 +30870,7 @@ const DashboardTiles = {
             disabled={backupProgress.active || !backupFile || !backupFile.name.endsWith('.zip')}
             style={{ 
               flex: '1 1 200px',
-              backgroundColor: backupFile?.name?.endsWith('.zip') ? '#22c55e' : undefined,
+              backgroundColor: backupFile?.name?.endsWith('.zip') ? 'color-mix(in srgb, var(--success-color) 91%, #000)' : undefined,
               opacity: (!backupFile || !backupFile.name.endsWith('.zip')) ? 0.5 : 1
             }}
           >
@@ -30881,11 +30881,11 @@ const DashboardTiles = {
         <div style={{ 
           marginTop: '1rem', 
           padding: '0.75rem', 
-          backgroundColor: 'rgba(245, 158, 11, 0.1)', 
-          border: '1px solid rgba(245, 158, 11, 0.3)',
+          backgroundColor: 'color-mix(in srgb, var(--warning-color) 10%, transparent)', 
+          border: '1px solid color-mix(in srgb, var(--warning-color) 30%, transparent)',
           borderRadius: '6px',
           fontSize: '0.8rem',
-          color: '#d97706'
+          color: 'color-mix(in srgb, var(--warning-color) 77%, #000)'
         }}>
           <strong>Warning:</strong> Restoring will overwrite existing data. Make sure you have a current backup before proceeding.
         </div>
@@ -30896,13 +30896,13 @@ const DashboardTiles = {
         marginTop: '1.5rem',
         padding: '1.5rem',
         backgroundColor: 'var(--bg-secondary)',
-        border: highlightRescanAction ? '2px solid #f59e0b' : '1px solid var(--border-color)',
+        border: highlightRescanAction ? '2px solid var(--warning-color)' : '1px solid var(--border-color)',
         borderRadius: '8px',
-        boxShadow: highlightRescanAction ? '0 0 0 4px rgba(245, 158, 11, 0.15)' : 'none',
+        boxShadow: highlightRescanAction ? '0 0 0 4px color-mix(in srgb, var(--warning-color) 15%, transparent)' : 'none',
         transition: 'border-color 0.3s, box-shadow 0.3s'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          <RefreshCw size={18} style={{ color: '#22c55e' }} />
+          <RefreshCw size={18} style={{ color: 'color-mix(in srgb, var(--success-color) 91%, #000)' }} />
           <h3>Rescan Preroll Files</h3>
         </div>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
@@ -30920,7 +30920,7 @@ const DashboardTiles = {
             onClick={() => handleRescanPrerolls()}
             className="button"
             disabled={backupProgress.active}
-            style={{ backgroundColor: '#22c55e' }}
+            style={{ backgroundColor: 'color-mix(in srgb, var(--success-color) 91%, #000)' }}
           >
             <RefreshCw size={14} style={{ marginRight: '0.35rem' }} /> Rescan Files Now
           </button>
@@ -30929,8 +30929,8 @@ const DashboardTiles = {
             className="button"
             disabled={backupProgress.active}
             style={{
-              backgroundColor: '#ef4444',
-              boxShadow: highlightRescanAction === 'delete_missing' ? '0 0 0 3px rgba(239, 68, 68, 0.5)' : 'none',
+              backgroundColor: 'color-mix(in srgb, var(--error-color) 88%, #000)',
+              boxShadow: highlightRescanAction === 'delete_missing' ? '0 0 0 3px color-mix(in srgb, var(--error-color) 50%, transparent)' : 'none',
               transition: 'box-shadow 0.3s'
             }}
             title="Removes database rows whose files no longer exist on disk."
@@ -30942,8 +30942,8 @@ const DashboardTiles = {
             className="button"
             disabled={backupProgress.active}
             style={{
-              backgroundColor: '#f59e0b',
-              boxShadow: highlightRescanAction === 'dedupe' ? '0 0 0 3px rgba(245, 158, 11, 0.5)' : 'none',
+              backgroundColor: 'var(--warning-color)',
+              boxShadow: highlightRescanAction === 'dedupe' ? '0 0 0 3px color-mix(in srgb, var(--warning-color) 50%, transparent)' : 'none',
               transition: 'box-shadow 0.3s'
             }}
             title="Merges duplicate database rows that point at the same file."
@@ -30968,11 +30968,11 @@ const DashboardTiles = {
       {/* Created Key Display (only shown once after creation) */}
       {createdApiKey && (
         <div className="card nx-settings-api-secret" style={{
-          border: '2px solid #22c55e', 
-          backgroundColor: 'rgba(34, 197, 94, 0.1)',
+          border: '2px solid color-mix(in srgb, var(--success-color) 91%, #000)', 
+          backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)',
           marginBottom: '1rem'
         }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#22c55e' }}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'color-mix(in srgb, var(--success-color) 91%, #000)' }}>
             <CheckCircle size={20} /> API Key Created Successfully
           </h2>
           <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
@@ -31021,7 +31021,7 @@ const DashboardTiles = {
                     type="checkbox"
                     checked={apiKeys.length > 0 && selectedApiKeyIds.size === apiKeys.length}
                     onChange={toggleSelectAllApiKeys}
-                    style={{ accentColor: '#3b82f6' }}
+                    style={{ accentColor: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }}
                   />
                   Select All
                 </label>
@@ -31029,9 +31029,9 @@ const DashboardTiles = {
                   <button
                     className="button"
                     style={{
-                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
-                      color: '#ef4444',
+                      backgroundColor: 'color-mix(in srgb, var(--error-color) 10%, transparent)',
+                      border: '1px solid color-mix(in srgb, var(--error-color) 30%, transparent)',
+                      color: 'color-mix(in srgb, var(--error-color) 88%, #000)',
                       padding: '0.4rem 0.75rem',
                       fontSize: '0.85rem'
                     }}
@@ -31080,9 +31080,9 @@ const DashboardTiles = {
                   alignItems: 'center',
                   gap: '0.75rem',
                   padding: '0.75rem 1rem',
-                  backgroundColor: selectedApiKeyIds.has(key.id) ? 'rgba(59, 130, 246, 0.08)' : (key.is_active ? 'var(--bg-color)' : 'rgba(239, 68, 68, 0.1)'),
+                  backgroundColor: selectedApiKeyIds.has(key.id) ? 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)' : (key.is_active ? 'var(--bg-color)' : 'color-mix(in srgb, var(--error-color) 10%, transparent)'),
                   borderRadius: '8px',
-                  border: `1px solid ${selectedApiKeyIds.has(key.id) ? 'rgba(59, 130, 246, 0.4)' : (key.is_active ? 'var(--border-color)' : 'rgba(239, 68, 68, 0.3)')}`,
+                  border: `1px solid ${selectedApiKeyIds.has(key.id) ? 'color-mix(in srgb, var(--nx-sec-connect) 40%, transparent)' : (key.is_active ? 'var(--border-color)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)')}`,
                   opacity: key.is_active ? 1 : 0.7,
                   cursor: 'pointer'
                 }}
@@ -31093,7 +31093,7 @@ const DashboardTiles = {
                   checked={selectedApiKeyIds.has(key.id)}
                   onChange={() => toggleApiKeySelected(key.id)}
                   onClick={(e) => e.stopPropagation()}
-                  style={{ accentColor: '#3b82f6', flexShrink: 0 }}
+                  style={{ accentColor: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)', flexShrink: 0 }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -31102,8 +31102,8 @@ const DashboardTiles = {
                       <span style={{ 
                         fontSize: '0.7rem', 
                         padding: '0.15rem 0.4rem', 
-                        backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                        color: '#ef4444',
+                        backgroundColor: 'color-mix(in srgb, var(--error-color) 20%, transparent)',
+                        color: 'color-mix(in srgb, var(--error-color) 88%, #000)',
                         borderRadius: '4px'
                       }}>
                         Disabled
@@ -31112,8 +31112,8 @@ const DashboardTiles = {
                     <span style={{ 
                       fontSize: '0.7rem', 
                       padding: '0.15rem 0.4rem', 
-                      backgroundColor: key.permissions === 'full' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(59, 130, 246, 0.2)',
-                      color: key.permissions === 'full' ? '#22c55e' : '#3b82f6',
+                      backgroundColor: key.permissions === 'full' ? 'color-mix(in srgb, var(--success-color) 20%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)',
+                      color: key.permissions === 'full' ? 'color-mix(in srgb, var(--success-color) 91%, #000)' : 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
                       borderRadius: '4px'
                     }}>
                       {key.permissions === 'full' ? 'Full Access' : 'Read Only'}
@@ -31145,9 +31145,9 @@ const DashboardTiles = {
                   <button
                     className="button"
                     style={{ 
-                      backgroundColor: 'rgba(239, 68, 68, 0.1)', 
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
-                      color: '#ef4444',
+                      backgroundColor: 'color-mix(in srgb, var(--error-color) 10%, transparent)', 
+                      border: '1px solid color-mix(in srgb, var(--error-color) 30%, transparent)',
+                      color: 'color-mix(in srgb, var(--error-color) 88%, #000)',
                       padding: '0.4rem 0.75rem'
                     }}
                     onClick={() => deleteApiKey(key.id, key.name)}
@@ -31231,7 +31231,7 @@ const DashboardTiles = {
               <div style={{
                 width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                backgroundColor: 'rgba(0, 212, 255, 0.12)', color: '#00d4ff'
+                backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 12%, transparent)', color: 'var(--nx-sec-connect)'
               }}>
                 <Key size={20} />
               </div>
@@ -31629,7 +31629,7 @@ const DashboardTiles = {
                 alongside the other log controls. Same backend toggle. */}
             <div className="nx-log-verbose">
               <div className="nx-setting-row-head">
-                <Terminal size={16} style={{ color: '#a78bfa' }} />
+                <Terminal size={16} style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 67%, var(--text-color))' }} />
                 <h3>Verbose Logging</h3>
                 <span className="nx-log-beta">BETA</span>
               </div>
@@ -31708,7 +31708,7 @@ const DashboardTiles = {
           alignItems: 'center'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Shield size={20} style={{ color: authStatus.auth_enabled ? '#22c55e' : 'var(--text-secondary)' }} />
+            <Shield size={20} style={{ color: authStatus.auth_enabled ? 'color-mix(in srgb, var(--success-color) 91%, #000)' : 'var(--text-secondary)' }} />
             <div>
               <div style={{ fontWeight: 600, color: !authStatus.users_exist ? 'var(--text-secondary)' : undefined }}>Require Login</div>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -31727,7 +31727,7 @@ const DashboardTiles = {
               position: 'relative',
               width: '50px',
               height: '26px',
-              backgroundColor: authStatus.auth_enabled ? '#00d4ff' : 'var(--border-color)',
+              backgroundColor: authStatus.auth_enabled ? 'var(--nx-sec-connect)' : 'var(--border-color)',
               borderRadius: '13px',
               border: 'none',
               cursor: !authStatus.users_exist ? 'not-allowed' : 'pointer',
@@ -31783,9 +31783,9 @@ const DashboardTiles = {
                   justifyContent: 'space-between',
                   alignItems: 'center',
                   padding: '0.75rem 1rem',
-                  backgroundColor: user.is_active ? 'var(--bg-color)' : 'rgba(239, 68, 68, 0.1)',
+                  backgroundColor: user.is_active ? 'var(--bg-color)' : 'color-mix(in srgb, var(--error-color) 10%, transparent)',
                   borderRadius: '8px',
-                  border: `1px solid ${user.is_active ? 'var(--border-color)' : 'rgba(239, 68, 68, 0.3)'}`,
+                  border: `1px solid ${user.is_active ? 'var(--border-color)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)'}`,
                   opacity: user.is_active ? 1 : 0.7
                 }}
               >
@@ -31794,15 +31794,15 @@ const DashboardTiles = {
                     width: '40px',
                     height: '40px',
                     borderRadius: '50%',
-                    backgroundColor: user.role === 'admin' ? 'rgba(234, 179, 8, 0.2)' : 'rgba(59, 130, 246, 0.2)',
+                    backgroundColor: user.role === 'admin' ? 'color-mix(in srgb, var(--warning-color) 20%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}>
                     {user.role === 'admin' ? (
-                      <Crown size={20} style={{ color: '#eab308' }} />
+                      <Crown size={20} style={{ color: 'var(--warning-color)' }} />
                     ) : (
-                      <User size={20} style={{ color: '#3b82f6' }} />
+                      <User size={20} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }} />
                     )}
                   </div>
                   <div>
@@ -31812,8 +31812,8 @@ const DashboardTiles = {
                         <span style={{ 
                           fontSize: '0.7rem', 
                           padding: '0.15rem 0.4rem', 
-                          backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                          color: '#ef4444',
+                          backgroundColor: 'color-mix(in srgb, var(--error-color) 20%, transparent)',
+                          color: 'color-mix(in srgb, var(--error-color) 88%, #000)',
                           borderRadius: '4px'
                         }}>
                           Disabled
@@ -31822,8 +31822,8 @@ const DashboardTiles = {
                       <span style={{ 
                         fontSize: '0.7rem', 
                         padding: '0.15rem 0.4rem', 
-                        backgroundColor: user.role === 'admin' ? 'rgba(234, 179, 8, 0.2)' : 'rgba(59, 130, 246, 0.2)',
-                        color: user.role === 'admin' ? '#eab308' : '#3b82f6',
+                        backgroundColor: user.role === 'admin' ? 'color-mix(in srgb, var(--warning-color) 20%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)',
+                        color: user.role === 'admin' ? 'var(--warning-color)' : 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
                         borderRadius: '4px'
                       }}>
                         {user.role === 'admin' ? 'Admin' : 'User'}
@@ -31844,9 +31844,9 @@ const DashboardTiles = {
                     <button
                       className="button"
                       style={{ 
-                        backgroundColor: 'rgba(139, 92, 246, 0.1)', 
-                        border: '1px solid rgba(139, 92, 246, 0.3)',
-                        color: '#8b5cf6',
+                        backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 10%, transparent)', 
+                        border: '1px solid color-mix(in srgb, var(--nx-sec-library) 30%, transparent)',
+                        color: 'var(--nx-sec-library)',
                         padding: '0.4rem 0.75rem'
                       }}
                       onClick={() => {
@@ -31874,9 +31874,9 @@ const DashboardTiles = {
                   <button
                     className="button"
                     style={{ 
-                      backgroundColor: 'rgba(239, 68, 68, 0.1)', 
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
-                      color: '#ef4444',
+                      backgroundColor: 'color-mix(in srgb, var(--error-color) 10%, transparent)', 
+                      border: '1px solid color-mix(in srgb, var(--error-color) 30%, transparent)',
+                      color: 'color-mix(in srgb, var(--error-color) 88%, #000)',
                       padding: '0.4rem 0.75rem'
                     }}
                     onClick={() => deleteUser(user.id, user.username)}
@@ -31962,7 +31962,7 @@ const DashboardTiles = {
               <div style={{
                 width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                backgroundColor: 'rgba(0, 212, 255, 0.12)', color: '#00d4ff'
+                backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 12%, transparent)', color: 'var(--nx-sec-connect)'
               }}>
                 <UserPlus size={20} />
               </div>
@@ -32133,7 +32133,7 @@ const DashboardTiles = {
                   onChange={(e) => setChangePasswordForm(prev => ({ ...prev, confirm_password: e.target.value }))}
                 />
               </div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0.75rem', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.2)' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0.75rem', backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 10%, transparent)', borderRadius: '8px', border: '1px solid color-mix(in srgb, var(--nx-sec-library) 20%, transparent)' }}>
                 Password must be at least 8 characters and contain uppercase, lowercase, and a number. All other sessions will be logged out.
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
@@ -32618,7 +32618,7 @@ const DashboardTiles = {
               <div style={{
                 padding: '0.75rem 1rem',
                 backgroundColor: 'var(--neutral-soft)',
-                border: '1px solid rgba(23, 162, 184, 0.3)',
+                border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)',
                 borderRadius: '8px',
                 display: 'flex',
                 alignItems: 'center',
@@ -32646,7 +32646,7 @@ const DashboardTiles = {
           <div style={{
             padding: '1rem',
             backgroundColor: 'var(--success-soft)',
-            border: '1px solid rgba(40, 167, 69, 0.4)',
+            border: '1px solid color-mix(in srgb, var(--success-color) 40%, transparent)',
             borderRadius: '8px',
             marginBottom: '1rem',
             display: 'flex',
@@ -32918,7 +32918,7 @@ const DashboardTiles = {
           role="dialog"
           aria-modal="true"
           aria-labelledby="factory-reset-title"
-          style={{ maxWidth: '520px', width: '100%', maxHeight: '90vh', overflowY: 'auto', border: '1px solid rgba(239,68,68,0.5)', margin: 0 }}
+          style={{ maxWidth: '520px', width: '100%', maxHeight: '90vh', overflowY: 'auto', border: '1px solid color-mix(in srgb, var(--error-color) 50%, transparent)', margin: 0 }}
           onClick={e => e.stopPropagation()}
         >
           <h3 id="factory-reset-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--error-color)', marginTop: 0 }}>
@@ -33013,7 +33013,7 @@ const DashboardTiles = {
                   <div
                     key={l.key}
                     title={`${l.label}: ${formatBytes(l.bytes)} (${Math.round(pct)}%)`}
-                    style={{ width: `${pct}%`, background: colors[l.key] || 'var(--accent-color, #00d4ff)', transition: 'width 0.3s ease' }}
+                    style={{ width: `${pct}%`, background: colors[l.key] || 'var(--accent-color, var(--nx-sec-connect))', transition: 'width 0.3s ease' }}
                   />
                 );
               })}
@@ -33026,7 +33026,7 @@ const DashboardTiles = {
                   <div key={l.key} style={{ padding: '0.7rem 0.8rem', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '8px', opacity: l.bytes > 0 ? 1 : 0.6 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.3rem' }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontWeight: 600 }}>
-                        <span style={{ width: 11, height: 11, borderRadius: 3, background: colors[l.key] || 'var(--accent-color, #00d4ff)', flexShrink: 0 }} />
+                        <span style={{ width: 11, height: 11, borderRadius: 3, background: colors[l.key] || 'var(--accent-color, var(--nx-sec-connect))', flexShrink: 0 }} />
                         {l.label}
                       </span>
                       <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatBytes(l.bytes)}</span>
@@ -33077,7 +33077,7 @@ const DashboardTiles = {
               <span style={{
                 fontSize: '0.7rem',
                 padding: '0.15rem 0.5rem',
-                backgroundColor: 'rgba(0, 212, 255, 0.15)',
+                backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)',
                 color: 'var(--accent-color)',
                 borderRadius: '4px',
                 fontWeight: '600'
@@ -33111,7 +33111,7 @@ const DashboardTiles = {
         marginBottom: '1rem'
       }}>
         <div className="nx-setting-row-head">
-          <FolderOpen size={16} style={{ color: '#f59e0b' }} />
+          <FolderOpen size={16} style={{ color: 'var(--warning-color)' }} />
           <h3>Change Storage Folder</h3>
         </div>
         <p className="nx-setting-row-desc">
@@ -33168,7 +33168,7 @@ const DashboardTiles = {
           marginBottom: '1rem'
         }}>
           <div className="nx-setting-row-head">
-            <ArrowRight size={16} style={{ color: '#22c55e' }} />
+            <ArrowRight size={16} style={{ color: 'color-mix(in srgb, var(--success-color) 91%, #000)' }} />
             <h3>Transfer Files</h3>
           </div>
           <p className="nx-setting-row-desc">
@@ -33177,15 +33177,15 @@ const DashboardTiles = {
           {prerollFolderMoving && (
             <div style={{
               padding: '0.75rem 1rem',
-              backgroundColor: 'rgba(23, 162, 184, 0.1)',
-              border: '1px solid rgba(23, 162, 184, 0.3)',
+              backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)',
               borderRadius: '8px',
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',
               marginBottom: '0.75rem'
             }}>
-              <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+              <Loader2 size={16} className="spin" style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} />
               <span style={{ fontSize: '0.9rem' }}>Transferring files... This may take a while for large libraries.</span>
             </div>
           )}
@@ -33207,8 +33207,8 @@ const DashboardTiles = {
       {/* Info notice */}
       <div style={{
         padding: '0.75rem 1rem',
-        backgroundColor: 'rgba(23, 162, 184, 0.1)',
-        border: '1px solid rgba(23, 162, 184, 0.3)',
+        backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)',
         borderRadius: '8px',
         fontSize: '0.85rem',
         color: 'var(--text-color)'
@@ -33252,7 +33252,7 @@ const DashboardTiles = {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button
             className="button"
-            style={{ backgroundColor: '#22c55e', whiteSpace: 'nowrap' }}
+            style={{ backgroundColor: 'color-mix(in srgb, var(--success-color) 91%, #000)', whiteSpace: 'nowrap' }}
             disabled={backupProgress.active}
             onClick={() => handleRescanPrerolls()}
             title="Scan the storage folder right now for added/removed prerolls"
@@ -33316,7 +33316,7 @@ const DashboardTiles = {
       {/* Plugin clients (when present) */}
       {jellyfinServerInfo?.plugin_clients?.length > 0 && (
         <div className="nx-notice accent" style={{ marginBottom: '1rem' }}>
-          <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
+          <strong style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 91%, #000)' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
           {jellyfinServerInfo.plugin_clients.map((client, idx) => (
             <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
               {client.server_name || 'Jellyfin'} {client.server_version ? `(v${client.server_version})` : ''}
@@ -33376,15 +33376,15 @@ const DashboardTiles = {
       {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Plug size={20} style={{ color: 'var(--accent-color, #7c4dff)' }} /> NeXroll Intros Plugin
+          <Plug size={20} style={{ color: 'var(--accent-color, var(--nx-sec-library))' }} /> NeXroll Intros Plugin
         </h2>
 
         {/* Plugin download link — always visible when connected */}
         {jellyfinStatus === 'Connected' && (
           <div className="nx-notice" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
-            <Download size={16} style={{ color: 'var(--accent-color, #7c4dff)' }} />
+            <Download size={16} style={{ color: 'var(--accent-color, var(--nx-sec-library))' }} />
             <span>Download Plugin:</span>
-            <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Jellyfin.zip</a>
+            <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, var(--nx-sec-library))', fontWeight: 600 }}>NeXroll.Jellyfin.zip</a>
           </div>
         )}
 
@@ -33398,7 +33398,7 @@ const DashboardTiles = {
         {/* State: Connected but plugin not yet probed */}
         {jellyfinStatus === 'Connected' && jellyfinServerInfo?.connection_type === 'direct' && !jellyfinPluginInfo && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 0' }}>
-            <div style={{ width: 16, height: 16, border: '2px solid var(--accent-color, #6c5ce7)', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <div style={{ width: 16, height: 16, border: '2px solid var(--accent-color, color-mix(in srgb, var(--nx-sec-library) 91%, #000))', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
             <span style={{ color: 'var(--text-secondary)' }}>Detecting plugin on Jellyfin server...</span>
           </div>
         )}
@@ -33407,7 +33407,7 @@ const DashboardTiles = {
         {jellyfinStatus === 'Connected' && jellyfinPluginInfo && !jellyfinPluginInfo.detected && (
           <>
             <div className={`nx-notice ${jellyfinPluginInfo.auth_error ? 'warn' : 'danger'}`}>
-              <strong style={{ color: jellyfinPluginInfo.auth_error ? '#e67e22' : '#e74c3c' }}>
+              <strong style={{ color: jellyfinPluginInfo.auth_error ? 'color-mix(in srgb, var(--warning-color) 84%, #000)' : 'color-mix(in srgb, var(--error-color) 86%, #000)' }}>
                 {jellyfinPluginInfo.auth_error ? 'API Key Issue' : 'Plugin Not Found'}
               </strong>
               <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
@@ -33459,7 +33459,7 @@ const DashboardTiles = {
                 <details>
                   <summary style={{ cursor: 'pointer', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>Install by hand instead</summary>
                   <ol style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem', lineHeight: '1.7', fontSize: '0.9rem' }}>
-                    <li>Download <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.zip</a></li>
+                    <li>Download <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, var(--nx-sec-library))' }}>NeXroll.Jellyfin.zip</a></li>
                     <li>Extract the DLL, meta.json and thumb.png into Jellyfin's <code>plugins/NeXroll Intros/</code> folder</li>
                     <li>Restart Jellyfin</li>
                   </ol>
@@ -33500,7 +33500,7 @@ const DashboardTiles = {
                   )}
                 </div>
               ) : (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#e67e22' }}>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'color-mix(in srgb, var(--warning-color) 84%, #000)' }}>
                   Not yet configured — use the form below to link the plugin to NeXroll.
                 </div>
               )}
@@ -33690,13 +33690,13 @@ const DashboardTiles = {
                   href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll"
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: 'var(--accent-color, #7c4dff)' }}
+                  style={{ color: 'var(--accent-color, var(--nx-sec-library))' }}
                 >NeXroll.Emby.dll</a>
               ) : (
                 <a
                   href={apiUrl('emby/plugin/download')}
                   download="NeXroll.Emby.dll"
-                  style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}
+                  style={{ color: 'var(--accent-color, var(--nx-sec-library))', fontWeight: 600 }}
                 >NeXroll.Emby.dll</a>
               )}
               {embyPluginBundled === false && (
@@ -33726,7 +33726,7 @@ const DashboardTiles = {
       {/* Plugin clients (when present) */}
       {embyServerInfo?.plugin_clients?.length > 0 && (
         <div className="nx-notice accent" style={{ marginBottom: '1rem' }}>
-          <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
+          <strong style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 91%, #000)' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
           {embyServerInfo.plugin_clients.map((client, idx) => (
             <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
               {client.server_name || 'Emby'} {client.server_version ? `(v${client.server_version})` : ''}
@@ -33786,15 +33786,15 @@ const DashboardTiles = {
       {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Plug size={20} style={{ color: 'var(--accent-color, #7c4dff)' }} /> NeXroll Intros Plugin
+          <Plug size={20} style={{ color: 'var(--accent-color, var(--nx-sec-library))' }} /> NeXroll Intros Plugin
         </h2>
 
         {/* Plugin download link — always visible when connected */}
         {embyStatus === 'Connected' && (
           <div className="nx-notice" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
-            <Download size={16} style={{ color: 'var(--accent-color, #7c4dff)' }} />
+            <Download size={16} style={{ color: 'var(--accent-color, var(--nx-sec-library))' }} />
             <span>Download Plugin:</span>
-            <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Emby.dll</a>
+            <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, var(--nx-sec-library))', fontWeight: 600 }}>NeXroll.Emby.dll</a>
           </div>
         )}
 
@@ -33808,7 +33808,7 @@ const DashboardTiles = {
         {/* State: Connected but plugin not yet probed */}
         {embyStatus === 'Connected' && embyServerInfo?.connection_type === 'direct' && !embyPluginInfo && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 0' }}>
-            <div style={{ width: 16, height: 16, border: '2px solid var(--accent-color, #6c5ce7)', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <div style={{ width: 16, height: 16, border: '2px solid var(--accent-color, color-mix(in srgb, var(--nx-sec-library) 91%, #000))', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
             <span style={{ color: 'var(--text-secondary)' }}>Detecting plugin on Emby server...</span>
           </div>
         )}
@@ -33817,7 +33817,7 @@ const DashboardTiles = {
         {embyStatus === 'Connected' && embyPluginInfo && !embyPluginInfo.detected && (
           <>
             <div className={`nx-notice ${embyPluginInfo.auth_error ? 'warn' : 'danger'}`}>
-              <strong style={{ color: embyPluginInfo.auth_error ? '#e67e22' : '#e74c3c' }}>
+              <strong style={{ color: embyPluginInfo.auth_error ? 'color-mix(in srgb, var(--warning-color) 84%, #000)' : 'color-mix(in srgb, var(--error-color) 86%, #000)' }}>
                 {embyPluginInfo.auth_error ? 'API Key Issue' : 'Plugin Not Found'}
               </strong>
               <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
@@ -33834,7 +33834,7 @@ const DashboardTiles = {
               <div className="nx-notice">
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
                 <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL: <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Emby.dll</a></li>
+                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL: <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, var(--nx-sec-library))' }}>NeXroll.Emby.dll</a></li>
                   <li>Copy it to your Emby plugins folder: <code>plugins/NeXroll Intros/</code></li>
                   <li>Restart Emby</li>
                 </ol>
@@ -33874,7 +33874,7 @@ const DashboardTiles = {
                   )}
                 </div>
               ) : (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#e67e22' }}>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'color-mix(in srgb, var(--warning-color) 84%, #000)' }}>
                   Not yet configured — use the form below to link the plugin to NeXroll.
                 </div>
               )}
@@ -34089,10 +34089,12 @@ const DashboardTiles = {
                     <span className={`nx-connect-card-badge${srv.connected ? ' ok' : srv.saved ? ' warn' : ''}`}><span className={`nx-dot ${srv.connected ? 'ok' : srv.saved ? 'warn' : 'bad'}`} />{srv.connected ? 'Connected' : srv.saved ? "Can't connect" : 'Not connected'}</span>
                   </span>
                 </button>
+                {/* Every card body is details on top, buttons along the bottom,
+                    so the three cards share one height and one button line. */}
                 {srv.connected ? (
                   <div className="nx-connect-card-body">
                     <ul className="nx-connect-card-meta">{srv.meta.map((line, index) => <li key={index} title={line}>{line}</li>)}</ul>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div className="nx-connect-card-actions">
                       {!active && (
                         <button
                           type="button"
@@ -34111,7 +34113,7 @@ const DashboardTiles = {
                       {srv.savedUrl && <li title={srv.savedUrl}>{srv.savedUrl}</li>}
                       <li>Saved, but NeXroll can't connect to it</li>
                     </ul>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div className="nx-connect-card-actions">
                       {!active && (
                         <button
                           type="button"
@@ -34124,8 +34126,10 @@ const DashboardTiles = {
                   </div>
                 ) : (
                   <div className="nx-connect-card-body idle">
-                    <span>{srv.idleCopy}</span>
-                    <button type="button" className="nx-connect-card-setup" onClick={() => { userPickedServerRef.current = true; setActiveServer(srv.id); }}>Setup <ChevronRight size={13} /></button>
+                    <ul className="nx-connect-card-meta"><li>{srv.idleCopy}</li></ul>
+                    <div className="nx-connect-card-actions">
+                      <button type="button" className="nx-connect-card-setup" onClick={() => { userPickedServerRef.current = true; setActiveServer(srv.id); }}>Setup <ChevronRight size={13} /></button>
+                    </div>
                   </div>
                 )}
               </article>
@@ -34177,8 +34181,8 @@ const DashboardTiles = {
               className="button"
               style={{
                 padding: '0.75rem 1.5rem',
-                backgroundColor: '#28a745',
-                borderColor: '#28a745',
+                backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
+                borderColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem'
@@ -34872,8 +34876,8 @@ const DashboardTiles = {
                   <span style={{ 
                     fontSize: '0.75rem',
                     padding: '0.3rem 0.6rem',
-                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
-                    color: '#6366f1',
+                    backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 10%, transparent)',
+                    color: 'color-mix(in srgb, var(--nx-sec-library) 93%, #000)',
                     borderRadius: '4px',
                     fontWeight: 600,
                     whiteSpace: 'nowrap'
@@ -34883,8 +34887,8 @@ const DashboardTiles = {
                   <span style={{ 
                     fontSize: '0.75rem',
                     padding: '0.3rem 0.6rem',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                    color: '#10b981',
+                    backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)',
+                    color: 'var(--success-color)',
                     borderRadius: '4px',
                     fontWeight: 600,
                     whiteSpace: 'nowrap'
@@ -34947,8 +34951,8 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.3rem 0.55rem', 
                       fontSize: '0.75rem',
-                      backgroundColor: '#10b981',
-                      borderColor: '#10b981',
+                      backgroundColor: 'var(--success-color)',
+                      borderColor: 'var(--success-color)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '0.25rem'
@@ -34967,8 +34971,8 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.3rem 0.55rem', 
                       fontSize: '0.75rem',
-                      backgroundColor: '#17a2b8',
-                      borderColor: '#17a2b8',
+                      backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)',
+                      borderColor: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '0.25rem'
@@ -34986,8 +34990,8 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.3rem 0.55rem', 
                       fontSize: '0.75rem',
-                      backgroundColor: '#f59e0b',
-                      borderColor: '#f59e0b',
+                      backgroundColor: 'var(--warning-color)',
+                      borderColor: 'var(--warning-color)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '0.25rem'
@@ -35026,8 +35030,8 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.3rem 0.55rem', 
                       fontSize: '0.75rem',
-                      backgroundColor: '#8b5cf6',
-                      borderColor: '#8b5cf6',
+                      backgroundColor: 'var(--nx-sec-library)',
+                      borderColor: 'var(--nx-sec-library)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '0.25rem'
@@ -35064,8 +35068,8 @@ const DashboardTiles = {
                     style={{
                       padding: '0.3rem 0.55rem',
                       fontSize: '0.75rem',
-                      backgroundColor: '#dc3545',
-                      borderColor: '#dc3545',
+                      backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)',
+                      borderColor: 'color-mix(in srgb, var(--error-color) 81%, #000)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -36322,7 +36326,7 @@ const DashboardTiles = {
                 <div style={{
                   width: '100%',
                   height: '100%',
-                  background: 'linear-gradient(90deg, #3b82f6, #10b981, #3b82f6)',
+                  background: 'linear-gradient(90deg, color-mix(in srgb, var(--nx-sec-connect) 91%, #000), var(--success-color), color-mix(in srgb, var(--nx-sec-connect) 91%, #000))',
                   backgroundSize: '200% 100%',
                   animation: 'progressSlide 1.5s ease-in-out infinite'
                 }} />
@@ -36334,7 +36338,7 @@ const DashboardTiles = {
           {communityTotalResults > 0 && (
             <div style={{
               padding: '0.5rem',
-              backgroundColor: 'rgba(102, 200, 145, 0.1)',
+              backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)',
               borderRadius: '4px',
               marginBottom: '1rem',
               fontSize: '0.9rem',
@@ -36868,7 +36872,7 @@ const DashboardTiles = {
         {/* Attribution */}
         <p className="nx-community-attribution" style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
           Community prerolls powered by{' '}
-          <a href="https://typicalnerds.uk/" target="_blank" rel="noopener noreferrer" style={{ color: '#f6685e', textDecoration: 'none', fontWeight: 600 }}>
+          <a href="https://typicalnerds.uk/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--error-color)', textDecoration: 'none', fontWeight: 600 }}>
             Typical Nerds
           </a>
           {' '}· Fair Use Policy applies.
@@ -36971,10 +36975,10 @@ const DashboardTiles = {
               aria-live="polite"
               style={{
                 padding: '0.75rem',
-                backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                border: '1px solid rgba(34, 197, 94, 0.3)',
+                backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--success-color) 30%, transparent)',
                 borderRadius: '8px',
-                color: '#22c55e',
+                color: 'color-mix(in srgb, var(--success-color) 91%, #000)',
                 marginBottom: '1rem',
                 fontSize: '0.9rem'
               }}
@@ -36987,10 +36991,10 @@ const DashboardTiles = {
               role="alert"
               style={{
                 padding: '0.75rem',
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
+                backgroundColor: 'color-mix(in srgb, var(--error-color) 10%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--error-color) 30%, transparent)',
                 borderRadius: '8px',
-                color: '#ef4444',
+                color: 'color-mix(in srgb, var(--error-color) 88%, #000)',
                 marginBottom: '1rem',
                 fontSize: '0.9rem'
               }}
@@ -37128,7 +37132,7 @@ const DashboardTiles = {
                 style={{
                   width: '100%',
                   padding: '0.875rem',
-                  backgroundColor: '#00d4ff',
+                  backgroundColor: 'var(--nx-sec-connect)',
                   color: '#000',
                   border: 'none',
                   borderRadius: '8px',
@@ -37157,7 +37161,7 @@ const DashboardTiles = {
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: '#00d4ff',
+                      color: 'var(--nx-sec-connect)',
                       cursor: 'pointer',
                       fontSize: '0.9rem'
                     }}
@@ -37254,7 +37258,7 @@ const DashboardTiles = {
                 style={{
                   width: '100%',
                   padding: '0.875rem',
-                  backgroundColor: '#00d4ff',
+                  backgroundColor: 'var(--nx-sec-connect)',
                   color: '#000',
                   border: 'none',
                   borderRadius: '8px',
@@ -37283,7 +37287,7 @@ const DashboardTiles = {
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: '#00d4ff',
+                      color: 'var(--nx-sec-connect)',
                       cursor: 'pointer',
                       fontSize: '0.9rem'
                     }}
@@ -37336,8 +37340,8 @@ const DashboardTiles = {
               fontSize: '0.85rem',
               lineHeight: 1.6,
               color: darkMode ? '#cfd8dc' : '#455a64',
-              backgroundColor: darkMode ? 'rgba(0, 212, 255, 0.08)' : 'rgba(0, 150, 200, 0.06)',
-              border: `1px solid ${darkMode ? 'rgba(0, 212, 255, 0.2)' : 'rgba(0, 150, 200, 0.15)'}`
+              backgroundColor: darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 6%, transparent)',
+              border: `1px solid ${darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)'}`
             }}>
               <strong>Resetting the password needs access to the machine NeXroll runs on.</strong>
               <p style={{ margin: '0.5rem 0' }}>
@@ -37369,19 +37373,19 @@ const DashboardTiles = {
                 color: darkMode ? '#aaa' : '#666', 
                 marginBottom: '1rem',
                 padding: '0.75rem',
-                backgroundColor: darkMode ? 'rgba(0, 212, 255, 0.08)' : 'rgba(0, 150, 200, 0.06)',
+                backgroundColor: darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 6%, transparent)',
                 borderRadius: '8px',
-                border: `1px solid ${darkMode ? 'rgba(0, 212, 255, 0.2)' : 'rgba(0, 150, 200, 0.15)'}`
+                border: `1px solid ${darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)'}`
               }}>
                 This will reset the admin account password. Only available from the local machine.
               </div>
               {resetError && (
                 <div role="alert" style={{
                   padding: '0.75rem',
-                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  backgroundColor: 'color-mix(in srgb, var(--error-color) 10%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--error-color) 30%, transparent)',
                   borderRadius: '8px',
-                  color: '#ef4444',
+                  color: 'color-mix(in srgb, var(--error-color) 88%, #000)',
                   marginBottom: '1rem',
                   fontSize: '0.9rem'
                 }}>
@@ -37391,10 +37395,10 @@ const DashboardTiles = {
               {resetSuccess && (
                 <div role="status" aria-live="polite" style={{
                   padding: '0.75rem',
-                  backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                  border: '1px solid rgba(34, 197, 94, 0.3)',
+                  backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--success-color) 30%, transparent)',
                   borderRadius: '8px',
-                  color: '#22c55e',
+                  color: 'color-mix(in srgb, var(--success-color) 91%, #000)',
                   marginBottom: '1rem',
                   fontSize: '0.9rem'
                 }}>
@@ -37451,7 +37455,7 @@ const DashboardTiles = {
                   disabled={resetLoading}
                   style={{
                     width: '100%', padding: '0.875rem',
-                    backgroundColor: '#f59e0b', color: '#000',
+                    backgroundColor: 'var(--warning-color)', color: '#000',
                     border: 'none', borderRadius: '8px',
                     fontSize: '1rem', fontWeight: 600,
                     cursor: resetLoading ? 'not-allowed' : 'pointer',
@@ -37473,7 +37477,7 @@ const DashboardTiles = {
                     }}
                     style={{
                       background: 'none', border: 'none',
-                      color: '#00d4ff', cursor: 'pointer', fontSize: '0.9rem'
+                      color: 'var(--nx-sec-connect)', cursor: 'pointer', fontSize: '0.9rem'
                     }}
                   >
                     Back to Sign In
@@ -37614,7 +37618,7 @@ const DashboardTiles = {
           className="nx-install-banner"
           style={{
             backgroundColor: '#e3f2fd',
-            border: '1px solid #2196f3',
+            border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
             padding: '0.75rem 1rem',
             borderRadius: '0.375rem',
             display: 'flex',
@@ -37627,7 +37631,7 @@ const DashboardTiles = {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <Download size={22} />
             <div>
-              <div style={{ fontWeight: 'bold', color: '#1976d2', marginBottom: '0.25rem' }}>
+              <div style={{ fontWeight: 'bold', color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', marginBottom: '0.25rem' }}>
                 Install NeXroll
               </div>
               <div style={{ fontSize: '0.9rem', color: '#424242' }}>
@@ -37641,7 +37645,7 @@ const DashboardTiles = {
               className="button"
               onClick={handleInstallPWA}
               style={{
-                backgroundColor: '#2196f3',
+                backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
                 fontSize: '0.9rem',
                 padding: '0.5rem 1rem'
               }}
@@ -37823,7 +37827,7 @@ const DashboardTiles = {
                          )}
                        </div>
                        {preset.requires_dynamic_preroll && !preset.has_requirements && (
-                         <p style={{ margin: '0.5rem 0 0 0', color: '#f59e0b', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                         <p style={{ margin: '0.5rem 0 0 0', color: 'var(--warning-color)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                            <AlertTriangle size={14} /> Requires a generated dynamic preroll
                          </p>
                        )}
@@ -37952,7 +37956,7 @@ const DashboardTiles = {
                          ))}
                        </div>
                      ) : (
-                       <p style={{ fontSize: '0.85rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                       <p style={{ fontSize: '0.85rem', color: 'var(--warning-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                          <AlertTriangle size={14} /> No prerolls generated yet - generate one using the Dynamic Preroll Generator
                        </p>
                      )}
@@ -38213,9 +38217,9 @@ const DashboardTiles = {
                        alignItems: 'center', 
                        gap: '0.5rem',
                        padding: '0.5rem 0.75rem',
-                       backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                       backgroundColor: 'color-mix(in srgb, var(--success-color) 10%, transparent)',
                        borderRadius: '6px',
-                       border: '1px solid rgba(40, 167, 69, 0.3)'
+                       border: '1px solid color-mix(in srgb, var(--success-color) 30%, transparent)'
                      }}>
                        <Film size={18} color="#28a745" />
                        <span style={{ color: 'var(--text-color)' }}>{nexupSequenceWizard.customTrailerCount} NeX-Up Trailer{nexupSequenceWizard.customTrailerCount > 1 ? 's' : ''}</span>
@@ -38310,7 +38314,7 @@ const DashboardTiles = {
                      }}
                      className="button"
                      style={{
-                       backgroundColor: '#ef4444',
+                       backgroundColor: 'color-mix(in srgb, var(--error-color) 88%, #000)',
                        color: 'white',
                        fontSize: '0.85rem',
                        padding: '0.5rem 0.75rem',
@@ -38335,7 +38339,7 @@ const DashboardTiles = {
                      className="button"
                      disabled={autoMatchLoading}
                      style={{
-                       backgroundColor: autoMatchLoading ? '#999' : '#2196f3',
+                       backgroundColor: autoMatchLoading ? '#999' : 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
                        color: 'white',
                        fontSize: '0.85rem',
                        padding: '0.5rem 0.75rem',
@@ -38451,10 +38455,10 @@ const DashboardTiles = {
                                <div style={{
                                  flexShrink: 0,
                                  padding: '0.25rem 0.5rem',
-                                 backgroundColor: match.confidence >= 70 ? 'rgba(16, 185, 129, 0.15)' :
+                                 backgroundColor: match.confidence >= 70 ? 'color-mix(in srgb, var(--success-color) 15%, transparent)' :
                                                  match.confidence >= 40 ? 'rgba(251, 191, 36, 0.15)' :
                                                  'rgba(239, 68, 68, 0.15)',
-                                 color: match.confidence >= 70 ? '#059669' :
+                                 color: match.confidence >= 70 ? 'color-mix(in srgb, var(--success-color) 74%, #000)' :
                                         match.confidence >= 40 ? '#d97706' :
                                         '#dc2626',
                                  borderRadius: '3px',
@@ -38471,10 +38475,10 @@ const DashboardTiles = {
                                  style={{
                                    flexShrink: 0,
                                    padding: '0.5rem',
-                                   backgroundColor: 'rgba(33, 150, 243, 0.1)',
-                                   border: '1px solid rgba(33, 150, 243, 0.3)',
+                                   backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 10%, transparent)',
+                                   border: '1px solid color-mix(in srgb, var(--nx-sec-connect) 30%, transparent)',
                                    borderRadius: '4px',
-                                   color: '#2196f3',
+                                   color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
                                    cursor: 'pointer',
                                    fontSize: '1rem',
                                    transition: 'all 0.2s',
@@ -38531,12 +38535,12 @@ const DashboardTiles = {
              <div className="nx-edit-preroll-scaling" style={{
                marginBottom: '1rem', 
                padding: '0.75rem', 
-               backgroundColor: 'rgba(99, 102, 241, 0.08)', 
-               border: '1px solid rgba(99, 102, 241, 0.2)',
+               backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 8%, transparent)', 
+               border: '1px solid color-mix(in srgb, var(--nx-sec-library) 20%, transparent)',
                borderRadius: '6px'
              }}>
                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                 <Clapperboard size={16} style={{ color: '#6366f1' }} />
+                 <Clapperboard size={16} style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 93%, #000)' }} />
                  <strong style={{ color: 'var(--text-color)' }}>Video Scaling</strong>
                </div>
                
@@ -38547,8 +38551,8 @@ const DashboardTiles = {
                    {videoInfo ? (
                      <span style={{ 
                        padding: '0.15rem 0.4rem', 
-                       backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                       color: '#059669',
+                       backgroundColor: 'color-mix(in srgb, var(--success-color) 15%, transparent)',
+                       color: 'color-mix(in srgb, var(--success-color) 74%, #000)',
                        borderRadius: '4px',
                        fontWeight: '600',
                        fontSize: '0.8rem'
@@ -38577,7 +38581,7 @@ const DashboardTiles = {
                    disabled={transcodeLoading || (videoInfo?.height === 1080)}
                    className="button"
                    style={{ 
-                     backgroundColor: videoInfo?.height === 1080 ? '#6b7280' : '#3b82f6',
+                     backgroundColor: videoInfo?.height === 1080 ? '#6b7280' : 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
                      opacity: transcodeLoading ? 0.6 : 1,
                      cursor: transcodeLoading || videoInfo?.height === 1080 ? 'not-allowed' : 'pointer',
                      padding: '0.4rem 0.75rem',
@@ -38593,7 +38597,7 @@ const DashboardTiles = {
                    disabled={transcodeLoading || (videoInfo?.height === 720)}
                    className="button"
                    style={{ 
-                     backgroundColor: videoInfo?.height === 720 ? '#6b7280' : '#10b981',
+                     backgroundColor: videoInfo?.height === 720 ? '#6b7280' : 'var(--success-color)',
                      opacity: transcodeLoading ? 0.6 : 1,
                      cursor: transcodeLoading || videoInfo?.height === 720 ? 'not-allowed' : 'pointer',
                      padding: '0.4rem 0.75rem',
@@ -38609,7 +38613,7 @@ const DashboardTiles = {
                    disabled={transcodeLoading || (videoInfo?.height === 480)}
                    className="button"
                    style={{ 
-                     backgroundColor: videoInfo?.height === 480 ? '#6b7280' : '#f59e0b',
+                     backgroundColor: videoInfo?.height === 480 ? '#6b7280' : 'var(--warning-color)',
                      opacity: transcodeLoading ? 0.6 : 1,
                      cursor: transcodeLoading || videoInfo?.height === 480 ? 'not-allowed' : 'pointer',
                      padding: '0.4rem 0.75rem',
@@ -38728,9 +38732,9 @@ const DashboardTiles = {
                              fontSize: '0.8rem',
                              padding: '0.3rem 0.6rem',
                              borderRadius: '12px',
-                             backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                             backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)',
                              color: 'var(--text-color)',
-                             border: '1px solid rgba(99, 102, 241, 0.3)',
+                             border: '1px solid color-mix(in srgb, var(--nx-sec-library) 30%, transparent)',
                              fontWeight: '500',
                              display: 'inline-flex',
                              alignItems: 'center',
@@ -38757,7 +38761,7 @@ const DashboardTiles = {
                              style={{
                                background: 'none',
                                border: 'none',
-                               color: 'rgba(239, 68, 68, 0.8)',
+                               color: 'color-mix(in srgb, var(--error-color) 80%, transparent)',
                                cursor: 'pointer',
                                padding: '0',
                                fontSize: '1rem',
@@ -38796,7 +38800,7 @@ const DashboardTiles = {
                        style={{
                          padding: '0.5rem 0.75rem',
                          fontSize: '0.8rem',
-                         backgroundColor: '#6366f1',
+                         backgroundColor: 'color-mix(in srgb, var(--nx-sec-library) 93%, #000)',
                          color: 'white',
                          border: 'none',
                          borderRadius: '4px',
@@ -38859,8 +38863,8 @@ const DashboardTiles = {
                                  textAlign: 'left',
                                  padding: '0.5rem',
                                  margin: '0.2rem 0',
-                                 background: isAdded ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                                 border: `1px solid ${isAdded ? 'rgba(99, 102, 241, 0.3)' : 'var(--border-color, #ddd)'}`,
+                                 background: isAdded ? 'color-mix(in srgb, var(--nx-sec-library) 15%, transparent)' : 'transparent',
+                                 border: `1px solid ${isAdded ? 'color-mix(in srgb, var(--nx-sec-library) 30%, transparent)' : 'var(--border-color, #ddd)'}`,
                                  borderRadius: '4px',
                                  cursor: 'pointer',
                                  color: 'var(--text-color)',
@@ -38878,7 +38882,7 @@ const DashboardTiles = {
                              width: '100%',
                              padding: '0.5rem',
                              marginTop: '0.5rem',
-                             background: 'var(--button-bg, #6366f1)',
+                             background: 'var(--button-bg, color-mix(in srgb, var(--nx-sec-library) 93%, #000))',
                              color: 'white',
                              border: 'none',
                              borderRadius: '4px',
@@ -39057,7 +39061,7 @@ const DashboardTiles = {
              const videoUrl = current.preview_url ? apiUrl(current.preview_url.replace(/^\//, '')) : null;
              return (
                <div>
-                 <p style={{ margin: '0 0 0.5rem', fontWeight: 'bold', color: '#8b5cf6' }}>
+                 <p style={{ margin: '0 0 0.5rem', fontWeight: 'bold', color: 'var(--nx-sec-library)' }}>
                    {current.display_name}
                    {current.category_name && (
                      <span style={{ fontWeight: 'normal', color: 'var(--text-secondary, #888)', fontSize: '0.85rem' }}> — {current.category_name}</span>
@@ -39122,7 +39126,7 @@ const DashboardTiles = {
                          onClick={() => setCurrentPrerollPreview(prev => ({ ...prev, index: i }))}
                          style={{
                            width: '28px', height: '28px', borderRadius: '50%', border: 'none', cursor: 'pointer',
-                           backgroundColor: i === currentPrerollPreview.index ? '#8b5cf6' : 'var(--border-color, #444)',
+                           backgroundColor: i === currentPrerollPreview.index ? 'var(--nx-sec-library)' : 'var(--border-color, #444)',
                            color: '#fff', fontSize: '0.75rem', fontWeight: 'bold'
                          }}
                        >
@@ -39294,7 +39298,7 @@ const DashboardTiles = {
              marginBottom: '1rem'
            }}>
              <h3 style={{ margin: 0, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-               <Sparkles size={22} style={{ color: '#ffd700' }} />
+               <Sparkles size={22} style={{ color: 'var(--warning-color)' }} />
                {(() => {
                  const templateId = previewingDynamicPreroll?.template_id || dynamicPrerollSettings.template;
                  const template = dynamicPrerollTemplates.find(t => t.id === templateId);
@@ -39399,7 +39403,7 @@ const DashboardTiles = {
              marginBottom: '1rem'
            }}>
              <h3 style={{ margin: 0, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-               <Film size={22} style={{ color: '#00d4ff' }} />
+               <Film size={22} style={{ color: 'var(--nx-sec-connect)' }} />
                Coming Soon List - {previewingComingSoonList?.filename?.includes('grid') ? 'Grid Layout' : 'List Layout'}
              </h3>
              <button 
@@ -39499,9 +39503,9 @@ const DashboardTiles = {
            }}>
              <h3 style={{ margin: 0, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                {playingTrailer.type === 'movie' ? (
-                 <Video size={22} style={{ color: '#ffc230' }} />
+                 <Video size={22} style={{ color: 'var(--warning-color)' }} />
                ) : (
-                 <Tv size={22} style={{ color: '#17a2b8' }} />
+                 <Tv size={22} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' }} />
                )}
                {playingTrailer.trailer?.title}
              </h3>
@@ -39678,7 +39682,7 @@ const DashboardTiles = {
               backgroundColor: 'var(--card-bg)'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <Globe size={24} style={{ color: '#3b82f6' }} />
+                <Globe size={24} style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)' }} />
                 <div>
                   <h2 id="holiday-browser-title" style={{ margin: 0, color: 'var(--text-color)', fontSize: '1.25rem', fontWeight: 700 }}>
                     Holiday Browser
@@ -39695,9 +39699,9 @@ const DashboardTiles = {
                     borderRadius: '4px',
                     fontSize: '0.7rem',
                     fontWeight: 600,
-                    backgroundColor: holidayApiStatus.available ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                    color: holidayApiStatus.available ? '#22c55e' : '#ef4444',
-                    border: `1px solid ${holidayApiStatus.available ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+                    backgroundColor: holidayApiStatus.available ? 'color-mix(in srgb, var(--success-color) 15%, transparent)' : 'color-mix(in srgb, var(--error-color) 15%, transparent)',
+                    color: holidayApiStatus.available ? 'color-mix(in srgb, var(--success-color) 91%, #000)' : 'color-mix(in srgb, var(--error-color) 88%, #000)',
+                    border: `1px solid ${holidayApiStatus.available ? 'color-mix(in srgb, var(--success-color) 30%, transparent)' : 'color-mix(in srgb, var(--error-color) 30%, transparent)'}`
                   }}>
                     {holidayApiStatus.available ? '● Online' : '○ Offline'}
                   </span>
@@ -39850,8 +39854,8 @@ const DashboardTiles = {
                                 borderRadius: '4px',
                                 fontSize: '0.7rem',
                                 fontWeight: 600,
-                                backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                                color: '#3b82f6',
+                                backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)',
+                                color: 'color-mix(in srgb, var(--nx-sec-connect) 91%, #000)',
                                 textTransform: 'uppercase'
                               }}>Public</span>
                             )}
@@ -40022,7 +40026,7 @@ const DashboardTiles = {
                               borderRadius: '4px',
                               fontSize: '0.8rem',
                               fontWeight: 600,
-                              backgroundColor: '#28a745',
+                              backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                               color: '#fff',
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -40036,7 +40040,7 @@ const DashboardTiles = {
                               padding: '0.2rem 0.5rem',
                               borderRadius: '4px',
                               fontSize: '0.8rem',
-                              backgroundColor: movie.days_until_release <= 7 ? '#28a745' : movie.days_until_release <= 30 ? '#ffc107' : '#6c757d',
+                              backgroundColor: movie.days_until_release <= 7 ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : movie.days_until_release <= 30 ? 'var(--warning-color)' : '#6c757d',
                               color: movie.days_until_release <= 30 ? '#000' : '#fff'
                             }}>
                               {movie.days_until_release <= 0 ? 'Released!' : `In ${movie.days_until_release} days`}
@@ -40053,7 +40057,7 @@ const DashboardTiles = {
                         <span style={{ 
                           padding: '0.5rem 1rem',
                           borderRadius: '4px',
-                          backgroundColor: '#28a745',
+                          backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                           color: 'white',
                           fontSize: '0.85rem',
                           fontWeight: 500
@@ -40066,7 +40070,7 @@ const DashboardTiles = {
                           disabled={downloadingTrailerId === movie.radarr_id || nexupLoading}
                           className="button"
                           style={{ 
-                            backgroundColor: downloadingTrailerId === movie.radarr_id ? '#6c757d' : '#007bff',
+                            backgroundColor: downloadingTrailerId === movie.radarr_id ? '#6c757d' : 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)',
                             minWidth: '160px',
                             display: 'flex',
                             alignItems: 'center',
@@ -40151,7 +40155,7 @@ const DashboardTiles = {
                       padding: '1rem',
                       backgroundColor: 'var(--card-bg)',
                       borderRadius: '8px',
-                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : '#dc3545'}`,
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'color-mix(in srgb, var(--error-color) 81%, #000)'}`,
                       opacity: trailer.is_enabled ? 1 : 0.7
                     }}
                   >
@@ -40189,14 +40193,14 @@ const DashboardTiles = {
                           />
                           <span className="nx-rockerswitch-slider"></span>
                         </label>
-                        <span style={{ fontSize: '0.8rem', color: trailer.is_enabled ? '#28a745' : '#dc3545' }}>
+                        <span style={{ fontSize: '0.8rem', color: trailer.is_enabled ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>
                           {trailer.is_enabled ? 'Enabled' : 'Disabled'}
                         </span>
                       </div>
                       <button
                         onClick={() => handleDeleteTrailer(trailer.id, trailer.title)}
                         className="button"
-                        style={{ backgroundColor: '#dc3545', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
+                        style={{ backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
                       >
                         Delete
                       </button>
@@ -40260,7 +40264,7 @@ const DashboardTiles = {
                       padding: '1rem',
                       backgroundColor: 'var(--card-bg)',
                       borderRadius: '8px',
-                      border: `1px solid ${show.downloaded ? '#28a745' : 'var(--border-color)'}`
+                      border: `1px solid ${show.downloaded ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'var(--border-color)'}`
                     }}
                   >
                     {show.poster_url && (
@@ -40276,7 +40280,7 @@ const DashboardTiles = {
                         {show.title} {show.year && `(${show.year})`}
                       </h3>
                       {show.season_number && (
-                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#17a2b8', fontWeight: 500 }}>
+                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', fontWeight: 500 }}>
                           Season {show.season_number} {show.release_type === 'season_premiere' ? '(Season Premiere)' : show.release_type === 'series_premiere' ? '(Series Premiere)' : ''}
                         </p>
                       )}
@@ -40290,7 +40294,7 @@ const DashboardTiles = {
                               borderRadius: '4px',
                               fontSize: '0.8rem',
                               fontWeight: 600,
-                              backgroundColor: '#28a745',
+                              backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                               color: '#fff',
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -40304,7 +40308,7 @@ const DashboardTiles = {
                               padding: '0.2rem 0.5rem',
                               borderRadius: '4px',
                               fontSize: '0.8rem',
-                              backgroundColor: show.days_until_release <= 7 ? '#28a745' : show.days_until_release <= 30 ? '#ffc107' : '#6c757d',
+                              backgroundColor: show.days_until_release <= 7 ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : show.days_until_release <= 30 ? 'var(--warning-color)' : '#6c757d',
                               color: show.days_until_release <= 30 ? '#000' : '#fff'
                             }}>
                               {show.days_until_release <= 0 ? 'Released!' : `In ${show.days_until_release} days`}
@@ -40326,7 +40330,7 @@ const DashboardTiles = {
                         <span style={{ 
                           padding: '0.5rem 1rem',
                           borderRadius: '4px',
-                          backgroundColor: '#28a745',
+                          backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)',
                           color: 'white',
                           fontSize: '0.85rem',
                           fontWeight: 500
@@ -40339,7 +40343,7 @@ const DashboardTiles = {
                           disabled={downloadingTrailerId === `tv_${show.sonarr_series_id}_${show.season_number}` || nexupLoading}
                           className="button"
                           style={{ 
-                            backgroundColor: downloadingTrailerId === `tv_${show.sonarr_series_id}_${show.season_number}` ? '#6c757d' : '#17a2b8',
+                            backgroundColor: downloadingTrailerId === `tv_${show.sonarr_series_id}_${show.season_number}` ? '#6c757d' : 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)',
                             minWidth: '160px',
                             display: 'flex',
                             alignItems: 'center',
@@ -40424,7 +40428,7 @@ const DashboardTiles = {
                       padding: '1rem',
                       backgroundColor: 'var(--card-bg)',
                       borderRadius: '8px',
-                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : '#dc3545'}`,
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'color-mix(in srgb, var(--error-color) 81%, #000)'}`,
                       opacity: trailer.is_enabled ? 1 : 0.7
                     }}
                   >
@@ -40441,7 +40445,7 @@ const DashboardTiles = {
                         {trailer.title} {trailer.year && `(${trailer.year})`}
                       </h3>
                       {trailer.season_number && (
-                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#17a2b8', fontWeight: 500 }}>
+                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)', fontWeight: 500 }}>
                           Season {trailer.season_number}
                         </p>
                       )}
@@ -40468,14 +40472,14 @@ const DashboardTiles = {
                           />
                           <span className="nx-rockerswitch-slider"></span>
                         </label>
-                        <span style={{ fontSize: '0.8rem', color: trailer.is_enabled ? '#28a745' : '#dc3545' }}>
+                        <span style={{ fontSize: '0.8rem', color: trailer.is_enabled ? 'color-mix(in srgb, var(--success-color) 76%, #000)' : 'color-mix(in srgb, var(--error-color) 81%, #000)' }}>
                           {trailer.is_enabled ? 'Enabled' : 'Disabled'}
                         </span>
                       </div>
                       <button
                         onClick={() => handleDeleteTVTrailer(trailer.id)}
                         className="button"
-                        style={{ backgroundColor: '#dc3545', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
+                        style={{ backgroundColor: 'color-mix(in srgb, var(--error-color) 81%, #000)', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
                       >
                         Delete
                       </button>
@@ -40894,9 +40898,9 @@ const DashboardTiles = {
                       style={{ 
                         width: '100%',
                         padding: '1rem', 
-                        backgroundColor: youtubeSetup.authMethod === 'browser' ? 'rgba(40, 167, 69, 0.2)' : 'var(--bg-color)', 
+                        backgroundColor: youtubeSetup.authMethod === 'browser' ? 'color-mix(in srgb, var(--success-color) 20%, transparent)' : 'var(--bg-color)', 
                         borderRadius: '8px',
-                        border: youtubeSetup.authMethod === 'browser' ? '2px solid #28a745' : '2px solid var(--border-color)',
+                        border: youtubeSetup.authMethod === 'browser' ? '2px solid color-mix(in srgb, var(--success-color) 76%, #000)' : '2px solid var(--border-color)',
                         cursor: 'pointer',
                         textAlign: 'left',
                         color: 'inherit',
@@ -40908,7 +40912,7 @@ const DashboardTiles = {
                         <Globe size={24} color="#28a745" />
                         <strong style={{ fontSize: '1.1rem' }}>Extract Browser Cookies</strong>
                         <span style={{ 
-                          backgroundColor: '#28a745', 
+                          backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)', 
                           color: 'white', 
                           padding: '0.15rem 0.5rem', 
                           borderRadius: '4px', 
@@ -40928,9 +40932,9 @@ const DashboardTiles = {
                       style={{ 
                         width: '100%',
                         padding: '1rem', 
-                        backgroundColor: youtubeSetup.authMethod === 'cookies' ? 'rgba(23, 162, 184, 0.2)' : 'var(--bg-color)', 
+                        backgroundColor: youtubeSetup.authMethod === 'cookies' ? 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)' : 'var(--bg-color)', 
                         borderRadius: '8px',
-                        border: youtubeSetup.authMethod === 'cookies' ? '2px solid #17a2b8' : '2px solid var(--border-color)',
+                        border: youtubeSetup.authMethod === 'cookies' ? '2px solid color-mix(in srgb, var(--nx-sec-connect) 77%, #000)' : '2px solid var(--border-color)',
                         cursor: 'pointer',
                         textAlign: 'left',
                         color: 'inherit',
@@ -40956,10 +40960,10 @@ const DashboardTiles = {
                   {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
                     <div style={{ 
                       padding: '1rem', 
-                      backgroundColor: '#f8d7da', 
+                      backgroundColor: 'color-mix(in srgb, var(--error-color) 20%, var(--text-color))', 
                       borderRadius: '8px',
                       marginBottom: '1rem',
-                      color: '#721c24',
+                      color: 'color-mix(in srgb, var(--error-color) 42%, #000)',
                       textAlign: 'left'
                     }}>
                       {youtubeSetup.testResult.message}
@@ -41046,7 +41050,7 @@ const DashboardTiles = {
                   {/* Important tip */}
                   <div style={{ 
                     padding: '1rem', 
-                    backgroundColor: '#17a2b8',
+                    backgroundColor: 'color-mix(in srgb, var(--nx-sec-connect) 77%, #000)',
                     color: 'white',
                     borderRadius: '8px',
                     textAlign: 'left',
@@ -41078,7 +41082,7 @@ const DashboardTiles = {
                     <button
                       onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 3 }))}
                       className="button"
-                      style={{ backgroundColor: '#28a745', padding: '0.75rem 2rem' }}
+                      style={{ backgroundColor: 'color-mix(in srgb, var(--success-color) 76%, #000)', padding: '0.75rem 2rem' }}
                     >
                       I'm Signed In →
                     </button>
@@ -41097,11 +41101,11 @@ const DashboardTiles = {
                   </p>
                   <div style={{ 
                     padding: '1rem', 
-                    backgroundColor: '#d4edda', 
+                    backgroundColor: 'color-mix(in srgb, var(--success-color) 20%, var(--text-color))', 
                     borderRadius: '8px',
                     marginBottom: '1rem',
                     textAlign: 'left',
-                    color: '#155724'
+                    color: 'color-mix(in srgb, var(--success-color) 40%, #000)'
                   }}>
                     <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} /> Good News:</strong>
                     <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
@@ -41111,11 +41115,11 @@ const DashboardTiles = {
                   </div>
                   <div style={{ 
                     padding: '1rem', 
-                    backgroundColor: '#fff3cd', 
+                    backgroundColor: 'color-mix(in srgb, var(--warning-color) 20%, var(--text-color))', 
                     borderRadius: '8px',
                     marginBottom: '1.5rem',
                     textAlign: 'left',
-                    color: '#856404'
+                    color: 'color-mix(in srgb, var(--warning-color) 52%, #000)'
                   }}>
                     <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} /> Why close the browser?</strong>
                     <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
@@ -41127,10 +41131,10 @@ const DashboardTiles = {
                   {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
                     <div style={{ 
                       padding: '1rem', 
-                      backgroundColor: '#f8d7da', 
+                      backgroundColor: 'color-mix(in srgb, var(--error-color) 20%, var(--text-color))', 
                       borderRadius: '8px',
                       marginBottom: '1rem',
-                      color: '#721c24'
+                      color: 'color-mix(in srgb, var(--error-color) 42%, #000)'
                     }}>
                       {youtubeSetup.testResult.message}
                     </div>
@@ -41164,7 +41168,7 @@ const DashboardTiles = {
               {youtubeSetup.wizardStep === 4 && (
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ marginBottom: '1rem' }}><PartyPopper size={64} color="#28a745" /></div>
-                  <h3 style={{ marginBottom: '1rem', color: '#28a745' }}>YouTube is Ready!</h3>
+                  <h3 style={{ marginBottom: '1rem', color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }}>YouTube is Ready!</h3>
                   <p style={{ color: '#888', marginBottom: '1.5rem' }}>
                     Your YouTube authentication is set up successfully. 
                     You can now download trailers without issues.
@@ -41176,11 +41180,11 @@ const DashboardTiles = {
                       borderRadius: '8px',
                       marginBottom: '1.5rem',
                       fontSize: '0.9rem',
-                      color: youtubeSetup.testResult.success ? 'var(--success-color, #28a745)' : '#dc3545',
+                      color: youtubeSetup.testResult.success ? 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))' : 'color-mix(in srgb, var(--error-color) 81%, #000)',
                       background: youtubeSetup.testResult.success
                         ? 'color-mix(in srgb, var(--success-color, #28a745) 12%, transparent)'
                         : 'color-mix(in srgb, #dc3545 12%, transparent)',
-                      border: `1px solid ${youtubeSetup.testResult.success ? 'color-mix(in srgb, var(--success-color, #28a745) 40%, transparent)' : 'color-mix(in srgb, #dc3545 40%, transparent)'}`,
+                      border: `1px solid ${youtubeSetup.testResult.success ? 'color-mix(in srgb, var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000)) 40%, transparent)' : 'color-mix(in srgb, color-mix(in srgb, var(--error-color) 81%, #000) 40%, transparent)'}`,
                     }}>
                       <div style={{ fontWeight: 600 }}>
                         {youtubeSetup.testResult.message || youtubeSetup.testResult.error || 'Test failed'}
@@ -41275,7 +41279,7 @@ const DashboardTiles = {
                 </code>
               </div>
               {folderBrowserVideoCount > 0 && (
-                <div style={{ marginTop: '0.5rem', color: '#28a745', fontSize: '0.85rem' }}>
+                <div style={{ marginTop: '0.5rem', color: 'color-mix(in srgb, var(--success-color) 76%, #000)', fontSize: '0.85rem' }}>
                   <Film size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} />
                   {folderBrowserVideoCount} video file{folderBrowserVideoCount !== 1 ? 's' : ''} in this folder
                 </div>
@@ -41338,7 +41342,7 @@ const DashboardTiles = {
                       {item.type === 'drive' ? (
                         <HardDrive size={16} style={{ color: 'var(--text-secondary)' }} />
                       ) : (
-                        <Folder size={16} style={{ color: '#f0c000' }} />
+                        <Folder size={16} style={{ color: 'var(--warning-color)' }} />
                       )}
                       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {item.name}
@@ -41447,19 +41451,19 @@ const DashboardTiles = {
             The default trailer couldn’t be downloaded. Preview these alternates and pick one to download.
           </p>
           {altTrailers.defaultReason && (
-            <div style={{ marginTop: '-0.4rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'var(--hover-bg)', borderRadius: '6px', padding: '0.5rem 0.7rem', borderLeft: '3px solid #ffc230' }}>
+            <div style={{ marginTop: '-0.4rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'var(--hover-bg)', borderRadius: '6px', padding: '0.5rem 0.7rem', borderLeft: '3px solid var(--warning-color)' }}>
               <strong>Why:</strong> {altTrailers.defaultReason}
             </div>
           )}
 
           {altTrailers.error && altTrailers.candidates.length > 0 && (
-            <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'rgba(220,53,69,0.12)', border: '1px solid rgba(220,53,69,0.45)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.82rem', lineHeight: 1.45 }}>
+            <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'color-mix(in srgb, var(--error-color) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--error-color) 45%, transparent)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.82rem', lineHeight: 1.45 }}>
               {altTrailers.error}
             </div>
           )}
 
           {altTrailers.candidates.length > 0 && Object.keys(altTrailers.failedUrls || {}).length >= altTrailers.candidates.length && (
-            <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'rgba(255,193,7,0.12)', border: '1px solid rgba(255,193,7,0.45)', borderRadius: '8px', color: '#d39e00', fontSize: '0.82rem', lineHeight: 1.45 }}>
+            <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'color-mix(in srgb, var(--warning-color) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--warning-color) 45%, transparent)', borderRadius: '8px', color: 'color-mix(in srgb, var(--warning-color) 83%, #000)', fontSize: '0.82rem', lineHeight: 1.45 }}>
               All of these are unavailable from your network — this title is likely region-blocked where NeXroll runs. A VPN or different network may be required, or this trailer simply isn’t downloadable here.
             </div>
           )}
@@ -41469,7 +41473,7 @@ const DashboardTiles = {
               <Loader2 size={20} className="spin" /> Searching for {altTrailers.languageLabel ? `${altTrailers.languageLabel} ` : ''}trailers…
             </div>
           ) : altTrailers.error && altTrailers.candidates.length === 0 ? (
-            <div style={{ padding: '1rem', background: 'rgba(220,53,69,0.1)', border: '1px solid rgba(220,53,69,0.4)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.88rem' }}>
+            <div style={{ padding: '1rem', background: 'color-mix(in srgb, var(--error-color) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--error-color) 40%, transparent)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.88rem' }}>
               {altTrailers.error}
             </div>
           ) : altTrailers.candidates.length === 0 ? (
@@ -41507,12 +41511,12 @@ const DashboardTiles = {
                     <div style={{ padding: '0.6rem 0.75rem', opacity: failed ? 0.65 : 1 }}>
                       <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.2rem' }}>{c.title}</div>
                       {c.language_label && (
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', fontWeight: 600, color: '#35d06f', background: 'rgba(53, 208, 111, 0.12)', border: '1px solid rgba(53, 208, 111, 0.35)', borderRadius: '999px', padding: '0.05rem 0.5rem', marginBottom: '0.3rem' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', fontWeight: 600, color: 'var(--success-color)', background: 'color-mix(in srgb, var(--success-color) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--success-color) 35%, transparent)', borderRadius: '999px', padding: '0.05rem 0.5rem', marginBottom: '0.3rem' }}>
                           <Globe size={11} /> {c.language_label}, listed on TMDB
                         </div>
                       )}
                       {failed && (
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', color: '#d39e00', marginBottom: '0.2rem' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', color: 'color-mix(in srgb, var(--warning-color) 83%, #000)', marginBottom: '0.2rem' }}>
                           <AlertTriangle size={12} /> Unavailable from your network — try another
                         </div>
                       )}

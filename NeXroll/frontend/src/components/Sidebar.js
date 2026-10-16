@@ -41,7 +41,7 @@ const NAV = [
     id: 'library',
     label: 'Library',
     icon: Library,
-    accent: '#8b5cf6', // violet (matches the Prerolls dashboard card)
+    accent: 'var(--nx-sec-library)', // each theme sets its section colors (index.css)
     match: (t) => t === 'library' || t.startsWith('library/'),
     children: [
       { id: 'library', label: 'All Prerolls', icon: Film },
@@ -55,7 +55,7 @@ const NAV = [
     id: 'schedules',
     label: 'Schedules',
     icon: Calendar,
-    accent: '#10b981', // emerald (matches the Schedules dashboard card)
+    accent: 'var(--nx-sec-schedules)',
     match: (t) => t.startsWith('schedules'),
     children: [
       { id: 'schedules', label: 'My Schedules', icon: Calendar },
@@ -70,7 +70,7 @@ const NAV = [
     id: 'nexup',
     label: 'NeX-Up',
     icon: Sparkles,
-    accent: '#ffc230',
+    accent: 'var(--nx-sec-nexup)',
     match: (t) => t.startsWith('nexup'),
     children: [
       { id: 'nexup', label: 'Connections', icon: LinkIcon },
@@ -85,14 +85,14 @@ const NAV = [
     id: 'connect',
     label: 'Connect',
     icon: LinkIcon,
-    accent: '#0ea5e9', // sky (matches the Plex Status dashboard card)
+    accent: 'var(--nx-sec-connect)',
     match: (t) => t === 'connect',
   },
   {
     id: 'community-prerolls',
     label: 'Community Prerolls',
     icon: Globe,
-    accent: '#f43f5e', // rose
+    accent: 'var(--nx-sec-community)',
     match: (t) => t === 'community-prerolls' || t.startsWith('community-prerolls/'),
     children: [
       { id: 'community-prerolls/browse', label: 'Browse', icon: FolderTree },
@@ -103,7 +103,7 @@ const NAV = [
     id: 'settings',
     label: 'Settings',
     icon: Settings,
-    accent: '#6366f1', // indigo
+    accent: 'var(--nx-sec-settings)',
     match: (t) => t.startsWith('settings'),
     children: [
       { id: 'settings', label: 'General', icon: Settings },
