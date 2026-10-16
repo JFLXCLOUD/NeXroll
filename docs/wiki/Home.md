@@ -13,6 +13,13 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.2.7
+
+- **A security update.** Anyone who could reach NeXroll could download files from it, its database included, and other websites could use it through your browser while login was off. Update soon, especially on Docker.
+- **Community Prerolls:** filter and sort by length, one row per preroll across Plex, Jellyfin and Emby, better search, and an optional weekly index refresh. See [Filtering by length](Community-Prerolls#filtering-by-length) and [Platform versions](Community-Prerolls#platform-versions).
+- **Every theme recolors the whole app.**
+- **Docker:** run as a non-root user with `NEXROLL_RUN_AS_PUID`, and images are also tagged `2.2` and `2`. See [Docker](Docker#running-as-a-non-root-user).
+
 ## What's New in v2.2.6
 
 - **Fixes for 2.2.5:** Plex no longer stops on a trailer when the preroll list changes between two prerolls, and Jellyfin and Emby switch to filler or a blend straight away on installs that also run Plex.
