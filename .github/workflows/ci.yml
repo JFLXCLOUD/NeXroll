@@ -15,6 +15,10 @@ env:
   # switch is validated on our schedule. Safe to delete after 2026-09-16.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Least privilege by default; jobs that publish declare more.
+permissions:
+  contents: read
+
 jobs:
   frontend-build:
     runs-on: ubuntu-latest
@@ -22,8 +26,8 @@ jobs:
       run:
         working-directory: NeXroll/frontend
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 20
           cache: npm
@@ -36,8 +40,8 @@ jobs:
   backend-syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - name: Compile all backend sources

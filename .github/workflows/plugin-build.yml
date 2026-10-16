@@ -20,6 +20,10 @@ on:
         description: 'Existing release tag to attach the plugin to (e.g. v2.0.0-beta.13)'
         required: true
 
+# Least privilege by default; jobs that publish declare more.
+permissions:
+  contents: read
+
 jobs:
   build-plugin:
     runs-on: ubuntu-latest
@@ -34,10 +38,10 @@ jobs:
       contents: write   # required to upload release assets
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: ${{ matrix.sdk }}
 
@@ -98,10 +102,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: main
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
       - name: Publish verified catalog packages and manifests
