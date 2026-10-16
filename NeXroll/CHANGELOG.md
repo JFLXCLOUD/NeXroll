@@ -1,5 +1,49 @@
 ﻿# Changelog
 
+## [2.2.7] - 10-16-2026
+
+> A security update: anyone who could reach NeXroll could download files from it, its database included, and other websites could use it through your browser. Also: length filters and one row per preroll in Community Prerolls, themes that recolor the whole app, and a Windows installer on Python 3.14.
+
+### Upgrading
+
+- **Update soon, especially on Docker** (see Security). No plugin update is needed.
+- **Password reset only works sent straight to localhost** on the NeXroll machine, as the sign-in screen shows. Through a reverse proxy or tunnel it is refused.
+- **Pages on other sites can reach only the plugin and /external/ routes**, the latter with an API key. Scripts and other servers are not affected.
+- **Docker: PUID and PGID take effect only with NEXROLL_RUN_AS_PUID=true** (Unraid: Run as PUID/PGID). Without it nothing changes.
+- **The Windows installer needs Windows 10 or 11 (64-bit).**
+
+### Security
+
+- **Anyone who could reach NeXroll could download files from it,** including the database with your Plex token and server keys, even with login on. The links the Jellyfin and Emby plugins stream prerolls from were signed with a key anyone could work out, the same on every Docker install, and served any file. Each install now has its own random key, and only videos are served.
+- **Jellyfin and Emby plugin setup didn't need login.** Anyone who could reach NeXroll could point the plugin at another server and collect a new API key. It now needs a signed-in user; the routes the plugins call are unchanged.
+- **Other websites could use NeXroll through your browser while login was off.** NeXroll now answers other sites only on the plugin and /external/ routes, and refuses changes a browser marks as coming from another site.
+- **Password reset and the local admin shortcuts trusted requests relayed by a proxy on the same machine.** They now accept only requests sent straight to localhost.
+- **The current-preroll preview could play any video on the machine by its path.** It now plays only files NeXroll lists.
+- **Updated libraries.** The Windows installer moves from Python 3.10.11, which no longer gets fixes, to 3.14, with updated starlette, python-multipart, Pillow and urllib3. The Docker image patches basic-ftp in the YouTube PO-token provider and takes Deno from its official image.
+
+### Added
+
+- **Filter Community Prerolls by length** (presets or a custom range) and sort shortest or longest first. Lengths are read from the files in the background after an index build.
+- **One row per preroll across Plex, Jellyfin and Emby** in Community Prerolls, with a chip per version. The download dialog ticks the versions for your connected servers, and previews switch between them.
+- **Weekly index refresh** for Community Prerolls, off unless you turn it on.
+- **Docker: run as a non-root user** with NEXROLL_RUN_AS_PUID (see Upgrading).
+
+### Changed
+
+- **Every theme recolors the whole app,** section colors, buttons and sidebar included.
+- **Community search lists direct matches first,** and related words match whole words only ("turkey" no longer finds Fallout).
+- **Community Prerolls uses the standard page layout,** shows the same file stored in two folders once, tidies titles, and keeps an index older than a week working while it asks for a refresh.
+- **Connect's server cards share one height.**
+
+### Fixed
+
+- **The trash emptied early or late** by your time zone's offset from UTC.
+- **Community result rows squashed the title to nothing on phones.**
+
+### Issues resolved
+
+- [#46](https://github.com/JFLXCLOUD/NeXroll/issues/46): Docker images are also tagged with their minor and major version (for example 2.2 and 2).
+
 ## [2.2.6] - 10-12-2026
 
 > Two fixes for 2.2.5: Plex no longer stops on a trailer when NeXroll updates the preroll list between two prerolls, and Jellyfin and Emby switch to filler or a blend at once on installs that also run Plex.
