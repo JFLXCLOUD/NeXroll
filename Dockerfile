@@ -207,5 +207,11 @@ EXPOSE 9393
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -fsS http://localhost:${NEXROLL_PORT:-9393}/health || exit 1
 
-# Start Uvicorn
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${NEXROLL_PORT:-9393}"]
+# Runs NeXroll as PUID:PGID when NEXROLL_RUN_AS_PUID is true, as root otherwise
+# (see the script).
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+# Start Uvicorn. exec, so uvicorn gets Docker's stop signal itself instead of a
+# shell that doesn't pass it on (the stop used to wait out its 10 s timeout).
+CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port ${NEXROLL_PORT:-9393}"]

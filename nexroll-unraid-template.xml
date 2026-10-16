@@ -29,6 +29,7 @@
   <Config Name="Database Directory" Target="NEXROLL_DB_DIR" Default="/data" Mode="" Description="Database storage location inside container" Type="Variable" Display="advanced" Required="false" Mask="false">/data</Config>
   <Config Name="Preroll Path (Internal)" Target="NEXROLL_PREROLL_PATH" Default="/data/prerolls" Mode="" Description="Preroll directory path inside container" Type="Variable" Display="advanced" Required="false" Mask="false">/data/prerolls</Config>
   <Config Name="Secrets Directory" Target="NEXROLL_SECRETS_DIR" Default="/data" Mode="" Description="Secure storage for tokens inside container" Type="Variable" Display="advanced" Required="false" Mask="false">/data</Config>
-  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
-  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID for file permissions" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Run as PUID/PGID" Target="NEXROLL_RUN_AS_PUID" Default="false" Mode="" Description="true runs NeXroll as PUID:PGID instead of root, after giving that user the files it created as root" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User NeXroll runs as when Run as PUID/PGID is true" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group NeXroll runs as when Run as PUID/PGID is true" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
 </Container>

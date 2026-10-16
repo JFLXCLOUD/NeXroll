@@ -73,6 +73,38 @@ jobs:
           docker rm -f nexroll-ci
           exit 1
 
+      # NeXroll runs as root unless NEXROLL_RUN_AS_PUID is set; with it, as
+      # PUID:PGID, after the entrypoint hands over the files it made as root.
+      # Upgrade path: the same volume, first written as root, then opted in.
+      - name: Runs as root by default, as PUID:PGID when asked
+        run: |
+          wait_healthy() {
+            for _ in $(seq 1 40); do
+              docker exec "$1" curl -fsS http://localhost:9393/health > /dev/null 2>&1 && return 0
+              sleep 1
+            done
+            echo "::error::$1 never answered /health"; docker logs "$1"; return 1
+          }
+          pid1_uid() { docker exec "$1" sh -c "awk '/^Uid:/{print \$2}' /proc/1/status"; }
+          docker volume create nx-ci-data > /dev/null
+          docker run -d --name nx-root -v nx-ci-data:/data nexroll:ci > /dev/null
+          wait_healthy nx-root
+          root_uid=$(pid1_uid nx-root)
+          docker rm -f nx-root > /dev/null
+          docker run -d --name nx-puid -v nx-ci-data:/data \
+            -e NEXROLL_RUN_AS_PUID=true -e PUID=1234 -e PGID=1235 nexroll:ci > /dev/null
+          wait_healthy nx-puid
+          puid_uid=$(pid1_uid nx-puid)
+          db_owner=$(docker exec nx-puid stat -c %u:%g /data/nexroll.db)
+          root_left=$(docker exec nx-puid find /data -user 0 | head -5)
+          docker logs nx-puid 2>&1 | grep "NeXroll:" || true
+          docker rm -f nx-puid > /dev/null; docker volume rm nx-ci-data > /dev/null
+          echo "default uid $root_uid; opted in uid $puid_uid, nexroll.db $db_owner"
+          [ "$root_uid" = 0 ] || { echo "::error::default run is not root"; exit 1; }
+          [ "$puid_uid" = 1234 ] || { echo "::error::opted-in run is not uid 1234"; exit 1; }
+          [ "$db_owner" = 1234:1235 ] || { echo "::error::nexroll.db not handed over"; exit 1; }
+          [ -z "$root_left" ] || { echo "::error::root-owned files left in /data: $root_left"; exit 1; }
+
       # The provider's dev dependencies are pruned after it is compiled; this
       # catches a prune that took something the server needs at runtime (the
       # native canvas module included). 2.0.0 must answer on loopback only.

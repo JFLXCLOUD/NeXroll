@@ -63,9 +63,13 @@
 - **Purpose:** Accurate schedule timing
 
 #### **User/Group IDs (Advanced)**
+- **Run as PUID/PGID:** `false` by default, so NeXroll runs as root. Set it
+  to `true` to run as the user and group below; NeXroll then gives that user
+  the files it created as root in its data and preroll folders.
 - **PUID:** `99` (default Unraid nobody user)
 - **PGID:** `100` (default Unraid users group)
-- **When to change:** If you have custom permission requirements
+- **When to change:** If you have custom permission requirements. PUID and
+  PGID only apply when Run as PUID/PGID is `true`.
 
 ---
 

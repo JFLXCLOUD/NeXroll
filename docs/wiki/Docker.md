@@ -117,8 +117,25 @@ NeXroll is available in Unraid Community Applications.
 | `NEXROLL_SECRETS_DIR` | Secrets storage directory | /data |
 | `SCHEDULER_INTERVAL` | How often to check schedules (seconds) | 60 |
 | `TZ` | Timezone (important for scheduling!) | UTC |
-| `PUID` | User ID for file permissions | 99 |
-| `PGID` | Group ID for file permissions | 100 |
+| `NEXROLL_RUN_AS_PUID` | `true` runs NeXroll as `PUID`:`PGID` instead of root (see [Running as a non-root user](Docker#running-as-a-non-root-user)) | false |
+| `PUID` | User NeXroll runs as when `NEXROLL_RUN_AS_PUID` is true | 99 |
+| `PGID` | Group NeXroll runs as when `NEXROLL_RUN_AS_PUID` is true | 100 |
+
+### Running as a non-root user
+
+NeXroll runs as root inside the container unless you set
+`NEXROLL_RUN_AS_PUID=true`. Then it runs as `PUID`:`PGID` (99:100 unless
+you set them, the Unraid convention). On each start it gives that user the
+files it created as root in `/data` and in the preroll and NeX-Up folders,
+leaving files that belong to anyone else alone.
+
+- The folders you mount must be writable by that user on the host. If it
+  can't write to `/data`, NeXroll says so in the container log and keeps
+  running as root; for the preroll and NeX-Up folders it logs a warning.
+- `PUID` and `PGID` do nothing without `NEXROLL_RUN_AS_PUID`. Older templates
+  set them anyway, so the switch keeps existing installs as they are.
+- Docker's own `user:` setting also works if every mounted folder already
+  belongs to that user.
 
 ## Path Mappings (Critical for Plex/Jellyfin/Emby)
 

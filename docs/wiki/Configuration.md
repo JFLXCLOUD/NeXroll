@@ -283,8 +283,9 @@ These can be set when running NeXroll (especially useful for Docker):
 | `SCHEDULER_INTERVAL` | How often to check schedules (seconds) | 60 |
 | `NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES` | `1` turns the Plex playback guard off, whatever the setting says | unset |
 | `TZ` | Container timezone (Docker) | UTC |
-| `PUID` | User ID for file permissions (Docker) | 99 |
-| `PGID` | Group ID for file permissions (Docker) | 100 |
+| `NEXROLL_RUN_AS_PUID` | `true` runs NeXroll as `PUID`:`PGID` instead of root (Docker; see [Running as a non-root user](Docker#running-as-a-non-root-user)) | false |
+| `PUID` | User NeXroll runs as when `NEXROLL_RUN_AS_PUID` is true (Docker) | 99 |
+| `PGID` | Group NeXroll runs as when `NEXROLL_RUN_AS_PUID` is true (Docker) | 100 |
 
 ### Docker Example
 

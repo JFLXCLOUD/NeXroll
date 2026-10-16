@@ -6,3 +6,7 @@
 *.ttc binary
 *.woff binary
 *.woff2 binary
+
+# Shell scripts run in the Linux image; a CRLF checkout on Windows would break
+# them (sh reads the CR as part of each command).
+*.sh text eol=lf

@@ -168,6 +168,7 @@ It checks DNS, reachability, token validity, and suggests fixes (TLS verify, DNS
 - PLEX_URL / PLEX_TOKEN (optional bootstrap)
 - JELLYFIN_URL / JELLYFIN_API_KEY (optional bootstrap)
 - TZ (default UTC)
+- NEXROLL_RUN_AS_PUID (default false): true runs NeXroll as PUID:PGID (defaults 99:100) instead of root, after giving that user the files it created as root. PUID and PGID do nothing without it.
 
 Build arg:
 - APP_VERSION (labels the image)
