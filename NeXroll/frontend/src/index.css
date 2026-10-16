@@ -9741,7 +9741,8 @@ body.light .nx-ap-trailer-table > article.selected { background: #fff8e9; }
 
 /* Connect and Community approved page density. */
 .nx-content-connect .nx-route-summary { grid-template-columns: repeat(4,minmax(120px,1fr)); }
-.nx-content-community .nx-route-summary { grid-template-columns: repeat(5,minmax(110px,1fr)); }
+/* Four tiles like the other pages (the Community hero card was folded into them). */
+.nx-content-community .nx-route-summary { grid-template-columns: repeat(4,minmax(110px,1fr)); }
 .nx-content-connect .nx-route-summary,
 .nx-content-community .nx-route-summary { gap: 8px; margin: 0 0 13px; }
 .nx-content-connect .nx-route-summary > div,
@@ -9772,7 +9773,8 @@ body.light .nx-ap-trailer-table > article.selected { background: #fff8e9; }
 .nx-content-community .nx-community-search-card > .nx-comm-toolbar { width: 100%; margin: 0 !important; }
 .nx-content-community .nx-community > .card,
 .nx-content-community .nx-community > .nx-community-browser { order: 4; margin-bottom: 11px; }
-.nx-content-community .nx-community > .nx-comm-actionbar { order: 1; margin: 0 0 11px; padding: 0 3px; }
+.nx-content-community .nx-community > .nx-comm-actionbar { order: 2; margin: 0 0 11px; padding: 0 3px; }
+.nx-content-community .nx-community > .nx-comm-server-card { order: 2; margin-bottom: 11px; }
 .nx-content-community .nx-community > .nx-community-random-card { order: 6; margin-top: 20px; margin-bottom: 20px; }
 .nx-content-community .nx-community > .nx-community-attribution { order: 7; }
 .nx-content-community .nx-community > *:not(.nx-conn-hero):not(.nx-comm-toolbar):not(.card):not(.nx-community-browser):not(.nx-comm-actionbar):not(.nx-community-attribution) { order: 5; }
@@ -12302,3 +12304,88 @@ body.light .nx-content .nx-add-trailer-btn svg { color: #e01b1b; }
   .nx-modal .nx-mt-actions { position: sticky; bottom: 0; z-index: 1; }
   .nx-mt-hint { display: none; }
 }
+
+/* Community Prerolls length filter: the Browse grid and the Search toolbar.
+   Custom shows two seconds fields under the select (Browse) or as their own
+   toolbar item (Search). */
+.nx-comm-length-custom { display: flex; gap: 6px; margin-top: 6px; }
+/* Narrow fields: slim padding so "Min sec" fits, and toolbar inputs are padded
+   for a search icon these don't have. */
+.nx-comm-length-custom input { flex: 1 1 0; min-width: 0; }
+.nx-comm-length-custom input,
+.nx-community .nx-comm-toolbar .nx-comm-length-custom input { padding-left: 9px !important; padding-right: 4px !important; }
+.nx-comm-toolbar .nx-comm-length-custom { margin-top: 0; }
+.nx-comm-toolbar .nx-comm-length-custom input { flex: 0 0 84px; width: 84px; }
+/* Length and Sort joined the toolbar; a smaller starting width for the search
+   box keeps the row on one line at desktop widths (it still grows to fill). */
+.nx-community .nx-comm-toolbar .nx-comm-search { flex-basis: 240px; }
+.nx-comm-length-note { display: flex; align-items: center; gap: 7px; margin-top: 0.6rem; color: var(--text-secondary); font-size: 0.8rem; line-height: 1.4; }
+.nx-comm-length-note svg { flex-shrink: 0; }
+.nx-content-community .nx-community-search-card > .nx-comm-length-note { margin: 9px 2px 10px; }
+
+/* Community Prerolls platform versions: chips on a result row (a chip for a
+   version not downloaded opens the download dialog on it) and the Versions
+   list in that dialog. */
+.nx-comm-versions-inline { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.nx-comm-version-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 20px; padding: 0 7px; border-radius: 999px;
+  border: 1px solid var(--border-color); background: transparent;
+  color: var(--text-secondary); font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+}
+.nx-comm-version-chip:hover:not(:disabled) { color: var(--text-color); border-color: color-mix(in srgb, var(--accent-color) 55%, var(--border-color)); }
+.nx-comm-version-chip:disabled { opacity: .55; cursor: default; }
+.nx-comm-version-chip.is-done { cursor: default; color: var(--success-color); border-color: color-mix(in srgb, var(--success-color) 40%, transparent); background: color-mix(in srgb, var(--success-color) 10%, transparent); }
+.nx-comm-versions { display: grid; gap: 6px; margin-bottom: 1rem; }
+.nx-comm-versions-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.nx-comm-versions-head span { color: var(--text-secondary); font-size: 0.8rem; }
+/* Scoped under the dialog body, whose label and input rules (block labels,
+   full-width 34px inputs) would otherwise win. */
+.nx-community-download-body .nx-comm-version-option {
+  display: grid; grid-template-columns: auto 72px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  margin: 0; padding: 7px 10px; border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer;
+  color: var(--text-color); font-size: 0.85rem; font-weight: 400;
+}
+.nx-community-download-body .nx-comm-version-option input { width: 16px; height: 16px; min-height: 0; padding: 0; margin: 0; }
+.nx-community-download-body .nx-comm-version-option.is-done { cursor: default; opacity: .7; }
+.nx-comm-version-platform { font-weight: 600; }
+.nx-comm-version-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 0.85rem; }
+.nx-comm-version-meta { color: var(--text-secondary); font-size: 0.78rem; white-space: nowrap; }
+.nx-comm-versions-note { margin: 2px 0 0; color: var(--text-secondary); font-size: 0.8rem; line-height: 1.45; }
+@media (max-width: 600px) {
+  .nx-community-download-body .nx-comm-version-option { grid-template-columns: auto 1fr; row-gap: 2px; }
+  .nx-comm-version-title, .nx-comm-version-meta { grid-column: 2; }
+}
+
+/* Version switch on a grouped Community row's preview (panel and full
+   preview): picks which platform's file plays. */
+.nx-comm-preview-versions {
+  display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; margin: 2px 0 8px;
+  border: 1px solid var(--border-color); border-radius: 8px; background: var(--input-bg);
+}
+.nx-comm-preview-versions button {
+  height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--text-secondary); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.nx-comm-preview-versions button:hover { color: var(--text-color); }
+.nx-comm-preview-versions button.active { background: var(--accent-color); color: #fff; }
+[role="dialog"] .nx-comm-preview-versions { margin: 0; }
+
+/* Community result rows on phones. Since the v2 redesign the three action
+   buttons (about 290px) left the title and details 0px wide below ~600px.
+   There the actions get their own line under the details, and the generic
+   film icon gives its room to the title. */
+@media (max-width: 600px) {
+  .nx-community .nx-comm-row { flex-wrap: wrap; row-gap: 8px; }
+  .nx-community .nx-comm-row-icon { display: none; }
+  .nx-community .nx-comm-row-body { flex: 1 1 0; }
+  .nx-community .nx-comm-row-title { white-space: normal; }
+  .nx-community .nx-comm-row-actions { flex: 1 1 100%; justify-content: flex-start; padding-left: calc(27px + 0.9rem); }
+}
+/* The phone-wide 44px button minimum turned the version chips into circles;
+   a 30px pill is still an easy tap. */
+.nx-comm-version-chip { min-height: 0; }
+@media (max-width: 768px) {
+  .nx-comm-version-chip { height: 30px; padding: 0 11px; font-size: 12px; }
+}
+

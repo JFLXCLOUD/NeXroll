@@ -306,6 +306,7 @@ class Setting(Base):
     community_fair_use_accepted = Column(Boolean, default=False)  # Whether user accepted Fair Use Policy
     community_fair_use_accepted_at = Column(DateTime, nullable=True)  # Timestamp of acceptance
     community_server_url = Column(String, nullable=True)  # Custom community server URL (None = use default)
+    community_auto_refresh = Column(Boolean, default=False)  # Rebuild the community index once it is a week old (opt-in)
     plex_client_id = Column(String, nullable=True)  # X-Plex-Client-Identifier
     plex_server_base_url = Column(String, nullable=True)  # Best-resolved server URL (local preferred)
     plex_server_machine_id = Column(String, nullable=True)  # Server machineIdentifier

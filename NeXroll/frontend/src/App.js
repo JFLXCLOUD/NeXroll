@@ -4,6 +4,8 @@ import CommunityAIBadge from './components/CommunityAIBadge';
 import ConflictLink from './components/ConflictLink';
 import LibraryTrailersTile from './components/LibraryTrailersTile';
 import { isAICommunitySource } from './utils/communityAI';
+import { COMMUNITY_LENGTH_PRESETS, appendCommunityLengthParams, formatPrerollLength } from './utils/communityLength';
+import { initialVersionPicks, platformLabel, rowVersions, versionView, wantedVersions } from './utils/communityVersions';
 import { genreMatchSummary, ratingSummary } from './utils/trailerRatings';
 import { youtubeThumbnail, youtubeVideoId } from './utils/youtube';
 import useHealthSummary from './hooks/useHealthSummary';
@@ -625,13 +627,13 @@ const formatBytes = bytes => {
   while (n >= 1024 && unit < units.length - 1) { n /= 1024; unit += 1; }
   return `${n < 10 && unit > 0 ? n.toFixed(1) : Math.round(n)} ${units[unit]}`;
 };
-// Duration is never in the directory listing and size only appears in indexes
-// built after size capture was added, so both fall back to the probe result.
-const formatCommunityDuration = (item, meta) => {
-  const seconds = Number(meta?.duration ?? item?.duration);
-  if (!Number.isFinite(seconds) || seconds <= 0) return meta === undefined ? 'Checking…' : 'Unknown';
-  return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s` : `${seconds.toFixed(1)}s`;
-};
+// Duration is never in the directory listing (results carry it once the
+// background pass has read the file) and size only appears in indexes built
+// after size capture was added, so both fall back to the probe result.
+const formatCommunityDuration = (item, meta) => (
+  formatPrerollLength(meta?.duration ?? item?.duration)
+  || (meta === undefined ? 'Checking…' : 'Unknown')
+);
 const formatCommunitySize = (item, meta) => (
   formatBytes(item?.size_bytes) || formatBytes(meta?.size_bytes)
   || (typeof item?.file_size === 'string' && item.file_size !== 'Unknown' ? item.file_size : null)
@@ -1441,6 +1443,22 @@ function App() {
   const [browseCreator, setBrowseCreator] = useState('');
   const [browsePlatform, setBrowsePlatform] = useState('');
   const [browseSort, setBrowseSort] = useState('name');
+  // Length filter, shared by Browse and Search: a preset from
+  // COMMUNITY_LENGTH_PRESETS, or 'custom' with the two seconds fields.
+  const [communityLength, setCommunityLength] = useState('');
+  const [communityLengthMin, setCommunityLengthMin] = useState('');
+  const [communityLengthMax, setCommunityLengthMax] = useState('');
+  const [communitySearchSort, setCommunitySearchSort] = useState('relevance');
+  // The backend reads lengths from the files in the background after an index
+  // build; this is its progress. `communityUnmeasured` is how many matches the
+  // last length-filtered request left out because theirs isn't read yet.
+  const [communityLengthStatus, setCommunityLengthStatus] = useState(null);
+  const [communityUnmeasured, setCommunityUnmeasured] = useState(0);
+  // Platform versions ticked in the download dialog (ids from row.versions).
+  const [communityVersionPicks, setCommunityVersionPicks] = useState([]);
+  // Which version each grouped row's preview plays ({rowId: versionId}); the
+  // preview panel and the full preview share it. Unset = the leading version.
+  const [communityPreviewPicks, setCommunityPreviewPicks] = useState({});
   const [communityIsDownloading, setCommunityIsDownloading] = useState({});
   const [communityBuildProgress, setCommunityBuildProgress] = useState(null);
   const [communitySelectedCategories, setCommunitySelectedCategories] = useState({});
@@ -1508,15 +1526,24 @@ function App() {
     try { localStorage.setItem('communityInspectorOpen', communityInspectorOpen ? '1' : '0'); } catch (_) {}
   }, [communityInspectorOpen]);
 
-  // The community index carries neither duration nor (on older indexes) size, so
-  // the inspector asks the backend to probe whichever item it is showing. The
-  // backend caches per URL, so re-selecting an item costs one round trip at most.
-  const communityInspectedId = (
+  // Search results carry the length once the background pass has read it, and
+  // newer indexes carry the size; otherwise the inspector asks the backend to
+  // probe whichever item it is showing. The backend caches per URL, so
+  // re-selecting an item costs one round trip at most.
+  // A grouped row is probed as the version its preview is playing.
+  const communityInspectedRow = (
     communityInspectorPreroll || communitySearchResults[0] || communityRandomPreroll || {}
-  ).id || '';
+  );
+  const communityInspected = versionView(communityInspectedRow, communityPreviewPicks[communityInspectedRow.id]);
+  const communityInspectedId = communityInspected.id || '';
+  const communityInspectedKnown = Number(communityInspected.duration) > 0 && Number(communityInspected.size_bytes) > 0;
   useEffect(() => {
     if (!communityInspectorOpen || !communityInspectedId || String(communityInspectedId).startsWith('_')) {
       setCommunityItemMeta(null);
+      return undefined;
+    }
+    if (communityInspectedKnown) {
+      setCommunityItemMeta(null);  // formatCommunityDuration/Size fall back to the item
       return undefined;
     }
     let cancelled = false;
@@ -1526,8 +1553,139 @@ function App() {
       .then(data => { if (!cancelled) setCommunityItemMeta(data || null); })
       .catch(() => { if (!cancelled) setCommunityItemMeta(null); });
     return () => { cancelled = true; };
-  }, [communityInspectorOpen, communityInspectedId]);
-  
+  }, [communityInspectorOpen, communityInspectedId, communityInspectedKnown]);
+
+  // Plex / Jellyfin / Emby switch on a grouped row's preview (the panel and the
+  // full preview). It changes which file plays; nothing for a single file.
+  const renderCommunityVersionSwitch = (row) => {
+    if (!row || !Array.isArray(row.versions) || row.versions.length < 2) return null;
+    const shownId = versionView(row, communityPreviewPicks[row.id]).id;
+    return (
+      <div className="nx-comm-preview-versions" role="group" aria-label="Version to preview">
+        {row.versions.map(version => (
+          <button
+            key={version.id}
+            type="button"
+            aria-pressed={version.id === shownId}
+            className={version.id === shownId ? 'active' : ''}
+            onClick={(event) => {
+              event.stopPropagation();
+              setCommunityPreviewPicks(prev => ({ ...prev, [row.id]: version.id }));
+            }}
+          >
+            {platformLabel(version.platform)}
+          </button>
+        ))}
+      </div>
+    );
+  };
+  const communityPreviewShown = communityPreviewingPreroll
+    ? versionView(communityPreviewingPreroll, communityPreviewPicks[communityPreviewingPreroll.id])
+    : null;
+
+  // Load index status. Component-level (not inside the Community page) so the
+  // page header's Refresh Index button can use it, like Library's header buttons.
+  const loadIndexStatus = async () => {
+    try {
+      const response = await fetch(apiUrl('community-prerolls/index-status'));
+      const data = await response.json();
+      setCommunityIndexStatus(data);
+    } catch (error) {
+      console.error('Failed to load index status:', error);
+    }
+  };
+
+  // Build/Refresh index with real-time progress
+  const handleBuildIndex = async () => {
+    if (communityIsBuilding) return;
+    
+    const confirmed = await showConfirm(
+      'Building the index will take 3-5 minutes and scan the entire Typical Nerds library.\n\n' +
+      'This will make future searches MUCH faster (milliseconds instead of seconds).',
+      { title: 'Build Search Index', type: 'info', confirmText: 'Build Index' }
+    );
+    
+    if (!confirmed) return;
+    
+    setCommunityIsBuilding(true);
+    setCommunityBuildProgress({
+      progress: 0,
+      current_dir: '',
+      files_found: 0,
+      dirs_visited: 0,
+      message: 'Starting...'
+    });
+    
+    // Kick off the build FIRST, so the server resets its progress state
+    // (building=true, progress=0) before we attach the SSE stream. Otherwise
+    // the stream's first frame is the *previous* build's terminal state
+    // (building=false) and we'd wrongly report "failed" while the new build
+    // actually runs in the background.
+    try {
+      const response = await fetch(apiUrl('community-prerolls/build-index'));
+      // 429 = a build is already running (e.g. started from the dashboard
+      // "Rebuild Index" button). Don't error — fall through and attach the
+      // progress stream so this button shows the running build's progress.
+      if (!response.ok && response.status !== 429) {
+        let detail = `Failed to start index build (HTTP ${response.status}).`;
+        try { const err = await response.json(); if (err?.detail) detail = err.detail; } catch {}
+        setCommunityIsBuilding(false);
+        setCommunityBuildProgress(null);
+        showAlert(detail, 'error');
+        return;
+      }
+    } catch (error) {
+      setCommunityIsBuilding(false);
+      setCommunityBuildProgress(null);
+      showAlert(`Failed to build index: ${error.message}`, 'error');
+      return;
+    }
+
+    // Now stream progress/completion via SSE.
+    const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
+
+    let finished = false;
+    let sawBuilding = false;
+    const finish = (failedMsg) => {
+      if (finished) return;
+      finished = true;
+      try { eventSource.close(); } catch {}
+      setCommunityIsBuilding(false);
+      if (failedMsg) {
+        showAlert(failedMsg, 'error');
+        setCommunityBuildProgress(null);
+      } else {
+        // Show 100% briefly, then hide and refresh status.
+        setTimeout(() => {
+          setCommunityBuildProgress(null);
+          loadIndexStatus();
+        }, 1000);
+        showAlert('Community index built — searches will now be instant.', 'success');
+      }
+    };
+
+    eventSource.onmessage = (event) => {
+      let data;
+      try { data = JSON.parse(event.data); } catch { return; }
+      setCommunityBuildProgress(data);
+      if (data.building === true) sawBuilding = true;
+
+      // The server flips building=false at the end. progress=100 => success;
+      // building=false with progress<100 => the build errored on the server.
+      // Ignore a stale terminal frame that arrives before our build registers.
+      if (data.building === false) {
+        if (data.progress === 100) finish(null);
+        else if (sawBuilding) finish(data.message || 'Index build failed on the server.');
+      }
+    };
+
+    eventSource.onerror = () => {
+      // The stream can drop after completion; only treat as failure if we
+      // haven't already finished.
+      finish(finished ? null : 'Lost connection to the index build progress stream.');
+    };
+  };
+
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
     try { return localStorage.getItem('prerollView') || 'list'; } catch { return 'list'; }
@@ -3516,6 +3674,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           setCommunityFacets(data);
           setCommunityFacetsMessage('');
           setCommunityFacetsStatus('ready');
+          // An index built before lengths existed gets them now; files already
+          // read are skipped, so this is a no-op once they are all known.
+          fetch(apiUrl(`community-prerolls/durations/measure?include_ai=${communityIncludeAI}`), { method: 'POST' })
+            .then(r => (r.ok ? r.json() : null))
+            .then(status => { if (status && !cancelled) setCommunityLengthStatus(status); })
+            .catch(() => {});
         } else {
           setCommunityFacets(null);
           setCommunityFacetsMessage(data?.message || 'Build the community index to browse.');
@@ -3530,6 +3694,19 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     })();
     return () => { cancelled = true; };
   }, [activeTab, communityIncludeAI, communityFacetsReload]);
+
+  // Follow the background length pass while it runs.
+  const communityLengthsRunning = Boolean(communityLengthStatus?.running);
+  React.useEffect(() => {
+    if (!communityLengthsRunning || !activeTab.startsWith('community-prerolls')) return undefined;
+    const timer = setInterval(() => {
+      fetch(apiUrl(`community-prerolls/durations?include_ai=${communityIncludeAI}`))
+        .then(r => (r.ok ? r.json() : null))
+        .then(status => { if (status) setCommunityLengthStatus(status); })
+        .catch(() => {});
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [communityLengthsRunning, activeTab, communityIncludeAI]);
 
   // Browse and Search are separate Community destinations. Reset only the
   // shared result surface when moving between them so filters and queries stay
@@ -8426,6 +8603,31 @@ const DashboardTiles = {
                 <Library size={15} /> View Library
               </button>
             )}
+            {/* Community's main actions sit here like every other page's; they
+                used to live in a hero card of their own above the summary. */}
+            {activeTab.startsWith('community-prerolls') && communityFairUseStatus?.accepted && (
+              <>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setCommunityShowCustomUrl(open => !open)}
+                  title="Choose a community server or enter a custom URL"
+                >
+                  <Server size={15} /> Change Server
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={handleBuildIndex}
+                  disabled={communityIsBuilding}
+                  title={communityIndexStatus?.exists ? 'Refresh the index to get the latest prerolls' : 'Build the index for instant searches'}
+                >
+                  {communityIsBuilding
+                    ? <><Loader2 size={15} className="spin" /> Building…</>
+                    : communityIndexStatus?.exists ? <><RefreshCw size={15} /> Refresh Index</> : <><Zap size={15} /> Build Index</>}
+                </button>
+              </>
+            )}
             {activeTab === 'library/categories' && (
               <>
                 <button type="button" className="button button-secondary" onClick={handleInitHolidays}><TreePine size={15} /> Holiday presets</button>
@@ -8687,12 +8889,21 @@ const DashboardTiles = {
         { label: 'Schedules applied', value: activeScheduleIds.length, tone: activeScheduleIds.length ? 'success' : '' }
       ];
     } else if (activeTab.startsWith('community-prerolls')) {
+      // Four tiles like every other page. The server and index state used to
+      // sit in a hero card above these; "Local matches" and "Downloaded" both
+      // counted the community ids in the library, so they are one tile now.
+      const communityServer = communityServers.find(s => communityServerUrl === (s.baseUrl || '').replace(/\/+$/, ''));
+      const ageDays = Math.floor(communityIndexStatus?.age_days || 0);
       items = [
-        { label: 'Indexed', value: communityIndexStatus?.total_prerolls || 0 },
-        { label: 'Local matches', value: communityMatchedCount, tone: 'success' },
-        { label: 'Downloaded', value: downloadedCommunityIds.length },
-        { label: 'Creators', value: communityFacets?.creators?.length || 0 },
-        { label: 'Index age', value: communityIndexStatus?.is_stale ? 'Refresh due' : communityIndexStatus?.exists ? 'Today' : 'Not built', tone: communityIndexStatus?.is_stale || !communityIndexStatus?.exists ? 'warning' : 'success' }
+        { label: 'Server', value: communityServer?.name || (communityServerUrl || '').replace(/^https?:\/\//, '') || '—' },
+        { label: 'Indexed', value: Number(communityIndexStatus?.total_prerolls || 0).toLocaleString() },
+        { label: 'In your library', value: downloadedCommunityIds.length, tone: downloadedCommunityIds.length ? 'success' : '' },
+        { label: 'Index age',
+          value: !communityIndexStatus?.exists ? 'Not built'
+            : communityIndexStatus.is_stale ? `${ageDays} days, refresh due`
+            : (communityIndexStatus.age_days || 0) < 1 ? 'Today'
+            : `${ageDays} day${ageDays === 1 ? '' : 's'}`,
+          tone: communityIndexStatus?.is_stale || !communityIndexStatus?.exists ? 'warning' : 'success' }
       ];
     } else if (activeTab.startsWith('settings')) {
       if (activeTab === 'settings') {
@@ -33771,8 +33982,9 @@ const DashboardTiles = {
         connected: plexStatus === 'Connected',
         idleCopy: 'Global pre-roll integration',
         meta: [
-          plexServerInfo?.friendlyName,
-          plexServerInfo?.version && `v${plexServerInfo.version}`,
+          // Name and version share a line so a connected card stays close to
+          // the height of the others.
+          [plexServerInfo?.friendlyName, plexServerInfo?.version && `v${plexServerInfo.version}`].filter(Boolean).join(' · '),
           plexServerInfo?.url,
           plexServerInfo?.token_source && (plexServerInfo.token_source === 'secure_store' ? 'Secure token' : plexServerInfo.token_source === 'database' ? 'DB token' : plexServerInfo.token_source),
         ].filter(Boolean),
@@ -33787,8 +33999,7 @@ const DashboardTiles = {
         connected: jellyfinStatus === 'Connected',
         idleCopy: 'Real-time intros plugin',
         meta: [
-          jellyfinServerInfo?.name,
-          jellyfinServerInfo?.version && `v${jellyfinServerInfo.version}`,
+          [jellyfinServerInfo?.name, jellyfinServerInfo?.version && `v${jellyfinServerInfo.version}`].filter(Boolean).join(' · '),
           jellyfinServerInfo?.connection_type === 'plugin' ? 'via Plugin (API Key)' : jellyfinServerInfo?.connection_type === 'direct' ? 'Direct connection' : null,
         ].filter(Boolean),
         canDisconnect: jellyfinServerInfo?.connection_type !== 'plugin',
@@ -33801,8 +34012,7 @@ const DashboardTiles = {
         connected: embyStatus === 'Connected',
         idleCopy: 'Real-time intros plugin',
         meta: [
-          embyServerInfo?.name,
-          embyServerInfo?.version && `v${embyServerInfo.version}`,
+          [embyServerInfo?.name, embyServerInfo?.version && `v${embyServerInfo.version}`].filter(Boolean).join(' · '),
           // Emby plays prerolls only through the NeXroll Intros plugin, so a
           // direct connection on its own puts nothing on screen. Calling that
           // "Direct connection" read as "all set" to a user whose prerolls
@@ -34934,108 +35144,6 @@ const DashboardTiles = {
       }
     };
 
-    // Load index status
-    const loadIndexStatus = async () => {
-      try {
-        const response = await fetch(apiUrl('community-prerolls/index-status'));
-        const data = await response.json();
-        setCommunityIndexStatus(data);
-      } catch (error) {
-        console.error('Failed to load index status:', error);
-      }
-    };
-
-    // Build/Refresh index with real-time progress
-    const handleBuildIndex = async () => {
-      if (communityIsBuilding) return;
-      
-      const confirmed = await showConfirm(
-        'Building the index will take 3-5 minutes and scan the entire Typical Nerds library.\n\n' +
-        'This will make future searches MUCH faster (milliseconds instead of seconds).',
-        { title: 'Build Search Index', type: 'info', confirmText: 'Build Index' }
-      );
-      
-      if (!confirmed) return;
-      
-      setCommunityIsBuilding(true);
-      setCommunityBuildProgress({
-        progress: 0,
-        current_dir: '',
-        files_found: 0,
-        dirs_visited: 0,
-        message: 'Starting...'
-      });
-      
-      // Kick off the build FIRST, so the server resets its progress state
-      // (building=true, progress=0) before we attach the SSE stream. Otherwise
-      // the stream's first frame is the *previous* build's terminal state
-      // (building=false) and we'd wrongly report "failed" while the new build
-      // actually runs in the background.
-      try {
-        const response = await fetch(apiUrl('community-prerolls/build-index'));
-        // 429 = a build is already running (e.g. started from the dashboard
-        // "Rebuild Index" button). Don't error — fall through and attach the
-        // progress stream so this button shows the running build's progress.
-        if (!response.ok && response.status !== 429) {
-          let detail = `Failed to start index build (HTTP ${response.status}).`;
-          try { const err = await response.json(); if (err?.detail) detail = err.detail; } catch {}
-          setCommunityIsBuilding(false);
-          setCommunityBuildProgress(null);
-          showAlert(detail, 'error');
-          return;
-        }
-      } catch (error) {
-        setCommunityIsBuilding(false);
-        setCommunityBuildProgress(null);
-        showAlert(`Failed to build index: ${error.message}`, 'error');
-        return;
-      }
-
-      // Now stream progress/completion via SSE.
-      const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
-
-      let finished = false;
-      let sawBuilding = false;
-      const finish = (failedMsg) => {
-        if (finished) return;
-        finished = true;
-        try { eventSource.close(); } catch {}
-        setCommunityIsBuilding(false);
-        if (failedMsg) {
-          showAlert(failedMsg, 'error');
-          setCommunityBuildProgress(null);
-        } else {
-          // Show 100% briefly, then hide and refresh status.
-          setTimeout(() => {
-            setCommunityBuildProgress(null);
-            loadIndexStatus();
-          }, 1000);
-          showAlert('Community index built — searches will now be instant.', 'success');
-        }
-      };
-
-      eventSource.onmessage = (event) => {
-        let data;
-        try { data = JSON.parse(event.data); } catch { return; }
-        setCommunityBuildProgress(data);
-        if (data.building === true) sawBuilding = true;
-
-        // The server flips building=false at the end. progress=100 => success;
-        // building=false with progress<100 => the build errored on the server.
-        // Ignore a stale terminal frame that arrives before our build registers.
-        if (data.building === false) {
-          if (data.progress === 100) finish(null);
-          else if (sawBuilding) finish(data.message || 'Index build failed on the server.');
-        }
-      };
-
-      eventSource.onerror = () => {
-        // The stream can drop after completion; only treat as failure if we
-        // haven't already finished.
-        finish(finished ? null : 'Lost connection to the index build progress stream.');
-      };
-    };
-
     // Handle rematching all prerolls (clears existing matches first)
     const handleRematchAll = async () => {
       if (communityIsMigrating) return;
@@ -35177,14 +35285,16 @@ const DashboardTiles = {
     const cleanDisplayText = (text) => {
       if (!text) return text;
       
-      // Decode URL encoding (%20 -> space, etc.)
-      let cleaned = decodeURIComponent(text);
-      
+      // Decode URL encoding (%20 -> space, etc.); a literal "%" in a name
+      // ("100% Spooky") is not an escape and would throw.
+      let cleaned;
+      try { cleaned = decodeURIComponent(text); } catch (_) { cleaned = String(text); }
+
       // Remove leading ./ if present
       cleaned = cleaned.replace(/^\.\//, '');
-      
+
       // Remove file extensions
-      cleaned = cleaned.replace(/\.(mp4|mkv|avi|mov)$/i, '');
+      cleaned = cleaned.replace(/\.(mp4|mkv|avi|mov|webm)$/i, '');
       
       // Clean up common patterns
       cleaned = cleaned
@@ -35200,9 +35310,14 @@ const DashboardTiles = {
     };
 
     // Handle search submission. `offset` drives pagination (0 = first page).
-    const handleSearch = async (offset = 0, includeAI = communityIncludeAI) => {
-      if (!communitySearchQuery.trim() && !communitySearchPlatform.trim()) {
-        alert('Please enter a search query or choose a platform');
+    const handleSearch = async (offset = 0, includeAI = communityIncludeAI, overrides = {}) => {
+      const length = overrides.length !== undefined ? overrides.length : communityLength;
+      const sort = overrides.sort !== undefined ? overrides.sort : communitySearchSort;
+      // A length filter or length sort is enough to search on: "everything
+      // 30 seconds or less" is a fair question without a keyword.
+      const byLength = Boolean(length) || sort === 'shortest' || sort === 'longest';
+      if (!communitySearchQuery.trim() && !communitySearchPlatform.trim() && !byLength) {
+        alert('Please enter a search query, or choose a platform or length');
         return;
       }
 
@@ -35212,6 +35327,9 @@ const DashboardTiles = {
         const params = new URLSearchParams();
         if (communitySearchQuery.trim()) params.append('query', communitySearchQuery.trim());
         if (communitySearchPlatform.trim()) params.append('platform', communitySearchPlatform.trim());
+        appendCommunityLengthParams(params, length, communityLengthMin, communityLengthMax);
+        if (sort) params.append('sort', sort);
+        params.append('servers', getConnectedServers().join(','));
         params.append('include_ai', includeAI);
         params.append('limit', pageLimit);
         params.append('offset', offset);
@@ -35228,6 +35346,7 @@ const DashboardTiles = {
 
         setCommunitySearchResults(data.results || []);
         setCommunityTotalResults(data.total || 0);
+        setCommunityUnmeasured(data.unmeasured || 0);
         setCommunityOffset(offset);
         setCommunityPageLimit(pageLimit);
 
@@ -35251,6 +35370,7 @@ const DashboardTiles = {
       const creator = overrides.creator !== undefined ? overrides.creator : browseCreator;
       const platform = overrides.platform !== undefined ? overrides.platform : browsePlatform;
       const sort = overrides.sort !== undefined ? overrides.sort : browseSort;
+      const length = overrides.length !== undefined ? overrides.length : communityLength;
       const includeAI = overrides.includeAI !== undefined ? overrides.includeAI : communityIncludeAI;
       const pageLimit = Number(overrides.limit !== undefined ? overrides.limit : communityResultLimit) || 50;
       setCommunityIsSearching(true);
@@ -35260,6 +35380,8 @@ const DashboardTiles = {
         if (creator) params.append('creator', creator);
         if (platform) params.append('platform', platform);
         if (sort) params.append('sort', sort);
+        appendCommunityLengthParams(params, length, communityLengthMin, communityLengthMax);
+        params.append('servers', getConnectedServers().join(','));
         params.append('include_ai', includeAI);
         params.append('limit', pageLimit);
         params.append('offset', offset);
@@ -35272,6 +35394,7 @@ const DashboardTiles = {
         const data = await response.json();
         setCommunitySearchResults(data.results || []);
         setCommunityTotalResults(data.total || 0);
+        setCommunityUnmeasured(data.unmeasured || 0);
         setCommunityOffset(offset);
         setCommunityPageLimit(pageLimit);
       } catch (error) {
@@ -35296,10 +35419,63 @@ const DashboardTiles = {
 
       if (!isCommunitySearchPage) {
         handleBrowse({ includeAI }, 0);
-      } else if (communitySearchQuery.trim() || communitySearchPlatform.trim()) {
+      } else if (communitySearchQuery.trim() || communitySearchPlatform.trim() || communityLength
+                 || communitySearchSort === 'shortest' || communitySearchSort === 'longest') {
         handleSearch(0, includeAI);
       }
     };
+
+    // Length filter control for the Browse grid and the Search toolbar. A
+    // preset runs the request at once; Custom waits for the seconds fields
+    // (Enter, or the page's Show results / Search button).
+    const runCommunityQuery = (overrides = {}) => (
+      isCommunitySearchPage ? handleSearch(0, communityIncludeAI, overrides) : handleBrowse(overrides, 0)
+    );
+    const handleCommunityLengthChange = (value) => {
+      setCommunityLength(value);
+      if (value === 'custom') return;
+      if (isCommunitySearchPage && !communitySearchQuery.trim() && !communitySearchPlatform.trim() && !value
+          && communitySearchSort !== 'shortest' && communitySearchSort !== 'longest') return;
+      runCommunityQuery({ length: value });
+    };
+    const communityLengthCustomFields = communityLength === 'custom' && (
+      <div className="nx-comm-length-custom">
+        {['min', 'max'].map(bound => (
+          <input
+            key={bound}
+            type="number"
+            min="0"
+            step="1"
+            inputMode="numeric"
+            className="input"
+            aria-label={bound === 'min' ? 'Shortest length in seconds' : 'Longest length in seconds'}
+            placeholder={bound === 'min' ? 'Min sec' : 'Max sec'}
+            value={bound === 'min' ? communityLengthMin : communityLengthMax}
+            onChange={e => (bound === 'min' ? setCommunityLengthMin : setCommunityLengthMax)(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !communityIsSearching) runCommunityQuery(); }}
+          />
+        ))}
+      </div>
+    );
+    const lengthStatus = communityLengthStatus;
+    const lengthFilterActive = Boolean(communityLength);
+    const lengthSortActive = ['shortest', 'longest'].includes(isCommunitySearchPage ? communitySearchSort : browseSort);
+    // Progress of the background length pass, and what a length filter left out.
+    const communityLengthNote = (() => {
+      if (!lengthStatus || !lengthStatus.total) return null;
+      const missing = lengthStatus.total - lengthStatus.measured;
+      if (lengthStatus.running) {
+        return `Reading preroll lengths: ${lengthStatus.measured.toLocaleString()} of ${lengthStatus.total.toLocaleString()} known so far. Prerolls not read yet are left out of length filters and sorted last.`;
+      }
+      if (!lengthFilterActive && !lengthSortActive) return null;
+      if (lengthFilterActive && communityUnmeasured > 0) {
+        return `${communityUnmeasured.toLocaleString()} matching preroll${communityUnmeasured === 1 ? '' : 's'} without a known length ${communityUnmeasured === 1 ? 'is' : 'are'} left out.`;
+      }
+      if (missing > 0 && lengthSortActive) {
+        return `${missing.toLocaleString()} preroll${missing === 1 ? '' : 's'} without a known length ${missing === 1 ? 'is' : 'are'} sorted last.`;
+      }
+      return null;
+    })();
 
     // Handle random preroll fetch
     const handleRandomPreroll = async () => {
@@ -35351,9 +35527,17 @@ const DashboardTiles = {
     // Check if a community preroll is already downloaded
     const isPrerollAlreadyDownloaded = (communityPreroll) => {
       if (!communityPreroll || !communityPreroll.id) return false;
-      
-      // Method 1: Check if this community preroll's ID is in our downloaded IDs list (for new downloads)
-      if (downloadedCommunityIds.includes(String(communityPreroll.id))) {
+
+      // A row with platform versions is done when the versions for this
+      // install's servers are (see wantedVersions).
+      if (Array.isArray(communityPreroll.versions) && communityPreroll.versions.length) {
+        return wantedVersions(communityPreroll, getConnectedServers()).every(v => isPrerollAlreadyDownloaded(v));
+      }
+
+      // Method 1: Check if this community preroll's ID is in our downloaded IDs list (for new downloads).
+      // A file the server keeps in two folders is one row; a download of any copy counts.
+      const copyIds = [communityPreroll.id, ...(communityPreroll.duplicate_ids || [])].map(String);
+      if (copyIds.some(id => downloadedCommunityIds.includes(id))) {
         return true;
       }
       
@@ -35437,10 +35621,14 @@ const DashboardTiles = {
     const runCommunityBulkDownload = async () => {
       // Resolve the selection against the current page plus anything selected on
       // an earlier page but still in view; ids not in the results are dropped.
+      // A row with platform versions queues the ones for this install's servers.
       const byId = new Map(communitySearchResults.map(p => [p.id, p]));
+      const servers = getConnectedServers();
       const queue = communitySelectedIds
         .map(id => byId.get(id))
-        .filter(p => p && !isPrerollAlreadyDownloaded(p));
+        .filter(Boolean)
+        .flatMap(p => (p.versions ? wantedVersions(p, servers).map(v => ({ ...v, rowId: p.id })) : [p]))
+        .filter(p => !isPrerollAlreadyDownloaded(p));
       if (!queue.length) return;
 
       communityBulkCancelRef.current = false;
@@ -35449,9 +35637,10 @@ const DashboardTiles = {
       for (let i = 0; i < queue.length; i++) {
         if (communityBulkCancelRef.current) break;
         const preroll = queue[i];
+        const rowId = preroll.rowId || preroll.id;
         const title = cleanDisplayText(preroll.title);
         setCommunityBulk(prev => (prev ? { ...prev, current: title, waiting: 0 } : prev));
-        setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'downloading' }));
+        setCommunityIsDownloading(prev => ({ ...prev, [rowId]: 'downloading' }));
         try {
           const response = await fetch(apiUrl('community-prerolls/download'), {
             method: 'POST',
@@ -35471,13 +35660,16 @@ const DashboardTiles = {
             throw new Error(err.detail || `Download failed (${response.status})`);
           }
           await response.json();
-          setCommunitySelectedIds(prev => prev.filter(id => id !== preroll.id));
+          // A row's last queued version clears its selection.
+          if (!queue.slice(i + 1).some(q => (q.rowId || q.id) === rowId)) {
+            setCommunitySelectedIds(prev => prev.filter(id => id !== rowId));
+          }
         } catch (error) {
           setCommunityBulk(prev => (prev
             ? { ...prev, failed: [...prev.failed, { title, message: error.message }] }
             : prev));
         } finally {
-          setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: false }));
+          setCommunityIsDownloading(prev => ({ ...prev, [rowId]: false }));
         }
         setCommunityBulk(prev => (prev ? { ...prev, done: i + 1 } : prev));
 
@@ -35499,8 +35691,13 @@ const DashboardTiles = {
         : prev));
     };
 
-    // Handle preroll download and import
-    const handleDownload = async (preroll) => {
+    // Default file name for a version: its title without a numeric id prefix.
+    const communityDefaultName = (item) => String(item?.title || '').replace(/^\d+\s*-\s*/, '').trim();
+
+    // Handle preroll download and import. `onlyVersionId` opens the dialog on
+    // one platform version (a row's version chip); otherwise the versions for
+    // the connected servers are ticked.
+    const handleDownload = async (preroll, onlyVersionId = null) => {
       const selectedCategory = getCommunityCategorySelection(communitySelectedCategories, preroll.id);
       if (!selectedCategory && communityShowAddToCategory[preroll.id]) {
         alert('Please select a category');
@@ -35510,18 +35707,26 @@ const DashboardTiles = {
       // Remember scroll position — opening this dialog swaps out the whole list
       // view, so we restore it after the dialog closes (see the effect above).
       communityScrollRef.current = window.scrollY;
+      const picks = initialVersionPicks(preroll, getConnectedServers(), isPrerollAlreadyDownloaded, onlyVersionId);
+      setCommunityVersionPicks(picks);
       // Show rename dialog
       setCommunityRenamingPreroll(preroll);
       // Default name removes the bug number prefix if present
-      const defaultName = preroll.title.replace(/^\d+\s*-\s*/, '').trim();
-      setCommunityNewPrerollName(defaultName);
+      const first = rowVersions(preroll).find(v => v.id === picks[0]) || preroll;
+      setCommunityNewPrerollName(communityDefaultName(first));
     };
 
     const handleConfirmDownload = async () => {
       const preroll = communityRenamingPreroll;
       if (!preroll) return;
 
-      const customName = communityNewPrerollName.trim() || preroll.title.replace(/^\d+\s*-\s*/, '').trim();
+      // One file per ticked version; a row without versions is its own file.
+      const files = preroll.versions
+        ? rowVersions(preroll).filter(v => communityVersionPicks.includes(v.id))
+        : [preroll];
+      if (!files.length) return;
+      // The name field names a single file; several keep their own names.
+      const customName = communityNewPrerollName.trim() || communityDefaultName(files[0]);
       const selectedCategory = getCommunityCategorySelection(communitySelectedCategories, preroll.id);
 
       setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'downloading' }));
@@ -35529,32 +35734,39 @@ const DashboardTiles = {
       setCommunityNewPrerollName('');
 
       try {
-        const response = await fetch(apiUrl('community-prerolls/download'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            preroll_id: preroll.id,
-            title: customName,
-            url: preroll.url || preroll.download_url,
-            category_id: selectedCategory,
-            add_to_category: communityShowAddToCategory[preroll.id] || false,
-            tags: '', // Always send empty tags - no auto-tagging
-            description: `Community Preroll ID: ${preroll.id}` // Add bug number to description
-          })
-        });
+        const saved = [];
+        // One at a time: the backend spaces community downloads out anyway.
+        for (const file of files) {
+          const response = await fetch(apiUrl('community-prerolls/download'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              preroll_id: file.id,
+              title: files.length === 1 ? customName : communityDefaultName(file),
+              url: file.url || file.download_url,
+              category_id: selectedCategory,
+              add_to_category: communityShowAddToCategory[preroll.id] || false,
+              tags: '', // Always send empty tags - no auto-tagging
+              description: `Community Preroll ID: ${file.id}` // Add bug number to description
+            })
+          });
 
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.detail || 'Download failed');
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            const done = saved.length ? ` (${saved.length} of ${files.length} saved before it)` : '';
+            throw new Error(`${error.detail || 'Download failed'}${done}`);
+          }
+          const result = await response.json();
+          saved.push(result.display_name || result.filename);
         }
 
-        const result = await response.json();
-        
         // Show processing status
         setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'processing' }));
         await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause to show processing
-        
-        alert(`Successfully downloaded "${result.display_name || result.filename}"!`);
+
+        alert(saved.length === 1
+          ? `Successfully downloaded "${saved[0]}"!`
+          : `Successfully downloaded ${saved.length} versions: ${saved.join(', ')}`);
         
         // Refresh downloaded IDs to update the UI
         await loadDownloadedCommunityIds();
@@ -35577,6 +35789,19 @@ const DashboardTiles = {
 
     // Rename modal before download
     if (communityRenamingPreroll) {
+      const modalVersions = communityRenamingPreroll.versions ? rowVersions(communityRenamingPreroll) : null;
+      const pickedVersions = modalVersions ? modalVersions.filter(v => communityVersionPicks.includes(v.id)) : [];
+      const singleFile = !modalVersions || pickedVersions.length === 1;
+      const nameSource = modalVersions ? (pickedVersions[0] || modalVersions[0]) : communityRenamingPreroll;
+      const toggleVersionPick = (version) => {
+        const next = communityVersionPicks.includes(version.id)
+          ? communityVersionPicks.filter(id => id !== version.id)
+          : [...communityVersionPicks, version.id];
+        setCommunityVersionPicks(next);
+        if (next.length === 1) {
+          setCommunityNewPrerollName(communityDefaultName(modalVersions.find(v => v.id === next[0])));
+        }
+      };
       return (
         <Modal
           title="Add Community Preroll"
@@ -35591,7 +35816,46 @@ const DashboardTiles = {
         >
           <div style={{ marginBottom: '1rem' }}>
             <div className="nx-community-download-notice"><Download size={14} /><div><strong>Ready to download</strong><span>The video will be copied into NeXroll storage, indexed, and linked back to its Community entry.</span></div></div>
-            
+
+            {modalVersions && (
+              <div className="nx-comm-versions">
+                <div className="nx-comm-versions-head">
+                  <strong>Versions</strong>
+                  <span>
+                    {getConnectedServers().length
+                      ? `Your servers: ${describeServers(getConnectedServers())}`
+                      : 'No media server is connected; pick the versions you need'}
+                  </span>
+                </div>
+                {modalVersions.map(version => {
+                  const done = isPrerollAlreadyDownloaded(version);
+                  const meta = [formatPrerollLength(version.duration), formatBytes(version.size_bytes), done ? 'Downloaded' : null].filter(Boolean);
+                  return (
+                    <label key={version.id} className={`nx-comm-version-option${done ? ' is-done' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={communityVersionPicks.includes(version.id)}
+                        disabled={done}
+                        onChange={() => toggleVersionPick(version)}
+                      />
+                      <span className="nx-comm-version-platform">{platformLabel(version.platform)}</span>
+                      <span className="nx-comm-version-title">{cleanDisplayText(version.title)}</span>
+                      <span className="nx-comm-version-meta">{meta.join(' · ')}</span>
+                    </label>
+                  );
+                })}
+                {pickedVersions.length > 1 && (
+                  <p className="nx-comm-versions-note">
+                    Each version keeps its own name. {pickedVersions.length === 2 ? 'Both go' : 'They all go'} into
+                    the same category, and every server plays a category's prerolls. To play each version only on
+                    its own server, give each server's version its own category and use a sequence with a Media
+                    server rule.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {singleFile && (
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
                 Preroll Name:
@@ -35618,11 +35882,12 @@ const DashboardTiles = {
                 autoFocus
               />
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
-                Original: <strong>{communityRenamingPreroll.title}</strong>
+                Original: <strong>{nameSource.title}</strong>
                 <br />
-                Community ID #{communityRenamingPreroll.id} will be added to description for reference.
+                Community ID #{nameSource.id} will be added to description for reference.
               </div>
             </div>
+            )}
 
             <div className="nx-community-download-fields">
               <label>Add to category
@@ -35641,9 +35906,11 @@ const DashboardTiles = {
               <button
                 className="button"
                 onClick={handleConfirmDownload}
+                disabled={Boolean(modalVersions) && pickedVersions.length === 0}
                 style={{ padding: '0.5rem 1.5rem' }}
               >
-                <Download size={14} style={{marginRight: '0.35rem'}} /> Download to Library
+                <Download size={14} style={{marginRight: '0.35rem'}} />
+                {pickedVersions.length > 1 ? ` Download ${pickedVersions.length} versions` : ' Download to Library'}
               </button>
               <button
                 className="button-secondary"
@@ -35717,10 +35984,11 @@ const DashboardTiles = {
     }
 
     // Main Community Prerolls interface
-    const activeServerMeta = communityServers.find(s => communityServerUrl === (s.baseUrl || '').replace(/\/+$/, ''));
     const idxExists = communityIndexStatus?.exists;
-    const idxStale = communityIndexStatus?.is_stale;
     const communityInspectorItem = communityInspectorPreroll || communitySearchResults[0] || communityRandomPreroll;
+    // What the panel plays: the row, or the version picked in its switch.
+    const inspectorShown = versionView(communityInspectorItem, communityPreviewPicks[communityInspectorItem?.id]);
+    const inspectorVersion = communityInspectorItem?.versions?.find(v => v.id === inspectorShown?.id) || null;
     const handleCommunityPreview = (preroll) => {
       if (communityInspectorOpen) setCommunityInspectorPreroll(preroll);
       else setCommunityPreviewingPreroll(preroll);
@@ -35736,49 +36004,8 @@ const DashboardTiles = {
     };
     return (
       <div className="nx-community" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {/* Hero: community server + index status + primary actions */}
-        <div className={`nx-conn-hero${idxExists ? ' connected' : ''}`} style={{ '--brand': '#00d4ff' }}>
-          <div className={`nx-conn-hero-badge${idxExists ? '' : ' idle'}`} style={idxExists ? { background: 'var(--accent-color)', boxShadow: '0 4px 12px rgba(0, 212, 255, 0.35)' } : undefined}>
-            <Globe size={24} />
-          </div>
-          <div className="nx-conn-hero-body">
-            <h2 className="nx-conn-hero-title">
-              Community Prerolls
-              {communityIndexStatus && (
-                <span className={`nx-conn-hero-state ${idxExists && !idxStale ? 'ok' : 'bad'}`}>
-                  <span className={`nx-dot ${idxExists && !idxStale ? 'ok' : 'bad'}`} aria-hidden="true" />
-                  {idxExists ? (idxStale ? 'Index stale' : 'Fast search ready') : 'No index'}
-                </span>
-              )}
-            </h2>
-            <div className="nx-conn-hero-meta" style={{ alignItems: 'center' }}>
-              <span>{activeServerMeta?.name || communityServerUrl || '—'}</span>
-              {idxExists && communityIndexStatus.total_prerolls > 0 && (
-                <span className="nx-comm-chip ok"><Library size={13} /> {communityIndexStatus.total_prerolls} indexed</span>
-              )}
-              {communityMatchedCount > 0 && (
-                <span className="nx-comm-chip link"><Link size={13} /> {communityMatchedCount} matched</span>
-              )}
-              {idxStale && (
-                <span className="nx-comm-chip stale"><AlertTriangle size={13} /> {Math.round(communityIndexStatus.age_days)}d old</span>
-              )}
-            </div>
-          </div>
-          <div className="nx-conn-hero-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button
-              onClick={handleBuildIndex}
-              disabled={communityIsBuilding}
-              className="button"
-              title={idxExists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
-            >
-              {communityIsBuilding
-                ? <><Loader2 size={15} className="spin" /> Building…</>
-                : (idxExists ? <><RefreshCw size={15} /> Refresh Index</> : <><Zap size={15} /> Build Index</>)}
-            </button>
-          </div>
-        </div>
-
-        {/* Secondary action bar — visible, one-click */}
+        {/* Secondary actions, under the summary tiles. Refresh Index and Change
+            Server are in the page header. */}
         <div className="nx-comm-actionbar">
           <button onClick={() => handleMatchExisting(true)} disabled={communityIsMigrating} className="button button-secondary">
             {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Matching…</> : <><Link size={14} /> Match Existing Prerolls</>}
@@ -35789,13 +36016,26 @@ const DashboardTiles = {
             </button>
           )}
           <div className="nx-comm-actionbar-spacer" />
-          <button
-            onClick={() => setCommunityShowCustomUrl(!communityShowCustomUrl)}
-            className={`nx-comm-linkbtn${communityShowCustomUrl ? ' active' : ''}`}
-            title="Choose a community server or enter a custom URL"
-          >
-            <Server size={14} /> Change Server
-          </button>
+          {idxExists && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(communityIndexStatus?.auto_refresh)}
+              onClick={async () => {
+                const enabled = !communityIndexStatus?.auto_refresh;
+                try {
+                  const r = await fetch(apiUrl('community-prerolls/auto-refresh'), {
+                    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }),
+                  });
+                  if (r.ok) setCommunityIndexStatus(s => ({ ...(s || {}), auto_refresh: enabled }));
+                } catch (_) {}
+              }}
+              className={`nx-comm-linkbtn${communityIndexStatus?.auto_refresh ? ' active' : ''}`}
+              title="Refresh the index on its own once it is a week old: about 600 small requests to the community server, the same as pressing Refresh Index weekly"
+            >
+              <RefreshCw size={14} /> Weekly refresh: {communityIndexStatus?.auto_refresh ? 'On' : 'Off'}
+            </button>
+          )}
           <button
             onClick={async () => {
               if (!communityPolicyText) {
@@ -35816,9 +36056,9 @@ const DashboardTiles = {
           </button>
         </div>
 
-        {/* Server picker (toggled from the hero's "Change Server") */}
+        {/* Server picker (toggled from the page header's "Change Server") */}
         {communityShowCustomUrl && (
-          <div className="card">
+          <div className="card nx-comm-server-card">
             <div className="nx-conn-method-lead" style={{ fontSize: '0.95rem' }}><Server size={16} /> Community Server</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
               {communityServers.filter(s => s.status === 'active').map(s => {
@@ -36000,6 +36240,34 @@ const DashboardTiles = {
               </select>
             </div>
             <div className="nx-comm-filter">
+              <label>Length</label>
+              <select aria-label="Length" value={communityLength} onChange={(e) => handleCommunityLengthChange(e.target.value)}>
+                {COMMUNITY_LENGTH_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </div>
+            {communityLengthCustomFields && (
+              <div className="nx-comm-filter">
+                <label>Seconds</label>
+                {communityLengthCustomFields}
+              </div>
+            )}
+            <div className="nx-comm-filter">
+              <label>Sort</label>
+              <select
+                aria-label="Sort"
+                value={communitySearchSort}
+                onChange={(e) => {
+                  const sort = e.target.value;
+                  setCommunitySearchSort(sort);
+                  if (communitySearchResults.length > 0) handleSearch(0, communityIncludeAI, { sort });
+                }}
+              >
+                <option value="relevance">Best match</option>
+                <option value="shortest">Shortest first</option>
+                <option value="longest">Longest first</option>
+              </select>
+            </div>
+            <div className="nx-comm-filter">
               <label>Results</label>
               <select aria-label="Results per page" value={communityResultLimit} onChange={(e) => setCommunityResultLimit(Number(e.target.value))}>
                 <option value={10}>10 results</option>
@@ -36025,6 +36293,12 @@ const DashboardTiles = {
               <span>{communityIsSearching ? 'Searching…' : 'Search'}</span>
             </button>
           </div>
+          {communityLengthNote && (
+            <div className="nx-comm-length-note" role="status">
+              {lengthStatus?.running && <Loader2 size={13} className="spin" />}
+              <span>{communityLengthNote}</span>
+            </div>
+          )}
 
           {/* Search progress bar */}
           {communityIsSearching && (
@@ -36090,7 +36364,6 @@ const DashboardTiles = {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', padding: '0.25rem 0' }}>
                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                   {communityFacetsMessage || 'Build the community index to browse.'}
-                  {communityIndexStatus?.is_stale ? ' The index on disk is past its refresh age, so it cannot be read.' : ''}
                 </span>
                 <button className="button" onClick={handleBuildIndex} disabled={communityIsBuilding}>
                   {communityIsBuilding ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
@@ -36102,7 +36375,7 @@ const DashboardTiles = {
               </div>
             )}
             {communityFacets && (<React.Fragment>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
               <div>
                 <label className="nx-conn-field-label">Category</label>
                 <select className="input" value={browseCategory} onChange={e => { setBrowseCategory(e.target.value); handleBrowse({ category: e.target.value }); }}>
@@ -36125,6 +36398,13 @@ const DashboardTiles = {
                 </select>
               </div>
               <div>
+                <label className="nx-conn-field-label">Length</label>
+                <select className="input" value={communityLength} onChange={e => handleCommunityLengthChange(e.target.value)}>
+                  {COMMUNITY_LENGTH_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+                {communityLengthCustomFields}
+              </div>
+              <div>
                 <label className="nx-conn-field-label">Results per page</label>
                 <select className="input" value={communityResultLimit} onChange={(e) => { const limit = Number(e.target.value); setCommunityResultLimit(limit); handleBrowse({ limit }); }}>
                   <option value={10}>10 results</option>
@@ -36139,6 +36419,8 @@ const DashboardTiles = {
                   <option value="name">Name (A–Z)</option>
                   <option value="newest">Newest{communityFacets.has_dates ? '' : ' (re-index)'}</option>
                   <option value="oldest">Oldest{communityFacets.has_dates ? '' : ' (re-index)'}</option>
+                  <option value="shortest">Shortest first</option>
+                  <option value="longest">Longest first</option>
                 </select>
               </div>
             </div>
@@ -36164,8 +36446,8 @@ const DashboardTiles = {
                 {communityIsSearching ? <Loader2 size={14} className="spin" /> : <Filter size={14} />}
                 {communityIsSearching ? 'Loading...' : 'Show results'}
               </button>
-              {(browseCategory || browseCreator || browsePlatform) && (
-                <button className="button button-secondary" onClick={() => { setBrowseCategory(''); setBrowseCreator(''); setBrowsePlatform(''); handleBrowse({ category: '', creator: '', platform: '' }); }}>
+              {(browseCategory || browseCreator || browsePlatform || communityLength) && (
+                <button className="button button-secondary" onClick={() => { setBrowseCategory(''); setBrowseCreator(''); setBrowsePlatform(''); setCommunityLength(''); handleBrowse({ category: '', creator: '', platform: '', length: '' }); }}>
                   Clear filters
                 </button>
               )}
@@ -36175,6 +36457,12 @@ const DashboardTiles = {
                 </span>
               )}
             </div>
+            {communityLengthNote && (
+              <div className="nx-comm-length-note" role="status">
+                {lengthStatus?.running && <Loader2 size={13} className="spin" />}
+                <span>{communityLengthNote}</span>
+              </div>
+            )}
             </React.Fragment>)}
           </div>
         )}
@@ -36248,7 +36536,14 @@ const DashboardTiles = {
                     <>
                       <div className="nx-comm-bulk-status">
                         <strong>{communitySelectedCount} selected</strong>
-                        <span>Downloads run one at a time, {COMMUNITY_BULK_GAP_SECONDS}s apart</span>
+                        <span>
+                          Downloads run one at a time, {COMMUNITY_BULK_GAP_SECONDS}s apart
+                          {communitySearchResults.some(p => p.versions && communitySelectedIds.includes(p.id)) && (
+                            getConnectedServers().length
+                              ? `. Prerolls with several versions get the ${describeServers(getConnectedServers())} version${getConnectedServers().length > 1 ? 's' : ''}.`
+                              : '. Prerolls with several versions get the first one listed.'
+                          )}
+                        </span>
                       </div>
                       <CategorySelect
                         className="nx-community-select"
@@ -36304,7 +36599,30 @@ const DashboardTiles = {
                       {preroll.creator && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><User size={13} /> {cleanDisplayText(preroll.creator)}</span>}
                       {preroll.category && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(preroll.category)}</span>}
                       <CommunityAIBadge isAI={preroll.is_ai} />
-                      {preroll.duration && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={13} /> {preroll.duration}s</span>}
+                      {formatPrerollLength(preroll.duration) && <span title="Length" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={13} /> {formatPrerollLength(preroll.duration)}</span>}
+                      {preroll.versions && (
+                        <span className="nx-comm-versions-inline" onClick={(event) => event.stopPropagation()}>
+                          {preroll.versions.map(version => {
+                            const done = isPrerollAlreadyDownloaded(version);
+                            return done ? (
+                              <span key={version.id} className="nx-comm-version-chip is-done" title={`${platformLabel(version.platform)} version downloaded`}>
+                                <CheckCircle size={11} /> {platformLabel(version.platform)}
+                              </span>
+                            ) : (
+                              <button
+                                key={version.id}
+                                type="button"
+                                className="nx-comm-version-chip"
+                                disabled={bulkRunning || Boolean(dlState)}
+                                onClick={() => handleDownload(preroll, version.id)}
+                                title={`Download the ${platformLabel(version.platform)} version`}
+                              >
+                                {platformLabel(version.platform)}
+                              </button>
+                            );
+                          })}
+                        </span>
+                      )}
                       {preroll.file_size && preroll.file_size !== 'Unknown' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Package size={13} /> {preroll.file_size}</span>}
                     </div>
                   </div>
@@ -36387,33 +36705,45 @@ const DashboardTiles = {
                   <>
                     <div className="nx-community-inspector-video">
                       <video
-                        key={communityInspectorItem.id}
+                        // Per file, so switching versions loads the new one.
+                        key={inspectorShown.id}
                         controls
                         // Selecting a row is the user gesture that authorises
                         // playback, so the pane starts playing rather than
                         // making them click play on every result.
                         autoPlay
                         preload="metadata"
-                        src={communityDirectSrc(communityInspectorItem)}
-                        onError={event => communityPreviewFallback(event, communityInspectorItem, () => {
-                          console.error('Community preroll preview failed:', communityInspectorItem?.id);
+                        src={communityDirectSrc(inspectorShown)}
+                        onError={event => communityPreviewFallback(event, inspectorShown, () => {
+                          console.error('Community preroll preview failed:', inspectorShown?.id);
                         })}
                       />
                     </div>
                     <div className="nx-community-inspector-body">
                       <span className="nx-community-inspector-kicker">Community preroll</span>
                       <h3>{cleanDisplayText(communityInspectorItem.title)}</h3>
+                      {renderCommunityVersionSwitch(communityInspectorItem)}
                       <dl>
                         <div><dt>Creator</dt><dd>{cleanDisplayText(communityInspectorItem.creator) || 'Unknown'}</dd></div>
                         <div><dt>Category</dt><dd>{cleanDisplayText(communityInspectorItem.category) || 'Uncategorized'}</dd></div>
-                        <div><dt>Duration</dt><dd>{formatCommunityDuration(communityInspectorItem, communityItemMeta)}</dd></div>
-                        <div><dt>File size</dt><dd>{formatCommunitySize(communityInspectorItem, communityItemMeta)}</dd></div>
+                        <div><dt>Duration</dt><dd>{formatCommunityDuration(inspectorShown, communityItemMeta)}</dd></div>
+                        <div><dt>File size</dt><dd>{formatCommunitySize(inspectorShown, communityItemMeta)}</dd></div>
                       </dl>
                       <CommunityAIBadge isAI={communityInspectorItem.is_ai} />
                     </div>
                     <footer>
                       <button className="button button-secondary" onClick={() => setCommunityPreviewingPreroll(communityInspectorItem)}><Maximize2 size={14} /> Full preview</button>
-                      {isPrerollAlreadyDownloaded(communityInspectorItem) ? (
+                      {/* A grouped row downloads the version being watched; the
+                          row's own Download still ticks every server's version. */}
+                      {inspectorVersion ? (
+                        isPrerollAlreadyDownloaded(inspectorVersion) ? (
+                          <span className="button button-success"><CheckCircle size={14} /> {platformLabel(inspectorShown.platform)} downloaded</span>
+                        ) : (
+                          <button className="button" onClick={() => handleDownload(communityInspectorItem, inspectorShown.id)} disabled={communityIsDownloading[communityInspectorItem.id]}>
+                            <Download size={14} /> Download {platformLabel(inspectorShown.platform)} version
+                          </button>
+                        )
+                      ) : isPrerollAlreadyDownloaded(communityInspectorItem) ? (
                         <span className="button button-success"><CheckCircle size={14} /> Downloaded</span>
                       ) : (
                         <button className="button" onClick={() => handleDownload(communityInspectorItem)} disabled={communityIsDownloading[communityInspectorItem.id]}><Download size={14} /> Download</button>
@@ -38836,7 +39166,7 @@ const DashboardTiles = {
          <div 
            role="dialog"
            aria-modal="true"
-           aria-label={`Preview ${communityPreviewingPreroll.title}`}
+           aria-label={`Preview ${communityPreviewShown.title}`}
            style={{
              backgroundColor: 'var(--card-bg)',
              padding: '20px',
@@ -38854,9 +39184,12 @@ const DashboardTiles = {
              alignItems: 'center',
              marginBottom: '1rem'
            }}>
-             <h3 style={{ margin: 0, color: 'var(--text-color)' }}>
-               {communityPreviewingPreroll.title}
-             </h3>
+             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', minWidth: 0 }}>
+               <h3 style={{ margin: 0, color: 'var(--text-color)' }}>
+                 {communityPreviewingPreroll.title}
+               </h3>
+               {renderCommunityVersionSwitch(communityPreviewingPreroll)}
+             </div>
              <button 
                type="button"
                aria-label="Close preview"
@@ -38876,10 +39209,10 @@ const DashboardTiles = {
            </div>
            <div>
              <video
-               // Remount per preroll so the one-shot proxy retry flag on the
-               // element resets; without it only the first failing preview
-               // would ever fall back.
-               key={communityPreviewingPreroll?.id || communityPreviewingPreroll?.url}
+               // Remount per file (preroll or version) so the one-shot proxy
+               // retry flag on the element resets; without it only the first
+               // failing preview would ever fall back.
+               key={communityPreviewShown?.id || communityPreviewShown?.url}
                ref={previewVideoRef}
                controls
                autoPlay
@@ -38888,8 +39221,8 @@ const DashboardTiles = {
                  maxHeight: '70vh',
                  borderRadius: '4px'
                }}
-               src={communityDirectSrc(communityPreviewingPreroll)}
-               onError={event => communityPreviewFallback(event, communityPreviewingPreroll, () => {
+               src={communityDirectSrc(communityPreviewShown)}
+               onError={event => communityPreviewFallback(event, communityPreviewShown, () => {
                  alert('Failed to load video. NeXroll could not reach the community server directly or through this server - check that the community server is reachable from your network.');
                })}
              >
@@ -38904,14 +39237,17 @@ const DashboardTiles = {
              gap: '1rem',
              flexWrap: 'wrap'
            }}>
-             {communityPreviewingPreroll.creator && (
-               <span>Creator: {communityPreviewingPreroll.creator}</span>
+             {communityPreviewShown.versions && (
+               <span>File: {communityPreviewShown.title}</span>
              )}
-             {communityPreviewingPreroll.category && (
-               <span>Category: {communityPreviewingPreroll.category}</span>
+             {communityPreviewShown.creator && (
+               <span>Creator: {communityPreviewShown.creator}</span>
              )}
-             {communityPreviewingPreroll.duration && (
-               <span>⏱️ Duration: {communityPreviewingPreroll.duration}s</span>
+             {communityPreviewShown.category && (
+               <span>Category: {communityPreviewShown.category}</span>
+             )}
+             {formatPrerollLength(communityPreviewShown.duration) && (
+               <span>Length: {formatPrerollLength(communityPreviewShown.duration)}</span>
              )}
            </div>
          </div>

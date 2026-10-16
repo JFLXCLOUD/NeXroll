@@ -109,6 +109,9 @@ from backend import preroll_trash
 from backend import dashboard_layout
 from backend import health_summary
 from backend.community_filter import filter_ai_prerolls, is_ai_preroll
+from backend import community_durations
+from backend.community_search import QueryMatcher
+from backend import community_catalog
 from backend.shuffle_bag import shuffle_bag_sample
 from backend.sequence_utils import representative_category_id
 from backend.backup_utils import (
@@ -270,6 +273,10 @@ def ensure_schema() -> None:
             # Settings: Plex playback guard window in minutes (0 = off)
             if not _sqlite_has_column("settings", "playback_guard_minutes"):
                 _sqlite_add_column("settings", "playback_guard_minutes INTEGER DEFAULT 20")
+
+            # Settings: rebuild the Community index on its own once a week (opt-in)
+            if not _sqlite_has_column("settings", "community_auto_refresh"):
+                _sqlite_add_column("settings", "community_auto_refresh BOOLEAN DEFAULT 0")
             
             from backend.trailer_filters import migrate_trailer_ratings
             with engine.begin() as rating_conn:
@@ -2130,26 +2137,7 @@ if _legacy_index != PREROLLS_INDEX_PATH and _legacy_index.exists() and not PRERO
 
 PREROLLS_INDEX_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds (refresh weekly recommended)
 
-# Smart search synonym mapping - helps find related content
-SEARCH_SYNONYMS = {
-    "halloween": ["pumpkin", "scary", "ghost", "spooky", "witch", "haunted", "october", "trick", "treat", "monster", "zombie", "skeleton"],
-    "christmas": ["santa", "xmas", "holiday", "winter", "snow", "reindeer", "elf", "sleigh", "december", "festive", "merry"],
-    "thanksgiving": ["turkey", "autumn", "fall", "november", "harvest", "pilgrim", "feast"],
-    "turkey": ["thanksgiving", "november", "autumn", "fall", "harvest"],
-    "4th july": ["independence", "july", "fireworks", "patriotic", "america"],
-    "independence": ["4th july", "july", "fireworks", "patriotic", "america"],
-    "valentines": ["love", "heart", "romance", "cupid", "february"],
-    "easter": ["bunny", "egg", "spring", "april"],
-    "new year": ["nye", "celebration", "january", "countdown", "resolution"],
-    "summer": ["beach", "sun", "vacation", "june", "july", "august"],
-    "spring": ["flower", "bloom", "april", "may", "easter"],
-    "fall": ["autumn", "thanksgiving", "october", "november", "harvest", "leaves"],
-    "winter": ["snow", "christmas", "cold", "december", "january", "february"],
-    "birthday": ["party", "celebration", "cake", "celebrate"],
-    "scary": ["halloween", "horror", "spooky", "ghost", "monster", "zombie"],
-    "spooky": ["halloween", "scary", "ghost", "haunted"],
-    "pumpkin": ["halloween", "october", "autumn", "fall"],
-}
+# Search synonyms and ranking live in backend/community_search.py.
 
 _community_default_server_cache = {"url": None, "at": 0.0}
 _COMMUNITY_DEFAULT_SERVER_TTL = 600  # 10 minutes
@@ -2876,6 +2864,9 @@ def startup_event():
             _file_log(f"Schedule migration: repaired {repaired} schedule(s)")
 
     scheduler.start()
+
+    # Weekly Community index refresh; does nothing unless the user turned it on.
+    threading.Thread(target=_community_auto_refresh_loop, daemon=True, name="community-auto-refresh").start()
 
 @app.on_event("startup")
 def startup_env_bootstrap():
@@ -28545,23 +28536,25 @@ def _save_prerolls_index(index_data: dict) -> bool:
 
 
 def _load_prerolls_index() -> Optional[dict]:
-    """Load the prerolls index from disk"""
+    """Load the prerolls index from disk, with titles tidied for display.
+
+    An index older than PREROLLS_INDEX_MAX_AGE is still returned. Refusing it
+    used to blank Browse after a week and send every search to the live
+    directory crawl, which is slower for the user and far heavier on the
+    community server than an old index; the age is reported as "refresh
+    recommended" instead (index-status, facets).
+    """
     try:
         if not PREROLLS_INDEX_PATH.exists():
             _file_log("No local prerolls index found")
             return None
-        
-        # Check if index is too old
-        file_age = time.time() - PREROLLS_INDEX_PATH.stat().st_mtime
-        if file_age > PREROLLS_INDEX_MAX_AGE:
-            _file_log(f"Prerolls index is {file_age / 86400:.1f} days old (max {PREROLLS_INDEX_MAX_AGE / 86400} days)")
-            return None
-        
+
         with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
-        
-        # Only log on first load or errors (too verbose for every call)
-        # _file_log(f"Loaded prerolls index: {index_data.get('total_prerolls', 0)} prerolls (created {index_data.get('created_at', 'unknown')})")
+
+        # Display titles only: the file keeps the stored ones, which
+        # "Match Existing Prerolls" compares against.
+        community_catalog.tidy_titles(index_data.get("prerolls", []))
         return index_data
     except Exception as e:
         _file_log(f"Error loading prerolls index: {e}")
@@ -28578,9 +28571,136 @@ def _detect_platform(preroll) -> Optional[str]:
     return None
 
 
+# ===== COMMUNITY PREROLL LENGTHS =====
+# Directory listings carry no running time, so after an index build a
+# background pass reads it from each file's header: one or two 4 KB range
+# requests per file, one file at a time. Lengths are kept beside the index and
+# survive rebuilds, so later passes only read new or replaced files.
+_community_durations = community_durations.DurationStore(
+    PREROLLS_INDEX_PATH.parent / "community_durations.json")
+COMMUNITY_DURATION_READ_GAP = 0.25  # seconds between files
+COMMUNITY_DURATION_MAX_ERRORS = 5   # consecutive server errors before giving up for now
+_duration_job = {"running": False, "checked": 0, "to_check": 0, "message": "", "finished_at": None}
+_duration_job_gate = threading.Lock()
+
+
+def _community_entry_key(entry: dict) -> str:
+    return str(entry.get("path") or entry.get("id") or "")
+
+
+def _community_duration_status(index_data: Optional[dict], include_ai: bool = True) -> dict:
+    entries = filter_ai_prerolls(index_data.get("prerolls", []), include_ai=include_ai) if index_data else []
+    known = _community_durations.durations(entries)
+    pending = sum(
+        1 for e in entries
+        if _community_entry_key(e) not in known
+        and _community_durations.needs_reading(_community_entry_key(e), e.get("size_bytes"))
+    )
+    return {
+        "total": len(entries),
+        "measured": len(known),
+        "pending": pending,
+        "unreadable": max(0, len(entries) - len(known) - pending),
+        "running": _duration_job["running"],
+        "checked": _duration_job["checked"],
+        "to_check": _duration_job["to_check"],
+        "message": _duration_job["message"],
+    }
+
+
+def _start_community_duration_job(base_url: str) -> bool:
+    """Start the background length pass unless one is running. True if started."""
+    if not base_url:
+        return False
+    with _duration_job_gate:
+        if _duration_job["running"]:
+            return False
+        _duration_job.update({"running": True, "checked": 0, "to_check": 0,
+                              "message": "Starting", "finished_at": None})
+    threading.Thread(target=_run_community_duration_job, args=(base_url.rstrip("/"),), daemon=True).start()
+    return True
+
+
+def _run_community_duration_job(base_url: str):
+    message = ""
+    server_trouble = False
+    try:
+        index_data = _load_prerolls_index()
+        if not index_data:
+            message = "No current index"
+            return
+        entries = index_data.get("prerolls", [])
+        _community_durations.prune(_community_entry_key(e) for e in entries)
+        todo = [e for e in entries
+                if _community_durations.needs_reading(_community_entry_key(e), e.get("size_bytes"))]
+        _duration_job.update({"to_check": len(todo), "message": "Reading"})
+        if not todo:
+            message = "All lengths known"
+            return
+        _file_log(f"[COMMUNITY-LENGTH] Reading {len(todo)} preroll lengths from {base_url}")
+        session = requests.Session()
+        headers = _community_headers()
+        errors = 0
+        read = 0
+        traffic = {"requests": 0, "bytes": 0}  # what the pass cost the server, for the log
+
+        def counted(fetch):
+            def inner(start, length):
+                traffic["requests"] += 1
+                data = fetch(start, length)
+                traffic["bytes"] += len(data or b"")
+                return data
+            return inner
+
+        for entry in todo:
+            if _index_build_lock:
+                # The rebuild starts a fresh pass when it finishes.
+                message = "Stopped for an index rebuild"
+                break
+            key = _community_entry_key(entry)
+            fetch = counted(community_durations.http_range_fetch(session, f"{base_url}{key}", headers))
+            try:
+                seconds = community_durations.read_duration(fetch)
+                _community_durations.record(key, entry.get("size_bytes"), seconds)
+                errors = 0
+                read += 1
+            except community_durations.ServerBusy as e:
+                message = f"The community server asked us to slow down ({e}); the rest are read next time"
+                server_trouble = True
+                break
+            except (community_durations.FileUnavailable, community_durations.RangeUnsupported) as e:
+                _community_durations.record(key, entry.get("size_bytes"), None, error=str(e) or type(e).__name__)
+                errors = 0
+            except Exception as e:
+                errors += 1
+                if errors >= COMMUNITY_DURATION_MAX_ERRORS:
+                    message = f"The community server is not answering ({e}); the rest are read next time"
+                    server_trouble = True
+                    break
+            _duration_job["checked"] += 1
+            if _duration_job["checked"] % 50 == 0:
+                _community_durations.save()
+            time.sleep(COMMUNITY_DURATION_READ_GAP)
+        else:
+            message = "Finished"
+        _file_log(f"[COMMUNITY-LENGTH] {message}: {read} of {len(todo)} read "
+                  f"({traffic['requests']} requests, {traffic['bytes'] / 1e6:.1f} MB)")
+        if server_trouble:
+            log_event('WARNING', 'system', f'Community preroll lengths: {message}',
+                      source='community_durations')
+    except Exception as e:
+        message = f"Failed: {e}"
+        _file_log(f"[COMMUNITY-LENGTH] {message}")
+    finally:
+        _community_durations.save()
+        _duration_job.update({"running": False, "message": message, "finished_at": time.time()})
+
+
 def _search_local_index(index_data: dict, query: str = "", category: str = "", platform: str = "",
                         creator: str = "", sort: str = "relevance", limit: int = 50, offset: int = 0,
-                        include_ai: bool = False) -> tuple:
+                        include_ai: bool = False, durations: Optional[dict] = None,
+                        min_duration: Optional[float] = None, max_duration: Optional[float] = None,
+                        prefer: tuple = ()) -> tuple:
     """
     Search/browse the local prerolls index (FAST - milliseconds vs seconds).
 
@@ -28590,15 +28710,24 @@ def _search_local_index(index_data: dict, query: str = "", category: str = "", p
         category: Filter by category (substring)
         platform: Filter by platform (plex/jellyfin/emby; matched in path or title)
         creator: Filter by creator (substring)
-        sort: relevance (index order) | newest | oldest | name
+        sort: relevance (index order) | newest | oldest | name | shortest | longest
         limit: Maximum results to return (page size)
         offset: How many matches to skip (for pagination)
+        durations: {path: seconds} for the prerolls whose length is known
+        min_duration / max_duration: inclusive length bounds in whole seconds;
+            a preroll whose length is not known yet never matches them
+        prefer: the user's servers ("plex", "jellyfin", "emby"); a preroll
+            with several platform versions is one row led by the first of these
 
     Returns:
-        (page_of_matches, total_match_count) — the slice for this page plus the
-        full number of matches, so the caller can drive pagination.
+        (page_of_matches, total_match_count, unmeasured) — the slice for this
+        page, the full number of matches so the caller can drive pagination,
+        and how many otherwise-matching prerolls a length bound left out only
+        because their length is not known yet.
     """
     prerolls = filter_ai_prerolls(index_data.get("prerolls", []), include_ai=include_ai)
+    durations = durations or {}
+    length_bound = min_duration is not None or max_duration is not None
     results = []
 
     query_lower = query.lower() if query else ""
@@ -28606,27 +28735,18 @@ def _search_local_index(index_data: dict, query: str = "", category: str = "", p
     platform_lower = platform.lower() if platform else ""
     creator_lower = creator.lower() if creator else ""
 
-    # Build expanded search terms using synonyms
-    search_terms = [query_lower] if query_lower else []
-    if query_lower:
-        for key, synonyms in SEARCH_SYNONYMS.items():
-            if query_lower in key or key in query_lower:
-                search_terms.extend(synonyms)
-                search_terms.append(key)
-                break
-        search_terms = list(set(search_terms))
+    # The query itself matches inside words; related words (synonyms) only as
+    # whole words, and they rank after direct matches (see community_search).
+    matcher = QueryMatcher(query_lower)
+    match_rank = {}
+    unmeasured_entries = []
 
     for preroll in prerolls:
-        if search_terms:
-            match_found = False
-            preroll_title = preroll.get("title", "").lower()
-            preroll_keywords = preroll.get("keywords", [])
-            for term in search_terms:
-                if any(term in keyword for keyword in preroll_keywords) or term in preroll_title:
-                    match_found = True
-                    break
-            if not match_found:
+        if query_lower:
+            rank = matcher.rank(preroll)
+            if rank is None:
                 continue
+            match_rank[_community_entry_key(preroll)] = rank
 
         if category_lower and category_lower not in preroll.get("category", "").lower():
             continue
@@ -28640,21 +28760,176 @@ def _search_local_index(index_data: dict, query: str = "", category: str = "", p
         if creator_lower and creator_lower not in (preroll.get("creator", "") or "").lower():
             continue
 
+        if length_bound:
+            seconds = durations.get(_community_entry_key(preroll))
+            if seconds is None:
+                unmeasured_entries.append(preroll)
+                continue
+            if not community_durations.length_matches(seconds, min_duration, max_duration):
+                continue
+
         results.append(preroll)
 
-    # Sort (relevance = keep index order). Collect-then-sort so newest/name aren't
-    # truncated by an early limit; the index is small (~2k), so this is instant.
+    # The same file in two folders (mostly an /Archives/ copy) is one result.
+    # Done after filtering, so a filter that only one copy matches (category
+    # Archives, say) still shows that copy.
+    results = community_catalog.dedupe(results, durations, key=_community_entry_key)
+    unmeasured = len(community_catalog.dedupe(unmeasured_entries, durations, key=_community_entry_key))
+    # Plex/Jellyfin/Emby versions of one preroll are one row, led by the
+    # version for the first of the user's servers it has.
+    results = community_catalog.group_versions(results, prefer=prefer)
+    if match_rank:
+        # A row ranks by the best match among its versions and their copies.
+        for entry in results:
+            ids = [_community_entry_key(entry)] + list(entry.get("duplicate_ids") or ())
+            for version in entry.get("versions") or ():
+                ids += [version.get("path") or version.get("id")] + list(version.get("duplicate_ids") or ())
+            match_rank[_community_entry_key(entry)] = min(match_rank[i] for i in ids if i in match_rank)
+
+    # Sort (relevance = best match first, index order within a rank). Collect-
+    # then-sort so newest/name aren't truncated by an early limit; the index is
+    # small (~2k), so this is instant.
     if sort == "newest":
         results.sort(key=lambda x: x.get("modified_time", 0) or 0, reverse=True)
     elif sort == "oldest":
         results.sort(key=lambda x: x.get("modified_time", 0) or 0)
     elif sort == "name":
         results.sort(key=lambda x: (x.get("title", "") or "").lower())
+    elif sort in ("shortest", "longest"):
+        results.sort(key=lambda x: (
+            community_durations.length_sort_key(durations.get(_community_entry_key(x)), longest=sort == "longest"),
+            (x.get("title", "") or "").lower(),
+        ))
+    elif match_rank:
+        results.sort(key=lambda x: match_rank[_community_entry_key(x)])  # stable: index order within a rank
 
     total = len(results)
     if offset < 0:
         offset = 0
-    return results[offset:offset + limit], total
+    page = []
+    for row in results[offset:offset + limit]:
+        row = dict(row, duration=durations.get(_community_entry_key(row)))
+        if row.get("versions"):
+            row["versions"] = [dict(v, duration=durations.get(v.get("path") or v.get("id")))
+                               for v in row["versions"]]
+        page.append(row)
+    return page, total, unmeasured
+
+
+_index_build_gate = threading.Lock()  # makes the check-and-set of _index_build_lock atomic
+
+
+def _start_community_index_build(base_url: str, reason: str = "") -> bool:
+    """Start a background index build unless one is running. True if started.
+
+    Shared by Refresh Index and the weekly auto-refresh. A saved build starts
+    the length pass, which reads only new or replaced files.
+    """
+    global _index_build_lock
+    with _index_build_gate:
+        if _index_build_lock:
+            return False
+        _index_build_lock = True
+
+    # Reset progress so the SSE stream reflects a fresh build from the start.
+    _index_build_progress["building"] = True
+    _index_build_progress["progress"] = 0
+    _index_build_progress["current_dir"] = ""
+    _index_build_progress["files_found"] = 0
+    _index_build_progress["dirs_visited"] = 0
+    _index_build_progress["message"] = "Starting index build..."
+    if reason:
+        _file_log(f"Community index build started ({reason})")
+
+    def _run_build():
+        global _index_build_lock
+        saved = False
+        try:
+            index_data = _build_prerolls_index(base_url=base_url)
+            saved = _save_prerolls_index(index_data)
+            if not saved:
+                _index_build_progress["building"] = False
+                _index_build_progress["message"] = "Failed to save index to disk"
+                _file_log("Community index build: failed to save index to disk")
+        except Exception as e:
+            _index_build_progress["building"] = False
+            _index_build_progress["message"] = f"Build failed: {e}"
+            _file_log(f"Error building prerolls index: {e}")
+            try:
+                log_event('ERROR', 'system', f'Community index build failed: {e}', source='build_community_index')
+            except Exception:
+                pass
+        finally:
+            _index_build_lock = False
+        if saved:
+            # After the lock is released: the length pass stops while a build runs.
+            _start_community_duration_job(base_url)
+
+    threading.Thread(target=_run_build, daemon=True).start()
+    return True
+
+
+# ===== WEEKLY AUTO-REFRESH (opt-in: settings.community_auto_refresh) =====
+# One build is ~600 small directory listings (586 on 2026-10-13) over about two
+# minutes, plus header reads for new files only: the same as pressing Refresh
+# Index once a week, which the page already asks for. Only an index the user
+# built is refreshed, never a first one. Each process waits a random 0-12 h past
+# the week so installs don't line up, and a failed build waits a day.
+COMMUNITY_AUTO_REFRESH_CHECK = 3600            # seconds between checks
+COMMUNITY_AUTO_REFRESH_RETRY = 24 * 3600       # after an automatic attempt
+_community_auto_refresh_last_attempt = 0.0
+
+
+def _community_auto_refresh_tick(jitter: float) -> bool:
+    """Start a refresh if one is due. True if a build was started."""
+    global _community_auto_refresh_last_attempt
+    db = SessionLocal()
+    try:
+        setting = db.query(models.Setting).first()
+        if not setting or not getattr(setting, "community_auto_refresh", False):
+            return False
+        if not getattr(setting, "community_fair_use_accepted", False):
+            return False
+        if not PREROLLS_INDEX_PATH.exists():
+            return False
+        now = time.time()
+        if now - PREROLLS_INDEX_PATH.stat().st_mtime < PREROLLS_INDEX_MAX_AGE + jitter:
+            return False
+        if now - _community_auto_refresh_last_attempt < COMMUNITY_AUTO_REFRESH_RETRY:
+            return False
+        base_url = _get_community_base_url(db)
+    finally:
+        db.close()
+    _community_auto_refresh_last_attempt = time.time()
+    return _start_community_index_build(base_url, reason="weekly auto-refresh")
+
+
+def _community_auto_refresh_loop():
+    import random as _random
+    # Not right at startup: a restart loop must not turn into a build loop.
+    time.sleep(_random.uniform(600, 1800))
+    jitter = _random.uniform(0, 12 * 3600)
+    while True:
+        try:
+            _community_auto_refresh_tick(jitter)
+        except Exception as e:
+            _file_log(f"Community auto-refresh check failed: {e}")
+        time.sleep(COMMUNITY_AUTO_REFRESH_CHECK)
+
+
+class CommunityAutoRefreshRequest(BaseModel):
+    enabled: bool
+
+
+@app.put("/community-prerolls/auto-refresh")
+def set_community_auto_refresh(req: CommunityAutoRefreshRequest, db: Session = Depends(get_db)):
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting()
+        db.add(setting)
+    setting.community_auto_refresh = bool(req.enabled)
+    db.commit()
+    return {"auto_refresh": bool(req.enabled)}
 
 
 @app.get("/community-prerolls/build-index")
@@ -28707,38 +28982,11 @@ def build_community_prerolls_index(request: Request, db: Session = Depends(get_d
     # immediately. The frontend tracks completion via the /build-progress SSE
     # stream — running the build inline would block the worker for minutes and
     # make the progress stream/UI appear stuck.
-    base_url = _get_community_base_url(db)
-
-    # Reset progress so the SSE stream reflects a fresh build from the start.
-    _index_build_progress["building"] = True
-    _index_build_progress["progress"] = 0
-    _index_build_progress["current_dir"] = ""
-    _index_build_progress["files_found"] = 0
-    _index_build_progress["dirs_visited"] = 0
-    _index_build_progress["message"] = "Starting index build..."
-
-    def _run_build():
-        global _index_build_lock
-        try:
-            index_data = _build_prerolls_index(base_url=base_url)
-            saved = _save_prerolls_index(index_data)
-            if not saved:
-                _index_build_progress["building"] = False
-                _index_build_progress["message"] = "Failed to save index to disk"
-                _file_log("Community index build: failed to save index to disk")
-        except Exception as e:
-            _index_build_progress["building"] = False
-            _index_build_progress["message"] = f"Build failed: {e}"
-            _file_log(f"Error building prerolls index: {e}")
-            try:
-                log_event('ERROR', 'system', f'Community index build failed: {e}', source='build_community_index')
-            except Exception:
-                pass
-        finally:
-            _index_build_lock = False
-
-    _index_build_lock = True
-    threading.Thread(target=_run_build, daemon=True).start()
+    if not _start_community_index_build(_get_community_base_url(db)):
+        raise HTTPException(
+            status_code=429,
+            detail="An index build is already in progress. Please wait for it to finish."
+        )
 
     return {
         "status": "started",
@@ -28777,15 +29025,19 @@ async def get_build_progress():
 
 
 @app.get("/community-prerolls/index-status")
-def get_community_prerolls_index_status():
+def get_community_prerolls_index_status(db: Session = Depends(get_db)):
     """
     Get status of the local prerolls index (exists, age, size, etc.)
     """
     import time
-    
+
+    setting = db.query(models.Setting).first()
+    auto_refresh = bool(getattr(setting, "community_auto_refresh", False)) if setting else False
+
     if not PREROLLS_INDEX_PATH.exists():
         return {
             "exists": False,
+            "auto_refresh": auto_refresh,
             "message": "No local index found. Build it for faster searches!",
             "index_path": str(PREROLLS_INDEX_PATH)
         }
@@ -28801,14 +29053,16 @@ def get_community_prerolls_index_status():
         
         return {
             "exists": True,
+            # Past max age the index is still used; this only asks for a refresh.
             "is_stale": is_stale,
             "age_days": file_age / 86400,
             "max_age_days": PREROLLS_INDEX_MAX_AGE / 86400,
+            "auto_refresh": auto_refresh,
             "size_mb": round(file_size_mb, 2),
             "total_prerolls": index_data.get("total_prerolls", 0) if index_data else 0,
             "created_at": index_data.get("created_at") if index_data else None,
             "index_path": str(PREROLLS_INDEX_PATH),
-            "message": "Index is stale. Refresh recommended." if is_stale else "Index is up to date."
+            "message": "Index is over a week old. Refresh recommended." if is_stale else "Index is up to date."
         }
     except Exception as e:
         return {
@@ -28828,25 +29082,35 @@ def get_community_facets(include_ai: bool = Query(False, description="Include en
                 "total": 0, "has_dates": False,
                 "message": "Build the community index to browse."}
     prerolls = filter_ai_prerolls(index_data.get("prerolls", []), include_ai=include_ai)
-    from collections import Counter
-    cats, creators, platforms = Counter(), Counter(), Counter()
+    from collections import defaultdict
+    cats, creators, platforms = defaultdict(list), defaultdict(list), defaultdict(list)
     has_dates = False
     for p in prerolls:
-        cats[(p.get("category") or "Other")] += 1
-        creators[(p.get("creator") or "Unknown")] += 1
-        platforms[_detect_platform(p) or "Universal"] += 1
+        cats[(p.get("category") or "Other")].append(p)
+        creators[(p.get("creator") or "Unknown")].append(p)
+        platforms[_detect_platform(p) or "Universal"].append(p)
         if p.get("modified_time"):
             has_dates = True
 
-    def _as_list(counter):
+    # Counts match what picking the value shows: search collapses copies of
+    # the same file, then platform versions, within whatever the filter selects.
+    # A platform filter leaves one version per preroll, so those count files.
+    durations = _community_durations.durations(prerolls)
+
+    def _count(entries, versions=True):
+        rows = community_catalog.dedupe(entries, durations, key=_community_entry_key)
+        return len(community_catalog.group_versions(rows) if versions else rows)
+
+    def _as_list(groups, versions=True):
+        counts = {k: _count(v, versions) for k, v in groups.items()}
         return [{"name": k, "count": v}
-                for k, v in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
+                for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
 
     return {
         "available": True,
-        "total": len(prerolls),
+        "total": _count(prerolls),
         "categories": _as_list(cats),
-        "platforms": _as_list(platforms),
+        "platforms": _as_list(platforms, versions=False),
         "creators": _as_list(creators),
         "has_dates": has_dates,  # False until a re-index has captured modified_time
         "created_at": index_data.get("created_at"),
@@ -28854,8 +29118,46 @@ def get_community_facets(include_ai: bool = Query(False, description="Include en
     }
 
 
+@app.get("/community-prerolls/durations")
+def get_community_duration_status(include_ai: bool = Query(False, description="Count entries from the /AI/ directory")):
+    """How many indexed prerolls have a known length, and whether the
+    background pass that reads them is running."""
+    status = _community_duration_status(_load_prerolls_index(), include_ai=include_ai)
+    status["available"] = status["total"] > 0
+    return status
+
+
+@app.post("/community-prerolls/durations/measure")
+def measure_community_durations(include_ai: bool = Query(False, description="Count entries from the /AI/ directory"),
+                                db: Session = Depends(get_db)):
+    """Read the lengths the index is still missing, in the background.
+
+    Index builds start this on their own; the Browse page calls it so an index
+    built before lengths existed gets them too. Files already read are skipped.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "community_fair_use_accepted", False):
+        raise HTTPException(status_code=403, detail="Fair Use Policy must be accepted first")
+    index_data = _load_prerolls_index()
+    if not index_data:
+        raise HTTPException(status_code=409, detail="Build the community index first")
+    if _index_build_lock:
+        raise HTTPException(status_code=409, detail="An index build is running; lengths are read when it finishes")
+    # Every entry is read, AI ones included, so toggling AI needs no second pass.
+    status = _community_duration_status(index_data)
+    started = False
+    if status["pending"] and not status["running"]:
+        started = _start_community_duration_job(_get_community_base_url(db))
+    return {"started": started, "available": True,
+            **_community_duration_status(index_data, include_ai=include_ai)}
+
+
 @app.get("/community-prerolls/search")
-def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", creator: str = "", sort: str = "relevance", limit: int = 50, offset: int = 0, include_ai: bool = Query(False, description="Include entries from the /AI/ directory"), db: Session = Depends(get_db)):
+def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", creator: str = "", sort: str = "relevance", limit: int = 50, offset: int = 0, include_ai: bool = Query(False, description="Include entries from the /AI/ directory"),
+                              min_duration: Optional[float] = Query(None, ge=0, description="Shortest length in whole seconds (inclusive)"),
+                              max_duration: Optional[float] = Query(None, ge=0, description="Longest length in whole seconds (inclusive)"),
+                              servers: str = Query("", description="The user's media servers, comma separated (plex,jellyfin,emby): which platform version leads a row"),
+                              db: Session = Depends(get_db)):
     """
     Search the Typical Nerds preroll library (LOCAL INDEX PREFERRED - FAST!).
     
@@ -28863,6 +29165,8 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
     Category: filter by category (holiday, theme, etc.)
     Platform: filter by platform (plex, jellyfin, emby, or empty for all)
     Limit: max results (default 50, max 100)
+    Min/max duration: length bounds; only prerolls whose length has been read
+    from the file match them (local index only)
     
     Returns list of prerolls with metadata and download URLs.
     
@@ -28892,15 +29196,18 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
         offset = 0
 
     # ===== NEW: TRY LOCAL INDEX FIRST (FAST!) =====
-    _file_log(f"Community search: query='{query}' category='{category}' platform='{platform}' creator='{creator}' sort='{sort}' limit={limit}")
+    _file_log(f"Community search: query='{query}' category='{category}' platform='{platform}' creator='{creator}' sort='{sort}' length={min_duration}-{max_duration} limit={limit}")
 
     index_data = _load_prerolls_index()
     if index_data:
         # LOCAL INDEX FOUND - Use it for instant search!
         _file_log("Using local prerolls index for fast search")
-        results, total = _search_local_index(index_data, query=query, category=category, platform=platform,
-                                             creator=creator, sort=sort, limit=limit, offset=offset,
-                                             include_ai=include_ai)
+        results, total, unmeasured = _search_local_index(
+            index_data, query=query, category=category, platform=platform,
+            creator=creator, sort=sort, limit=limit, offset=offset, include_ai=include_ai,
+            durations=_community_durations.durations(index_data.get("prerolls", [])),
+            min_duration=min_duration, max_duration=max_duration,
+            prefer=tuple(s.strip().lower() for s in (servers or "").split(",") if s.strip()))
 
         return {
             "found": len(results),
@@ -28912,6 +29219,10 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
             "category": category,
             "creator": creator,
             "sort": sort,
+            "min_duration": min_duration,
+            "max_duration": max_duration,
+            # Matches a length bound left out because their length isn't read yet.
+            "unmeasured": unmeasured,
             "include_ai": include_ai,
             "source": "local_index",
             "index_created": index_data.get("created_at"),
@@ -29535,13 +29846,27 @@ def get_community_preroll_metadata(preroll_id: str, db: Session = Depends(get_db
     except Exception as e:
         _file_log(f"[COMMUNITY-META] HEAD failed for {key}: {e}")
 
-    try:
-        from backend.dynamic_preroll import DynamicPrerollGenerator
-        seconds = DynamicPrerollGenerator().probe_media_duration(source_url)
+    # The background length pass may have read it already; otherwise the header
+    # read costs a few KB, and ffprobe (which buffers far more) is the fallback
+    # for containers the header reader does not understand.
+    seconds = _community_durations.seconds(path, result["size_bytes"])
+    if not seconds:
+        try:
+            seconds = community_durations.read_duration(
+                community_durations.http_range_fetch(requests, source_url, _community_headers()))
+        except Exception as e:
+            _file_log(f"[COMMUNITY-META] header read failed for {key}: {e}")
+        if not seconds:
+            try:
+                from backend.dynamic_preroll import DynamicPrerollGenerator
+                seconds = DynamicPrerollGenerator().probe_media_duration(source_url)
+            except Exception as e:
+                _file_log(f"[COMMUNITY-META] probe failed for {key}: {e}")
         if seconds:
-            result["duration"] = round(float(seconds), 1)
-    except Exception as e:
-        _file_log(f"[COMMUNITY-META] probe failed for {key}: {e}")
+            _community_durations.record(path, result["size_bytes"], round(float(seconds), 2))
+            _community_durations.save()
+    if seconds:
+        result["duration"] = round(float(seconds), 1)
 
     if len(_community_meta_cache) >= _COMMUNITY_META_MAX:
         _community_meta_cache.clear()
@@ -29913,8 +30238,13 @@ def get_random_community_preroll(
                 
                 filtered_prerolls.append(preroll)
             
+            # One pick per file, so a file stored twice isn't twice as likely.
+            filtered_prerolls = community_catalog.dedupe(
+                filtered_prerolls, _community_durations.durations(filtered_prerolls), key=_community_entry_key)
             if filtered_prerolls:
                 random_preroll = random.choice(filtered_prerolls)
+                random_preroll = dict(random_preroll, duration=_community_durations.seconds(
+                    _community_entry_key(random_preroll), random_preroll.get("size_bytes")))
                 _file_log(f"Random preroll selected from index: {random_preroll['title']}")
                 
                 return {
@@ -30287,6 +30617,11 @@ def get_latest_community_prerolls(
             
             filtered_prerolls.append(preroll)
         
+        filtered_prerolls = community_catalog.dedupe(
+            filtered_prerolls, _community_durations.durations(filtered_prerolls), key=_community_entry_key)
+        # A new upload in three platform versions is one tile, not three.
+        filtered_prerolls = community_catalog.group_versions(filtered_prerolls)
+
         # Sort by modified_time (newest first) - the index stores this timestamp
         # If modified_time is not available, use creation order
         sorted_prerolls = sorted(
