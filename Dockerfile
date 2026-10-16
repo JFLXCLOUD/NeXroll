@@ -42,11 +42,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # vulnerability report. `npm audit fix` applies patched releases of runtime
 # dependencies that fit the provider's version ranges; it never changes a
 # major version, and a registry outage does not fail the build.
+# basic-ftp is the exception: proxy-agent > pac-proxy-agent > get-uri pins
+# ^5.3.1, and its directory-listing DoS (CVE-2026-102990) is fixed only in
+# 6.2.1. get-uri uses the same Client calls in 6.x, and the provider only
+# reaches FTP for an ftp:// proxy auto-config URL, so the override is safe.
 RUN git clone --depth 1 --branch ${BGUTIL_VERSION} \
         https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil-provider && \
     cd /opt/bgutil-provider/server && \
     npm ci --no-audit --no-fund && \
     npx tsc && \
+    npm pkg set 'overrides.basic-ftp=^6.2.1' && \
+    npm install --no-audit --no-fund && \
     (npm audit fix --omit=dev --no-fund || true) && \
     npm prune --omit=dev --no-audit --no-fund && \
     test -f build/main.js

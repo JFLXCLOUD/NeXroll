@@ -3513,6 +3513,19 @@ def install_potoken():
             except Exception:
                 pass
 
+            # Same dependency fix as the Docker image (the Dockerfile's potoken
+            # stage): basic-ftp's DoS fix (CVE-2026-102990) is only in 6.x, outside
+            # the range get-uri allows, so pin it with an npm override.
+            try:
+                pkg_path = os.path.join(server_dir, "package.json")
+                with open(pkg_path, encoding="utf-8") as fh:
+                    pkg = json.load(fh)
+                pkg.setdefault("overrides", {})["basic-ftp"] = "^6.2.1"
+                with open(pkg_path, "w", encoding="utf-8") as fh:
+                    json.dump(pkg, fh, indent=2)
+            except Exception as pkg_err:
+                _file_log(f"PO-token: basic-ftp override skipped: {pkg_err}")
+
             steps.append("Installing provider dependencies (npm install)...")
             npm = os.path.join(node_dir, "npm.cmd" if sys.platform.startswith("win") else "npm")
             if not os.path.exists(npm):
@@ -3533,6 +3546,14 @@ def install_potoken():
                 _file_log(f"PO-token tsc build failed: {(r2.stderr or '')[-800:]}")
                 return {"success": False, "steps": steps,
                         "message": f"Build failed: {(r2.stderr or r2.stdout or '')[-300:]}"}
+            # Patched releases of runtime dependencies that fit the provider's
+            # version ranges, as in the Docker image; best effort, so a registry
+            # outage does not fail the install.
+            try:
+                _run_subprocess([npm, "audit", "fix", "--omit=dev", "--no-fund"],
+                                cwd=server_dir, env=env, capture_output=True, text=True, timeout=300)
+            except Exception as audit_err:
+                _file_log(f"PO-token: npm audit fix skipped: {audit_err}")
             # The compiler, linters and their dependencies are only needed to
             # build; leaving them installed only adds packages with advisories.
             try:
