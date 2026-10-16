@@ -55,6 +55,10 @@ jobs:
           print('imports ok')
           "
 
+      # yt-dlp needs Deno for YouTube; it comes from Deno's binary image.
+      - name: Deno runs
+        run: docker run --rm nexroll:ci deno --version
+
       - name: Backend starts and answers /health
         run: |
           docker run -d --name nexroll-ci -p 9393:9393 nexroll:ci

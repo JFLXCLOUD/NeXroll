@@ -1,5 +1,12 @@
 ﻿# syntax=docker/dockerfile:1
 
+# Deno for yt-dlp's YouTube extraction, from Deno's official binary image.
+# Pinned like BGUTIL_VERSION below; bump it when yt-dlp needs a newer Deno.
+ARG DENO_VERSION=2.9.7
+
+# --- Deno binary (copied into the runtime stage) ---
+FROM denoland/deno:bin-${DENO_VERSION} AS deno
+
 # --- Build stage: compile Python wheels with native deps ---
 FROM python:3.12-slim AS builder
 
@@ -114,9 +121,10 @@ RUN apt-get update && \
     dpkg --remove --force-depends ncurses-base ncurses-bin 2>/dev/null || true && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Deno (required for yt-dlp YouTube extraction)
-RUN curl -fsSL https://deno.land/install.sh | sh && \
-    ln -s /root/.deno/bin/deno /usr/local/bin/deno
+# Deno (required for yt-dlp YouTube extraction), from the deno stage. It used
+# to come from piping deno.land's install script into sh: unpinned, and
+# nothing checked what it downloaded.
+COPY --from=deno /deno /usr/local/bin/deno
 
 # YouTube PO-token provider: copy the Node runtime + the prebuilt bgutil server
 # from the potoken stage, and install the shared libs its native `canvas`
