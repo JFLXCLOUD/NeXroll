@@ -34,6 +34,11 @@ GET /external/status?api_key=nx_your_api_key_here
 
 `Authorization: Bearer` is not accepted and returns 401.
 
+Browser pages on other sites (a dashboard widget, for example) can call the
+`/external/*` endpoints, with a key. Every other endpoint answers only
+NeXroll's own pages: a browser on another site gets no CORS access, and
+changes it sends are refused with 403. Scripts and servers are not affected.
+
 API keys are generated in **Settings → API Keys**. Keys can be scoped as **read-only** or **full access** and can have expiration dates.
 
 ### When Authentication is Disabled

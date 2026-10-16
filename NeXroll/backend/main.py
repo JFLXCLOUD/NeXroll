@@ -120,7 +120,14 @@ from backend.backup_utils import (
     remap_sequence_blocks,
     remap_sequence_json,
 )
-from backend.auth_gate import friendly_local_username, is_auth_gate_exempt
+from backend.auth_gate import (
+    DEV_UI_ORIGINS,
+    friendly_local_username,
+    is_auth_gate_exempt,
+    is_cross_site_blocked,
+    is_direct_local,
+    is_open_cors_path,
+)
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -2296,16 +2303,26 @@ def _build_plex_headers() -> dict:
         headers.setdefault("X-Plex-Client-Identifier", str(uuid.uuid4()))
     return headers
 
-# CORS middleware for frontend integration
-# allow_origin_regex also permits any Jellyfin/Emby web UI origin to reach /plugin/* routes.
-# The plugin endpoints use API-key auth so open CORS is safe.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r".*",   # plugin routes need any origin; API key provides real security
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS. Any origin may call the plugin routes and the API-key /external/
+# routes (auth_gate.OPEN_CORS_PREFIXES); every other route answers only its own
+# origin and the development UI. It used to allow any origin everywhere, so
+# with login off (the default) any web page a NeXroll user opened could read
+# and change their install through their browser.
+class _ScopedCORSMiddleware:
+    def __init__(self, app):
+        self._open = CORSMiddleware(app, allow_origin_regex=r".*", allow_credentials=False,
+                                    allow_methods=["*"], allow_headers=["*"])
+        self._own = CORSMiddleware(app, allow_origins=list(DEV_UI_ORIGINS), allow_credentials=False,
+                                   allow_methods=["*"], allow_headers=["*"])
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and is_open_cors_path(scope.get("path") or ""):
+            await self._open(scope, receive, send)
+        else:
+            await self._own(scope, receive, send)
+
+
+app.add_middleware(_ScopedCORSMiddleware)
 
 # ---------------------------------------------------------------------------
 # Global auth gate
@@ -2385,6 +2402,27 @@ async def _auth_gate_mw(request: Request, call_next):
     if allowed:
         return await call_next(request)
     return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+
+_cross_site_log_throttle = app_log.RepeatThrottle(600)
+
+
+# Registered after the auth gate, so it runs first. See
+# auth_gate.is_cross_site_blocked for what is refused and why.
+@app.middleware("http")
+async def _cross_site_mw(request: Request, call_next):
+    path = request.url.path or "/"
+    if not is_cross_site_blocked(request.method, path, request.headers):
+        return await call_next(request)
+    try:
+        allowed, repeats = _cross_site_log_throttle.check(
+            f"{request.method} {path}", time.monotonic(), time.time())
+        if allowed:
+            _file_log(f"Refused a cross-site {request.method} {path} from "
+                      f"{request.headers.get('origin') or 'another site'}{repeats}", level="WARNING")
+    except Exception:
+        pass
+    return JSONResponse(status_code=403, content={"detail": "Cross-site request refused"})
 
 
 # Log unhandled exceptions and 4xx/5xx responses to writable logs (with fallback)
@@ -6037,13 +6075,15 @@ def cleanup_old_logs(retention_days: int = None, db: Session = None):
 
 
 def _is_local_request(request: Request) -> bool:
-    """Check if request is from localhost (trusted local access).
-    Only trusts the direct client IP - does NOT trust X-Forwarded-For
-    or X-Real-IP headers as they can be spoofed by remote attackers.
+    """Check if request was made on this machine straight to NeXroll.
+
+    Only trusts the direct client IP - never X-Forwarded-For or X-Real-IP,
+    which remote clients can set. A reverse proxy or tunnel on this machine
+    also connects from 127.0.0.1, so a request carrying forwarding headers or
+    a non-loopback Host is not local either (auth_gate.is_direct_local).
     """
     client_ip = request.client.host if request.client else ""
-    local_ips = ("127.0.0.1", "::1", "localhost")
-    return client_ip in local_ips
+    return is_direct_local(client_ip, request.headers)
 
 
 @app.get("/auth/status")
@@ -6310,7 +6350,9 @@ async def auth_reset_password(
     """
     # SECURITY: Only allow from localhost
     if not _is_local_request(request):
-        raise HTTPException(status_code=403, detail="Password reset is only available from the local machine")
+        raise HTTPException(status_code=403, detail=(
+            "Password reset only works on the machine NeXroll runs on, sent straight to "
+            "http://localhost (not through a reverse proxy or tunnel)"))
     
     # Validate new password strength
     if len(reset.new_password) < 8:
@@ -15026,7 +15068,7 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
         fallback_url = None
         serve_path = local_path if os.path.isfile(local_path) else (plex_path if os.path.isfile(plex_path) else None)
         if serve_path:
-            fallback_url = f"/preview/file?path={quote(serve_path, safe='')}"
+            fallback_url = _signed_preview_url(serve_path)
         results.append({
             "id": None,
             "filename": fname,
@@ -18591,10 +18633,31 @@ def get_preroll_video_by_id(preroll_id: int, db: Session = Depends(get_db)):
         mime_type = "video/mp4"
     return FileResponse(video_path, media_type=mime_type)
 
+def _preview_signature(path: str, expires: int) -> str:
+    # "preview|" keeps these tokens from also working on /plugin/stream.
+    return hmac.new(_STREAM_SECRET.encode(), f"preview|{path}|{expires}".encode(),
+                    hashlib.sha256).hexdigest()
+
+
+def _signed_preview_url(path: str) -> str:
+    """A /preview/file link for a file this server chose to show (an
+    unmanaged preroll set on the media server), valid for a day."""
+    expires = int(time.time()) + 86400
+    return (f"/preview/file?path={quote(path, safe='')}"
+            f"&e={expires}&t={_preview_signature(path, expires)}")
+
+
 @app.get("/preview/file")
-def preview_file_by_path(path: str):
-    """Serve a video file by its absolute path (for previewing unmanaged prerolls)."""
-    decoded = unquote(path)
+def preview_file_by_path(path: str, e: int = 0, t: str = ""):
+    """Serve a video file by its absolute path (for previewing unmanaged prerolls).
+
+    Only paths the server signed (via _signed_preview_url, from the current
+    preroll details) play: this used to stream any video on the machine to
+    whoever asked for its path.
+    """
+    if not t or e < int(time.time()) or not hmac.compare_digest(t, _preview_signature(path, e)):
+        raise HTTPException(status_code=403, detail="Preview link expired or invalid")
+    decoded = path
     if not os.path.isabs(decoded) or not os.path.isfile(decoded):
         raise HTTPException(status_code=404, detail="File not found")
     ext = os.path.splitext(decoded)[1].lower()
@@ -30922,9 +30985,40 @@ def plugin_clients():
 
 # --- Plugin streaming: serve preroll files over HTTP so Jellyfin/Emby can ---
 # --- resolve them as playable media (their ResolvePath rejects UNC paths). ---
-_STREAM_SECRET = os.environ.get("NEXROLL_STREAM_SECRET") or hashlib.sha256(
-    (os.environ.get("COMPUTERNAME", "") + "NeXroll-stream").encode()
-).hexdigest()
+def _load_stream_secret() -> str:
+    """The key that signs /plugin/stream and /preview/file links.
+
+    It used to be a hash of the computer name, and the same constant on every
+    Docker install, so anyone could sign a link to any file on the server.
+    Now a random key per install, kept beside the database
+    (NEXROLL_STREAM_SECRET still overrides it). If it can't be saved, a key for
+    this run is used: links handed out before a restart then stop working,
+    which plugins and previews recover from by asking again.
+    """
+    configured = os.environ.get("NEXROLL_STREAM_SECRET")
+    if configured:
+        return configured
+    path = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "stream_secret.key")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            stored = fh.read().strip()
+        if len(stored) >= 32:
+            return stored
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        _file_log(f"Stream key not read ({e}); using a new one", level="WARNING")
+    fresh = secrets.token_hex(32)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(fresh)
+    except Exception as e:
+        _file_log(f"Stream key not saved ({e}); links will not survive a restart", level="WARNING")
+    return fresh
+
+
+_STREAM_SECRET = _load_stream_secret()
 
 
 def _sign_stream_path(file_path: str, expires: int) -> str:
@@ -30974,7 +31068,11 @@ def plugin_stream_preroll(
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Preroll file not found")
 
+    # Prerolls are videos. A signed link can't name anything else (the
+    # database, settings), even if the signing key ever leaked.
     ext = os.path.splitext(file_path)[1].lower()
+    if ext not in plex_visibility.VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=403, detail="Not a video file")
     mime_map = {".mp4": "video/mp4", ".mkv": "video/x-matroska", ".avi": "video/x-msvideo",
                 ".mov": "video/quicktime", ".webm": "video/webm", ".wmv": "video/x-ms-wmv"}
     media_type = mime_map.get(ext, "video/mp4")

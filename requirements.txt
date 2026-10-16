@@ -2,8 +2,8 @@
 # Backend Framework
 fastapi>=0.115.12
 uvicorn[standard]>=0.34.0
-python-multipart>=0.0.20
-starlette>=0.46.0
+python-multipart>=0.0.31
+starlette>=1.3.1
 
 # Database (schema migrations run at startup via ensure_schema(); alembic unused)
 sqlalchemy>=2.0.40
@@ -12,10 +12,10 @@ sqlalchemy>=2.0.40
 PlexAPI>=4.15.16
 
 # Web Scraping & HTTP (for Community Prerolls)
-requests>=2.32.3
+requests>=2.33.0
 beautifulsoup4>=4.13.3
-lxml>=5.3.1
-urllib3>=2.4.0
+lxml>=6.1.0
+urllib3>=2.8.0
 
 # Data Validation
 pydantic>=2.11.1
@@ -23,7 +23,7 @@ pydantic>=2.11.1
 # Scheduling is a custom thread loop in backend/scheduler.py (no APScheduler)
 
 # Utilities
-python-dotenv>=1.1.0
+python-dotenv>=1.2.2
 
 # Timezone support
 pytz>=2025.1
@@ -46,7 +46,7 @@ bgutil-ytdlp-pot-provider>=2.0.0
 # Pure Python with no dependencies of its own; the matrix it renders is
 # handed to FFmpeg as an overlay.
 segno>=1.6.0
-Pillow>=10.0.0
+Pillow>=12.3.0
 
 # Authentication
 bcrypt>=4.3.0

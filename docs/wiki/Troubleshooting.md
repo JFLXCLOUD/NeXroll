@@ -96,7 +96,9 @@ If you can't access the web interface due to authentication:
    In Docker, prefix it with `docker exec <container>`. The new password needs at
    least 8 characters, upper and lower case, and a digit. All existing sessions
    are invalidated. The sign-in screen's **Forgot password?** link shows this
-   same command.
+   same command. Send it to `localhost` exactly as shown: a request through a
+   reverse proxy or tunnel, or to the machine's own network name, is refused
+   even when it starts on the same machine.
 3. **Use another admin account** — If you have one, sign in and reset from there
 4. **Check Settings → Logs** — Look for auth-related error messages
 
