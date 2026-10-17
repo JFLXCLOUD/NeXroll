@@ -1,5 +1,5 @@
 import {
-  KONAMI, isKonami, isTypingTarget, matchMovieQuote, pushKey, readSecretThemes, saveSecretThemes,
+  BOOT_HINTS, KONAMI, bootHints, isKonami, isTypingTarget, matchMovieQuote, pushKey, readSecretThemes, saveSecretThemes,
 } from './easterEggs';
 
 const typeKeys = (keys, history = []) => keys.reduce((h, k) => pushKey(h, k), history);
@@ -57,4 +57,14 @@ test('unlocked secret themes are remembered, and bad storage is ignored', () => 
   store.nx_secret_themes = '{not json';
   expect(readSecretThemes(storage)).toEqual([]);
   expect(readSecretThemes({ getItem: () => { throw new Error('blocked'); } })).toEqual([]);
+});
+
+test('loading-screen hints point the way without naming anything', () => {
+  expect(bootHints()).toHaveLength(BOOT_HINTS.length);
+  // The cue marks never show with reduced motion, so neither does their hint.
+  expect(bootHints(true)).toHaveLength(BOOT_HINTS.length - 1);
+  expect(bootHints(true).some(text => /corner/i.test(text))).toBe(false);
+  for (const text of bootHints()) {
+    expect(text).not.toMatch(/konami|intermission|secret|theme|easter|cue mark/i);
+  }
 });

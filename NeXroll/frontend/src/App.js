@@ -6,7 +6,7 @@ import LibraryTrailersTile from './components/LibraryTrailersTile';
 import { isAICommunitySource } from './utils/communityAI';
 import { COMMUNITY_LENGTH_PRESETS, appendCommunityLengthParams, formatPrerollLength } from './utils/communityLength';
 import { initialVersionPicks, platformLabel, rowVersions, versionView, wantedVersions } from './utils/communityVersions';
-import { isKonami, isTypingTarget, pushKey, readSecretThemes, saveSecretThemes } from './utils/easterEggs';
+import { bootHints, isKonami, isTypingTarget, pushKey, readSecretThemes, saveSecretThemes } from './utils/easterEggs';
 import Intermission from './components/Intermission';
 import { genreMatchSummary, ratingSummary } from './utils/trailerRatings';
 import { youtubeThumbnail, youtubeVideoId } from './utils/youtube';
@@ -540,14 +540,15 @@ const bootSeasonMatches = ([startMonth, startDay, endMonth, endDay], date) => {
     : (value >= start && value <= end);
 };
 
-export const bootQuotePool = (date = new Date()) => {
+export const bootQuotePool = (date = new Date(), reducedMotion = false) => {
   const seasonal = BOOT_QUOTE_SEASONS
     .filter(season => bootSeasonMatches(season.window, date))
     .flatMap(season => season.quotes);
-  return BOOT_QUOTES.concat(seasonal);
+  return BOOT_QUOTES.concat(seasonal, bootHints(reducedMotion));
 };
 
-const BOOT_QUOTE_POOL = bootQuotePool();
+const BOOT_QUOTE_POOL = bootQuotePool(new Date(), typeof window !== 'undefined' && !!window.matchMedia
+  && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 const BOOT_QUOTE = BOOT_QUOTE_POOL[Math.floor(Math.random() * BOOT_QUOTE_POOL.length)];
 // About one load in twenty, the splash flashes a projectionist's cue marks:
 // the two dots in the top-right corner of the frame that signal a reel

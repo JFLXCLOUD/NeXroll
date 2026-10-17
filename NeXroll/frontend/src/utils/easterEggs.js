@@ -22,6 +22,20 @@ export function isTypingTarget(target) {
   return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(target.isContentEditable);
 }
 
+// Loading-screen lines that hint at the others without naming them. They join
+// the regular quotes, so each turns up now and then (about one load in fifty).
+// `motion` marks a hint about something reduced-motion users never see.
+export const BOOT_HINTS = [
+  { text: 'Up, up, down, down... the rest is up to you' },
+  { text: "There's a drive-in around here somewhere. Try looking it up." },
+  { text: 'The search box has seen a few movies' },
+  { text: 'Projectionists watch the top-right corner. So should you.', motion: true },
+];
+
+export function bootHints(reducedMotion = false) {
+  return BOOT_HINTS.filter(h => !(reducedMotion && h.motion)).map(h => h.text);
+}
+
 // Movie lines that work in the sidebar search. `id` is the page it opens
 // (null = just the reply); `unlock` names a secret theme it unlocks.
 export const MOVIE_QUOTES = [
