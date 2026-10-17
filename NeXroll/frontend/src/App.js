@@ -3554,11 +3554,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   }, [embyStatus, embyServerInfo?.connection_type]);
 
-  // Check GitHub for latest release once system version is known
+  // Check GitHub for latest release once system version is known. Compare
+  // with the version that is running: the Windows registry's copy could be
+  // left over from an older install (the installer skipped writing it), and
+  // made a release older than the running one look like an update.
   useEffect(() => {
     if (!systemVersion) return;
     const installed = normalizeVersionString(
-      (systemVersion.registry_version || systemVersion.api_version || '').toString()
+      (systemVersion.api_version || systemVersion.registry_version || '').toString()
     );
     checkForUpdates(installed, updateSettings.check_interval || 'daily');
   }, [systemVersion, updateSettings.check_interval, checkForUpdates]);
@@ -32833,7 +32836,7 @@ const DashboardTiles = {
               setUpdateCheckProgress({ status: 'Checking for updates...', phase: 'init' });
               try {
                 const installed = normalizeVersionString(
-                  (systemVersion?.registry_version || systemVersion?.api_version || '').toString()
+                  (systemVersion?.api_version || systemVersion?.registry_version || '').toString()
                 );
                 const result = await checkForUpdates(installed, updateSettings.check_interval, true);
                 // Refresh settings to get new last_check time

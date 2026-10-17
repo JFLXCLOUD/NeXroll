@@ -52,6 +52,25 @@ Page custom PrerollPathPageCreate PrerollPathPageLeave
 ; ------------------------------
 ; Custom Page - Preroll Path
 ; ------------------------------
+; The preroll folder NeXroll uses now: the registry's PrerollPath, read the
+; way the app reads it (64-bit view first, then 32-bit), else the app's own
+; default. The page used to read only the 32-bit view while the install writes
+; the 64-bit one, so a saved folder was never shown again; and a silent (/S)
+; install, which skips the page, had no folder at all.
+Function ResolvePrerollPath
+  SetRegView 64
+  ReadRegStr $PREROLL_PATH HKLM "Software\NeXroll" "PrerollPath"
+  ${If} $PREROLL_PATH == ""
+    SetRegView 32
+    ReadRegStr $PREROLL_PATH HKLM "Software\NeXroll" "PrerollPath"
+    SetRegView 64
+  ${EndIf}
+  ${If} $PREROLL_PATH == ""
+    ReadEnvStr $PREROLL_PATH "ProgramData"
+    StrCpy $PREROLL_PATH "$PREROLL_PATH\NeXroll\Prerolls"
+  ${EndIf}
+FunctionEnd
+
 Function PrerollPathPageCreate
   nsDialogs::Create 1018
   Pop $0
@@ -59,12 +78,8 @@ Function PrerollPathPageCreate
   ${NSD_CreateLabel} 0 0 100% 12u "Select Preroll Video Storage"
   ${NSD_CreateLabel} 0 18u 100% 12u "Choose a directory where Preroll videos will be stored:"
   
-  ; Default path from registry if available
-  ReadRegStr $PREROLL_PATH HKLM "Software\NeXroll" "PrerollPath"
-  ${If} $PREROLL_PATH == ""
-    ReadEnvStr $PREROLL_PATH "ProgramData"
-    StrCpy $PREROLL_PATH "$PREROLL_PATH\NeXroll\Prerolls"
-  ${EndIf}
+  ; Default path: the folder NeXroll uses now
+  Call ResolvePrerollPath
   ${NSD_CreateText} 0 36u 80% 12u "$PREROLL_PATH"
   Pop $hPrerollEdit
  
@@ -174,6 +189,11 @@ Section "!NeXroll Application (Required)" SEC_APP
   nsExec::ExecToStack 'cmd /c if exist "$INSTDIR\frontend" rd /s /q "$INSTDIR\frontend"' $0
   Pop $0
 
+  ; A silent install never showed the folder page
+  ${If} $PREROLL_PATH == ""
+    Call ResolvePrerollPath
+  ${EndIf}
+
   ; Create preroll directory
   CreateDirectory "$PREROLL_PATH"
   ; Ensure selected preroll path is writable by standard Users (Modify rights, recursive)
@@ -183,12 +203,17 @@ Section "!NeXroll Application (Required)" SEC_APP
   ; Migrate existing prerolls from previous install directory if present
   ; This preserves user thumbnails/videos across upgrades when prior versions
   ; stored data under $INSTDIR\data\prerolls (which could be wiped on reinstall)
-  IfFileExists "$INSTDIR\data\prerolls\*.*" 0 +7
+  ; A label, not a relative jump: "0 +7" skipped 7 instructions, which went
+  ; past this 3-instruction block and over the registry writes below, so
+  ; Version, InstallDir and PrerollPath were never written on installs
+  ; without this old folder (the Version left behind made the update check
+  ; offer releases older than the one running).
+  IfFileExists "$INSTDIR\data\prerolls\*.*" 0 no_legacy_prerolls
     DetailPrint "Migrating existing prerolls from $INSTDIR\data\prerolls to $PREROLL_PATH"
     nsExec::ExecToStack 'cmd /c xcopy /E /I /Y "$INSTDIR\data\prerolls" "$PREROLL_PATH"' $0
     Pop $0
     ; Best-effort; ignore errors. Subdirectories (including thumbnails) are copied due to /E
-
+  no_legacy_prerolls:
 
   ; Persist config to registry
   WriteRegStr HKLM "Software\NeXroll" "InstallDir" "$INSTDIR"
