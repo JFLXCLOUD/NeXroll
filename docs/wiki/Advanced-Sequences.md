@@ -35,7 +35,7 @@ Conditions keep working if you switch back to Simple mode. Those blocks are mark
 3. In **Block settings**, under **Conditions**, click **Add a condition**
 4. Choose a rule and whether the block plays **when** it is true or **unless** it is true
 5. Under **Otherwise**, choose what happens when the condition isn't met:
-   - **Skip this block**, so the sequence moves straight on to the next block
+   - **Skip this block**, so the sequence moves straight on to the next block. If every block is skipped, nothing plays before that movie: Plex's list is emptied, and Jellyfin and Emby play no preroll. (Before 2.2.8, Jellyfin and Emby played a preroll from the schedule's category instead, which is the first category block's, so a skipped block could play anyway.)
    - **Play prerolls from a category**, choosing the category and how many
    - **Play NeX-Up trailers**, choosing movies, TV or both, and how many
    - **Play library trailers**, choosing how many

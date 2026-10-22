@@ -61,6 +61,7 @@ from backend.scheduler import (
     resolve_category_sequence_block,
     resolve_nexup_trailer_block,
     resolve_sequence_paths,
+    sequence_pool_paths,
     reconcile_nexup_trailer_status,
     playback_context,
     _localized_now,
@@ -30911,12 +30912,14 @@ def plugin_get_intros(
         }
 
     try:
+        whole_pool = (whole or "").strip().lower() in ("1", "true", "yes") or (item_id or "").strip() == "0"
         result = _resolve_current_intros(
             db,
             media_type=media_type,
             item_id=item_id,
             server_type=request.headers.get("X-Plugin-Server-Type"),
             genres=[g.strip() for g in genres.split(",") if g.strip()] if genres else None,
+            whole_pool=whole_pool,
         )
         paths = result.get("paths", [])
         mode = result.get("mode", "shuffle")
@@ -30926,7 +30929,6 @@ def plugin_get_intros(
         # category and leave the count to the plugin's Max Intros, one setting
         # asked to mean "how many from a random category" and "cap on
         # everything", so a Max Intros of 1 cut every sequence to its first block.
-        whole_pool = (whole or "").strip().lower() in ("1", "true", "yes") or (item_id or "").strip() == "0"
         if not whole_pool:
             paths = _plugin_play_list(db.query(models.Setting).first(), paths, mode, result.get("rotation"))
 
@@ -31502,7 +31504,7 @@ def _bootstrap_jellyfin_from_env() -> None:
 
 def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
                             item_id: Optional[str] = None, server_type: Optional[str] = None,
-                            genres: Optional[list] = None) -> dict:
+                            genres: Optional[list] = None, whole_pool: bool = False) -> dict:
     """
     Resolve the currently-active preroll paths based on scheduler / filler
     state and return them as a dict:
@@ -31512,6 +31514,9 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
     ``media_type`` and ``item_id`` describe what the plugin is about to play,
     for sequence blocks whose Advanced-mode condition depends on it (media
     type, genre). Genres are only looked up if such a rule asks.
+
+    ``whole_pool`` (the Emby plugin's cache sync) lists every file an active
+    sequence could play instead of resolving one playback.
     """
     setting = db.query(models.Setting).first()
     if not setting:
@@ -31531,6 +31536,8 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
 
     def _resolve_blocks(blocks: list, rotation_scope: tuple,
                         fallback_category_id: int | None = None) -> list[str]:
+        if whole_pool:
+            return sequence_pool_paths(blocks, db, fallback_category_id=fallback_category_id)
         return resolve_sequence_paths(
             blocks,
             db,

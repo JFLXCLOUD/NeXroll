@@ -161,6 +161,18 @@ def _plugin_channel(setting) -> Optional[bool]:
     return None
 
 
+def _nothing_for_plex(db) -> "ApplyResult":
+    """The result when a sequence has nothing for Plex to play.
+
+    Plex keeps its current list. Jellyfin and Emby still take the change: they
+    resolve the sequence themselves when playback starts, for the item that is
+    starting, so an empty answer for Plex says nothing about them.
+    """
+    setting = db.query(models.Setting).first()
+    return ApplyResult(plex=False if setting and getattr(setting, "plex_url", None) else None,
+                       plugin=_plugin_channel(setting), reason="the sequence has nothing to play")
+
+
 def _generated_preroll_path(storage: str, template: str, theme: str) -> str:
     """Where a generated preroll lives when the block names no filename.
 
@@ -658,6 +670,39 @@ def resolve_sequence_paths(blocks, db, rotation_scope: tuple,
             context=ctx,
         ))
     return paths
+
+
+def sequence_pool_paths(blocks, db, fallback_category_id: Optional[int] = None) -> List[str]:
+    """Every file a sequence could play, for the Emby plugin's file cache.
+
+    Emby plays only intros it cached ahead of time, and fills that cache by
+    asking for the whole pool with no item in view. Resolving the sequence for
+    that request gave one random pick per block and left out every branch that
+    depends on the item, so a genre-matched block never reached Emby's cache
+    and never played there. This lists each block and its Otherwise in full
+    (a random block's whole category, every eligible trailer), and samples
+    nothing, so no shuffle rotation moves.
+    """
+    paths: List[str] = []
+    for block in blocks if isinstance(blocks, list) else []:
+        if not isinstance(block, dict):
+            continue
+        for candidate in (block, block.get("otherwise")):
+            if not isinstance(candidate, dict):
+                continue
+            block_type = str(candidate.get("type", "")).lower()
+            if block_type == "random":
+                picks = resolve_category_sequence_block({**candidate, "count": 1_000_000}, db,
+                                                        fallback_category_id=fallback_category_id)
+                paths.extend(os.path.abspath(p.path) for p in sorted(picks, key=lambda p: p.id))
+            elif block_type == "nexup_trailers":
+                paths.extend(os.path.abspath(t.local_path) for t in filtered_nexup_trailers(candidate, db))
+            elif block_type == "library_trailers":
+                paths.extend(os.path.abspath(t.local_path) for t in filtered_library_trailers(candidate, db))
+            else:
+                paths.extend(resolve_block_paths(candidate, db, fallback_category_id=fallback_category_id,
+                                                 log_prefix="[PLUGIN cache]"))
+    return list(dict.fromkeys(paths))
 
 
 def _has_valid_sequence(schedule) -> bool:
@@ -3533,7 +3578,7 @@ class Scheduler:
 
         if not paths and not has_trailer_policy(seq):
             _scheduler_log("Sequence produced no preroll paths; aborting.")
-            return ApplyResult()
+            return _nothing_for_plex(db)
 
         _scheduler_log(f"Sequence built {len(paths)} paths:")
         for i, p in enumerate(paths):
@@ -3813,7 +3858,7 @@ class Scheduler:
 
             if not paths and not has_trailer_policy(blocks):
                 _scheduler_log(f"Filler sequence '{saved_seq.name}' produced no preroll paths", level="WARNING")
-                return False
+                return _nothing_for_plex(db)
             
             _scheduler_log(f"FILLER: Sequence built {len(paths)} paths")
             

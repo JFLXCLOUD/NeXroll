@@ -155,7 +155,7 @@ def route(name, **extra):
         arg.annotation = None
     env = dict(models=models, os=os, json=json, datetime=datetime, utcnow=utcnow, uuid=uuid,
                has_trailer_policy=has_trailer_policy, playback_context=sched.playback_context,
-               resolve_sequence_paths=sched.resolve_sequence_paths,
+               resolve_sequence_paths=sched.resolve_sequence_paths, sequence_pool_paths=sched.sequence_pool_paths,
                prerolls_for_category_query=sched.prerolls_for_category_query,
                _localized_now=lambda db: datetime.datetime(2026, 9, 25), **extra)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), '<main-route>', 'exec'), env)

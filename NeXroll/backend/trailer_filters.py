@@ -123,9 +123,15 @@ def refresh_trailer_ratings(db, model, items, row_key, item_key):
 
 
 def has_trailer_policy(blocks):
-    """Trailer restrictions or audio rules may intentionally produce silence.
+    """Whether a sequence may play nothing on purpose.
 
-    Keep the existing helper name; these policies must never restore an old pool.
+    Trailer restrictions can leave nothing to play, and any block with a
+    condition can be skipped (its Otherwise set to Skip, or an Else if chain
+    with no final Otherwise). An empty result from such a sequence must stay
+    empty: Plex clears its list, and Jellyfin/Emby play nothing rather than
+    falling back to the active category, which is usually the very category
+    the skipped block names. Only a sequence without either keeps the old
+    fallback. The helper keeps its old name to avoid call-site churn.
     """
     for block in blocks if isinstance(blocks, list) else []:
         if not isinstance(block, dict):
@@ -135,13 +141,8 @@ def has_trailer_policy(blocks):
                 or (block.get("match_playing") and block.get("match_playing_only"))):
             return True
         condition = block.get("condition")
-        if isinstance(condition, dict):
-            for rule in condition.get("rules") or []:
-                if isinstance(rule, dict) and str(rule.get('kind', '')).lower() == 'audio_format':
-                    return True
-                if isinstance(rule, dict) and rule.get("kind") == "trailers_available" and (
-                        rule.get("pool") in ("library", "block") or rule.get("restrict_ratings") or rule.get("ratings")):
-                    return True
+        if isinstance(condition, dict) and any(isinstance(rule, dict) for rule in condition.get("rules") or []):
+            return True
         if has_trailer_policy([block.get("otherwise")]):
             return True
     return False
