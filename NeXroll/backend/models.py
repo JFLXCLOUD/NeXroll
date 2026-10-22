@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text, Float, Table
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text, Float, Table, event
 from sqlalchemy.orm import relationship
 from backend.database import Base
 import datetime
@@ -495,7 +495,11 @@ class Setting(Base):
     # A filename inside the NeX-Up dynamic_prerolls folder, the same place
     # Coming Soon lists are written.
     filler_dynamic_filename = Column(String, nullable=True)
-    filler_active = Column(String, nullable=True)  # Tracks active filler: "category:ID", "sequence:ID", "coming_soon:layout", or null
+    # The one preroll that plays when filler_type is 'preroll'. No foreign key
+    # (like filler_dynamic_filename), so deleting that preroll or restoring a
+    # backup is never blocked by it; deleting the preroll clears it instead.
+    filler_preroll_id = Column(Integer, nullable=True)
+    filler_active = Column(String, nullable=True)  # Tracks active filler: "category:ID", "sequence:ID", "preroll:ID", "coming_soon:layout", "dynamic:file", or null
     
     # Manual sequence apply tracking
     applied_sequence_id = Column(Integer, nullable=True)  # ID of manually applied sequence (set via Apply button, cleared by scheduler)
@@ -614,3 +618,24 @@ class LogEntry(Base):
     user_id = Column(Integer, nullable=True)  # User ID if action was user-initiated
     duration_ms = Column(Integer, nullable=True)  # Duration in milliseconds for timed operations
     ip_address = Column(String, nullable=True)  # Client IP for API requests
+
+
+@event.listens_for(Preroll, "after_delete")
+def _forget_filler_preroll(mapper, connection, target):
+    """A deleted preroll stops being the filler preroll.
+
+    filler_preroll_id has no foreign key, and SQLite can hand a deleted id to
+    the next new row, so a stale id could make an unrelated upload the
+    filler. Clearing it here covers every way a preroll row is deleted through
+    the ORM (the Library, scans, trailer cleanup); a restore rebuilds it.
+    """
+    try:
+        connection.execute(
+            Setting.__table__.update()
+            .where(Setting.__table__.c.filler_preroll_id == target.id)
+            .values(filler_preroll_id=None)
+        )
+    except Exception:
+        # A database restored from an older release lacks the column until the
+        # restart that follows a restore migrates it; the delete must still work.
+        pass

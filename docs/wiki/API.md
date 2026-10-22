@@ -612,17 +612,12 @@ Content-Type: application/json
 
 ```http
 GET /settings/filler
-PUT /settings/filler
-Content-Type: application/json
-
-{
-  "enabled": true,
-  "type": "category",
-  "category_id": 1
-}
+PUT /settings/filler?enabled=true&filler_type=preroll&preroll_id=12
 ```
 
-Filler types: `category`, `sequence`, `coming_soon`
+`PUT` takes query parameters, any subset of: `enabled`, `filler_type`, `category_id`, `sequence_id`, `preroll_id`, `coming_soon_layout` (`grid` or `list`) and `dynamic_filename`. Filler types: `category`, `sequence`, `preroll` (one preroll from the library), `coming_soon`, `dynamic`. An unknown type or an id that doesn't exist returns `{"error": "..."}`.
+
+Saving runs a scheduler check, which starts filler only if nothing else holds the preroll field (an active schedule, a stored fallback, a manual apply, Coexistence Mode or Clear Prerolls When Inactive). The response's `applied` is `true` when the saved filler is now what plays.
 
 ### Playback Guard
 

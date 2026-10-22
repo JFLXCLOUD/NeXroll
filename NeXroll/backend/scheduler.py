@@ -913,6 +913,9 @@ class Scheduler:
         self._blend_rotated_at: Optional[datetime.datetime] = None
         # (blend key, schedule id) picked but not yet taken by Plex.
         self._blend_pending: Optional[tuple] = None
+        # Clear When Inactive emptied Jellyfin/Emby's state but the playback
+        # guard (or a failure) kept Plex's list; retried each tick.
+        self._plex_clear_pending: bool = False
         # Set while re-applying for a rotation, so routine rewrites stay out of
         # the Logs page's Events (they are still in app.log).
         self._routine_apply: bool = False
@@ -1000,112 +1003,6 @@ class Scheduler:
             self._check_and_execute_schedules()
         except Exception as e:
             _scheduler_log(f"trigger_immediate_check failed: {e}", level="ERROR")
-
-    def apply_filler_now(self):
-        """
-        Immediately apply filler category/sequence/coming-soon to Plex.
-        Called when filler settings are saved and enabled.
-        Returns True if applied successfully, False otherwise.
-        """
-        db = SessionLocal()
-        try:
-            setting = db.query(models.Setting).first()
-            if not setting:
-                _scheduler_log("Settings not found; cannot apply filler", level="ERROR")
-                return False
-            
-            filler_enabled = getattr(setting, "filler_enabled", False)
-            if not filler_enabled:
-                _scheduler_log("Filler is not enabled; skipping apply")
-                # Clear filler_active if disabled
-                setting.filler_active = None
-                db.commit()
-                return False
-            
-            filler_type = getattr(setting, "filler_type", "category")
-            _scheduler_log(f"Applying filler immediately (type: {filler_type})")
-            
-            if filler_type == "category":
-                filler_category_id = getattr(setting, "filler_category_id", None)
-                if filler_category_id:
-                    applied_ok = self._apply_category_to_plex(filler_category_id, db, schedule=None)
-                    if applied_ok:
-                        # Use filler_active to track filler state (not active_category to avoid FK issues)
-                        setting.filler_active = f"category:{filler_category_id}"
-                        setting.active_category = None  # Clear normal category tracking
-                        db.commit()
-                        _scheduler_log(f"Filler category {filler_category_id} applied immediately")
-                        return True
-                    else:
-                        self._log_apply_outcome(
-                            f"Failed to apply filler category {filler_category_id}",
-                            f"filler category {filler_category_id}")
-                        return False
-                else:
-                    _scheduler_log("Filler type is category but no category selected", level="WARNING")
-                    return False
-                    
-            elif filler_type == "sequence":
-                filler_sequence_id = getattr(setting, "filler_sequence_id", None)
-                if filler_sequence_id:
-                    applied_ok = self._apply_saved_sequence_to_plex(filler_sequence_id, db)
-                    if applied_ok:
-                        # Use filler_active to track sequence filler state
-                        setting.filler_active = f"sequence:{filler_sequence_id}"
-                        setting.active_category = None  # Clear normal category tracking
-                        db.commit()
-                        _scheduler_log(f"Filler sequence {filler_sequence_id} applied immediately")
-                        return True
-                    else:
-                        self._log_apply_outcome(
-                            f"Failed to apply filler sequence {filler_sequence_id}",
-                            f"filler sequence {filler_sequence_id}")
-                        return False
-                else:
-                    _scheduler_log("Filler type is sequence but no sequence selected", level="WARNING")
-                    return False
-                    
-            elif filler_type == "coming_soon":
-                filler_layout = getattr(setting, "filler_coming_soon_layout", "grid")
-                applied_ok = self._apply_coming_soon_list_to_plex(filler_layout, db)
-                if applied_ok:
-                    # Use filler_active to track coming soon filler state
-                    setting.filler_active = f"coming_soon:{filler_layout}"
-                    setting.active_category = None  # Clear normal category tracking
-                    db.commit()
-                    _scheduler_log(f"Filler Coming Soon List ({filler_layout}) applied immediately")
-                    return True
-                else:
-                    self._log_apply_outcome(
-                        "Failed to apply filler Coming Soon List",
-                        "the filler Coming Soon List")
-                    return False
-            elif filler_type == "dynamic":
-                filler_filename = getattr(setting, "filler_dynamic_filename", None)
-                if not filler_filename:
-                    _scheduler_log("Filler is set to a dynamic preroll but none is chosen", level="WARNING")
-                    return False
-                applied_ok = self._apply_generated_video_to_plex(
-                    filler_filename, db, f"dynamic preroll ({filler_filename})")
-                if applied_ok:
-                    setting.filler_active = f"dynamic:{filler_filename}"
-                    setting.active_category = None
-                    db.commit()
-                    _scheduler_log(f"Filler dynamic preroll ({filler_filename}) applied immediately")
-                    return True
-                else:
-                    self._log_apply_outcome(
-                        "Failed to apply filler dynamic preroll",
-                        "the filler dynamic preroll")
-                    return False
-            else:
-                _scheduler_log(f"Unknown filler type: {filler_type}", level="ERROR")
-                return False
-        except Exception as e:
-            _scheduler_log(f"Error applying filler immediately: {e}", level="ERROR")
-            return False
-        finally:
-            db.close()
 
     def _run_scheduler(self):
         """Main scheduler loop - runs based on SCHEDULER_INTERVAL (default 60s)"""
@@ -2572,8 +2469,13 @@ class Scheduler:
                         self._last_logged_state = state_key
                         self._last_logged_time = now
                     # Clear prerolls by setting empty string
-                    if setting.active_category is not None or getattr(setting, "filler_active", None) is not None or getattr(setting, "active_schedule_id", None) is not None:
+                    if (self._plex_clear_pending or setting.active_category is not None
+                            or getattr(setting, "filler_active", None) is not None
+                            or getattr(setting, "active_schedule_id", None) is not None):
                         cleared_ok = self._clear_plex_prerolls(db)
+                        # Jellyfin/Emby stop at once; a Plex clear the guard
+                        # held is retried here until Plex takes it.
+                        self._plex_clear_pending = getattr(cleared_ok, "plex", None) is False
                         if cleared_ok:
                             setting.active_category = None
                             setting.filler_active = None  # Also clear filler state
@@ -2628,6 +2530,19 @@ class Scheduler:
                                     filler_applied = True
                                     return  # Sequence applied, exit early
                                     
+                            elif filler_type == "preroll":
+                                filler_preroll_id = getattr(setting, "filler_preroll_id", None)
+                                if filler_preroll_id:
+                                    state_key = f"filler_preroll:{filler_preroll_id}"
+                                    if self._last_logged_state != state_key:
+                                        _scheduler_log(f"No active schedules; using FILLER preroll {filler_preroll_id}")
+                                        self._last_logged_state = state_key
+                                        self._last_logged_time = now
+                                    self._apply_filler(f"preroll:{filler_preroll_id}", setting, db, now,
+                                                       lambda: self._apply_preroll_file_to_plex(filler_preroll_id, db))
+                                    filler_applied = True
+                                    return  # Fixed preroll applied, exit early
+
                             elif filler_type == "coming_soon":
                                 filler_layout = getattr(setting, "filler_coming_soon_layout", "grid")
                                 state_key = f"filler_coming_soon:{filler_layout}"
@@ -3525,6 +3440,8 @@ class Scheduler:
             return ApplyResult()
 
         connector = PlexConnector(setting.plex_url, setting.plex_token)
+        if self._defer_preroll_write(setting, "clearing prerolls (no active schedule)"):
+            return ApplyResult(plex=False, plugin=plugin)
         _scheduler_log("Clearing Plex preroll field (no active schedules, clear_when_inactive enabled)…")
         ok = connector.set_preroll("")  # Empty string clears prerolls
         if ok:
@@ -3925,20 +3842,33 @@ class Scheduler:
         Coming Soon lists and dynamic prerolls both live in dynamic_prerolls/ and
         differ only by filename, so filler can point at either through here.
         """
+        setting = db.query(models.Setting).first()
+        if not setting:
+            _scheduler_log(f"Settings not found; cannot apply {label}", level="ERROR")
+            return ApplyResult()
+        storage_path = getattr(setting, "nexup_storage_path", None)
+        if not storage_path:
+            _scheduler_log(f"NeX-Up storage path not configured; cannot find {label}", level="WARNING")
+            return ApplyResult()
+        return self._apply_single_file_to_plex(os.path.join(storage_path, "dynamic_prerolls", filename), db, label)
+
+    def _apply_preroll_file_to_plex(self, preroll_id: int, db: Session) -> bool:
+        """Apply one preroll from the library as the Plex preroll (filler)."""
+        preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+        if not preroll or not preroll.path:
+            _scheduler_log(f"Filler preroll {preroll_id} is no longer in the library", level="WARNING")
+            return ApplyResult()
+        name = preroll.display_name or preroll.filename or f"preroll {preroll_id}"
+        return self._apply_single_file_to_plex(preroll.path, db, f"preroll '{name}'")
+
+    def _apply_single_file_to_plex(self, video_path: str, db: Session, label: str) -> bool:
+        """Apply one video file as the whole Plex preroll list (filler)."""
         try:
             setting = db.query(models.Setting).first()
             if not setting:
                 _scheduler_log(f"Settings not found; cannot apply {label}", level="ERROR")
                 return ApplyResult()
-            
-            # Find the Coming Soon List video file
-            storage_path = getattr(setting, "nexup_storage_path", None)
-            if not storage_path:
-                _scheduler_log(f"NeX-Up storage path not configured; cannot find {label}", level="WARNING")
-                return ApplyResult()
-            
-            video_path = os.path.join(storage_path, "dynamic_prerolls", filename)
-            
+
             if not os.path.exists(video_path):
                 _scheduler_log(f"{label} video not found: {video_path}", level="WARNING")
                 return ApplyResult()
@@ -3971,6 +3901,10 @@ class Scheduler:
                 return ApplyResult()
             
             connector = PlexConnector(setting.plex_url, setting.plex_token)
+            # Like every other write: one made while prerolls play can stop
+            # Plex on the next item. _apply_filler retries it each tick.
+            if self._defer_preroll_write(setting, label):
+                return ApplyResult(plex=False, plugin=plugin)
             _scheduler_log(f"FILLER: Sending {label} to Plex...")
             ok = connector.set_preroll(plex_path)
             if ok:

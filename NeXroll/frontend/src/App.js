@@ -1822,10 +1822,12 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     type: 'category',
     category_id: null,
     sequence_id: null,
+    preroll_id: null,
     coming_soon_layout: 'grid',
     dynamic_filename: null
   });
   const [fillerLoading, setFillerLoading] = useState(false);
+  const [fillerPrerollSearch, setFillerPrerollSearch] = useState('');
 
   // NeX-Up State (Radarr integration for upcoming movie trailers)
   const [nexupSettings, setNexupSettings] = useState({
@@ -23504,6 +23506,10 @@ const DashboardTiles = {
         return categories.find(c => c.id === fillerSettings.category_id)?.name || 'Category';
       case 'sequence':
         return savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence';
+      case 'preroll': {
+        const preroll = prerolls.find(p => p.id === fillerSettings.preroll_id);
+        return preroll ? (preroll.display_name || preroll.filename) : 'Preroll (none chosen)';
+      }
       case 'coming_soon':
         return `Coming Soon (${fillerSettings.coming_soon_layout})`;
       case 'dynamic': {
@@ -23521,6 +23527,10 @@ const DashboardTiles = {
     fillerSettings.enabled && (
       (fillerSettings.type === 'category' && !fillerSettings.category_id) ||
       (fillerSettings.type === 'sequence' && !fillerSettings.sequence_id) ||
+      // A preroll deleted from the Library clears the choice on the server;
+      // once the Library has loaded, a missing one counts as none.
+      (fillerSettings.type === 'preroll' && (!fillerSettings.preroll_id
+        || (prerolls.length > 0 && !prerolls.some(p => p.id === fillerSettings.preroll_id)))) ||
       (fillerSettings.type === 'dynamic' && !fillerSettings.dynamic_filename)
     )
   );
@@ -23616,6 +23626,7 @@ const DashboardTiles = {
           type: data.type || 'category',
           category_id: data.category_id || null,
           sequence_id: data.sequence_id || null,
+          preroll_id: data.preroll_id || null,
           coming_soon_layout: data.coming_soon_layout || 'grid',
           dynamic_filename: data.dynamic_filename || null
         });
@@ -23631,8 +23642,11 @@ const DashboardTiles = {
       const params = new URLSearchParams();
       if (updates.enabled !== undefined) params.append('enabled', updates.enabled);
       if (updates.type !== undefined) params.append('filler_type', updates.type);
-      if (updates.category_id !== undefined) params.append('category_id', updates.category_id);
-      if (updates.sequence_id !== undefined) params.append('sequence_id', updates.sequence_id);
+      // An id of null ("-- Select --") is not sent: the endpoint takes integers,
+      // and the string "null" failed the whole request.
+      if (updates.category_id != null) params.append('category_id', updates.category_id);
+      if (updates.sequence_id != null) params.append('sequence_id', updates.sequence_id);
+      if (updates.preroll_id != null) params.append('preroll_id', updates.preroll_id);
       if (updates.coming_soon_layout !== undefined) params.append('coming_soon_layout', updates.coming_soon_layout);
       if (updates.dynamic_filename !== undefined) params.append('dynamic_filename', updates.dynamic_filename ?? '');
       
@@ -30317,7 +30331,7 @@ const DashboardTiles = {
           <h3>Enable Fallback Filler</h3>
         </div>
         <p className="nx-setting-row-desc">
-          Apply a filler category, sequence, or Coming Soon content when no schedules are active.
+          Apply a filler category, sequence, single preroll, or Coming Soon content when no schedules are active.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <label className="nx-rockerswitch">
@@ -30351,6 +30365,7 @@ const DashboardTiles = {
                 {[
                   { value: 'category', label: 'Category', icon: <Folder size={13} /> },
                   { value: 'sequence', label: 'NeX-Up Sequence', icon: <Layers size={13} /> },
+                  { value: 'preroll', label: 'Fixed Preroll', icon: <Video size={13} /> },
                   { value: 'coming_soon', label: 'NeX-Up Coming Soon', icon: <Film size={13} /> },
                   { value: 'dynamic', label: 'Dynamic Preroll', icon: <Sparkles size={13} /> }
                 ].map(opt => (
@@ -30403,6 +30418,53 @@ const DashboardTiles = {
                 </select>
               </div>
             )}
+
+            {/* Fixed preroll selector: one preroll from the library */}
+            {fillerSettings.type === 'preroll' && (() => {
+              const nameOf = preroll => preroll.display_name || preroll.filename || `Preroll ${preroll.id}`;
+              const chosen = prerolls.find(preroll => preroll.id === fillerSettings.preroll_id);
+              const query = fillerPrerollSearch.trim().toLowerCase();
+              const matches = prerolls
+                .filter(preroll => nameOf(preroll).toLowerCase().includes(query))
+                .sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+              return (
+                <div className="nx-filler-block">
+                  <label className="nx-filler-label" htmlFor="nx-filler-preroll-search">Select Preroll</label>
+                  <input
+                    id="nx-filler-preroll-search"
+                    className="input"
+                    type="search"
+                    value={fillerPrerollSearch}
+                    onChange={event => setFillerPrerollSearch(event.target.value)}
+                    placeholder="Search by name..."
+                  />
+                  <div className="nx-draft-preroll-picker nx-filler-preroll-picker" role="radiogroup" aria-label="Filler preroll">
+                    {matches.map(preroll => (
+                      <label key={preroll.id} className="nx-draft-preroll-row">
+                        <input
+                          type="radio"
+                          name="nx-filler-preroll"
+                          checked={preroll.id === fillerSettings.preroll_id}
+                          disabled={fillerLoading}
+                          onChange={() => updateFillerSettings({ preroll_id: preroll.id })}
+                        />
+                        <span title={nameOf(preroll)}>{nameOf(preroll)}</span>
+                      </label>
+                    ))}
+                    {prerolls.length === 0
+                      ? <p className="nx-filler-hint">No prerolls in your library yet.</p>
+                      : matches.length === 0 && <p className="nx-filler-hint">No prerolls match "{fillerPrerollSearch}".</p>}
+                  </div>
+                  <p className="nx-filler-hint">
+                    {chosen
+                      ? <>Plays <strong>{nameOf(chosen)}</strong> whenever no schedule is active.</>
+                      : fillerSettings.preroll_id
+                        ? 'The chosen preroll is no longer in your library. Pick another.'
+                        : 'Pick the one preroll that plays whenever no schedule is active.'}
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* Coming Soon layout selector */}
             {fillerSettings.type === 'coming_soon' && (

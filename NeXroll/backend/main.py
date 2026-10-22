@@ -687,6 +687,7 @@ def ensure_schema() -> None:
                 ("filler_enabled", "filler_enabled BOOLEAN DEFAULT 0"),
                 ("filler_type", "filler_type TEXT DEFAULT 'category'"),
                 ("filler_dynamic_filename", "filler_dynamic_filename TEXT"),
+                ("filler_preroll_id", "filler_preroll_id INTEGER"),
                 ("filler_category_id", "filler_category_id INTEGER"),
                 ("filler_sequence_id", "filler_sequence_id INTEGER"),
                 ("filler_coming_soon_layout", "filler_coming_soon_layout TEXT DEFAULT 'grid'"),
@@ -14905,7 +14906,7 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
         parts = filler_active.split(":", 1)
         if len(parts) == 2:
             filler_type = parts[0]
-            if filler_type == "coming_soon":
+            if filler_type in ("coming_soon", "dynamic", "preroll"):
                 mode = "single"
             elif filler_type == "sequence":
                 mode = "sequential"
@@ -16682,6 +16683,8 @@ _SETTINGS_BACKUP_SKIP = frozenset({
 _SETTINGS_CATEGORY_FKS = ("active_category", "nexup_category_id",
                           "nexup_tv_category_id", "filler_category_id")
 _SETTINGS_SEQUENCE_FKS = ("filler_sequence_id",)
+# A preroll id without a foreign key (see models.Setting.filler_preroll_id).
+_SETTINGS_PREROLL_IDS = ("filler_preroll_id",)
 
 # Absolute paths from the source machine. Kept in the backup (a same-machine
 # restore wants them) but only applied when they actually exist on the target,
@@ -16724,7 +16727,8 @@ def _export_settings(setting) -> dict:
     return out
 
 
-def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: dict) -> dict:
+def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: dict,
+                      preroll_id_map: Optional[dict] = None) -> dict:
     """Apply an exported settings block, translating ids and checking paths.
 
     Returns a small report so the caller can tell the user what was skipped.
@@ -16752,6 +16756,8 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
             value = category_id_map.get(value) if value is not None else None
         elif name in _SETTINGS_SEQUENCE_FKS:
             value = sequence_id_map.get(value) if value is not None else None
+        elif name in _SETTINGS_PREROLL_IDS:
+            value = (preroll_id_map or {}).get(value) if value is not None else None
         elif name in _SETTINGS_DATETIME_COLUMNS and isinstance(value, str) and value:
             # Exported as ISO text; a DateTime column needs it parsed back.
             try:
@@ -16772,6 +16778,12 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
             report["applied"] += 1
         except Exception as e:
             _file_log(f"restore: could not set settings.{name}: {e}")
+
+    # The restore gave every preroll a new id. A backup from before the filler
+    # preroll existed doesn't name one, and this install's old id would now
+    # point at whichever restored preroll happens to have it.
+    if preroll_id_map is not None and "filler_preroll_id" not in data and hasattr(setting, "filler_preroll_id"):
+        setting.filler_preroll_id = None
 
     return report
 
@@ -17624,6 +17636,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 backup_data.get("settings") or {},
                 old_id_to_new_id,
                 old_sequence_id_to_new_id,
+                old_preroll_id_to_new_id,
             )
             # Ignored conflicts name schedules by id; without the ids (backups
             # before schema 5) they cannot be translated and are dropped.
@@ -18975,6 +18988,26 @@ def get_active_category(db: Session = Depends(get_db)):
                         },
                         "applied_sequence": applied_sequence
                     }
+                elif filler_type in ("dynamic", "preroll"):
+                    # One video: a generated preroll, or one from the library.
+                    name = os.path.splitext(os.path.basename(filler_value))[0]
+                    if filler_type == "preroll":
+                        try:
+                            preroll = db.query(models.Preroll).filter(models.Preroll.id == int(filler_value)).first()
+                        except ValueError:
+                            preroll = None
+                        name = (preroll.display_name or preroll.filename) if preroll else None
+                    if name:
+                        return {
+                            "active_category": {
+                                "id": -9998 if filler_type == "dynamic" else -9997,
+                                "name": f"Filler: {name}",
+                                "plex_mode": "single",
+                                "is_filler": True,
+                                "filler_type": filler_type
+                            },
+                            "applied_sequence": applied_sequence
+                        }
                 elif filler_type == "sequence":
                     try:
                         sequence_id = int(filler_value)
@@ -19397,6 +19430,7 @@ def get_filler_settings(db: Session = Depends(get_db)):
             "type": "category",
             "category_id": None,
             "sequence_id": None,
+            "preroll_id": None,
             "coming_soon_layout": "grid",
             "dynamic_filename": None
         }
@@ -19406,6 +19440,7 @@ def get_filler_settings(db: Session = Depends(get_db)):
         "type": getattr(setting, 'filler_type', 'category'),
         "category_id": getattr(setting, 'filler_category_id', None),
         "sequence_id": getattr(setting, 'filler_sequence_id', None),
+        "preroll_id": getattr(setting, 'filler_preroll_id', None),
         "coming_soon_layout": getattr(setting, 'filler_coming_soon_layout', 'grid'),
         "dynamic_filename": getattr(setting, 'filler_dynamic_filename', None)
     }
@@ -19416,6 +19451,7 @@ def update_filler_settings(
     filler_type: str = None,
     category_id: int = None,
     sequence_id: int = None,
+    preroll_id: int = None,
     coming_soon_layout: str = None,
     dynamic_filename: str = None,
     db: Session = Depends(get_db)
@@ -19426,10 +19462,12 @@ def update_filler_settings(
     Filler is applied when NO schedules are active AND no per-schedule fallback is set.
     This is different from the fallback_category_id on individual schedules.
     
-    - type: 'category', 'sequence', or 'coming_soon'
+    - type: 'category', 'sequence', 'preroll', 'coming_soon' or 'dynamic'
     - category_id: Category ID to use when type is 'category'
     - sequence_id: SavedSequence ID to use when type is 'sequence'
+    - preroll_id: Preroll ID to use when type is 'preroll' (one fixed preroll)
     - coming_soon_layout: 'grid' or 'list' when type is 'coming_soon'
+    - dynamic_filename: generated preroll when type is 'dynamic'
     """
     setting = db.query(models.Setting).first()
     if not setting:
@@ -19441,8 +19479,8 @@ def update_filler_settings(
     if enabled is not None:
         setting.filler_enabled = enabled
     if filler_type is not None:
-        if filler_type not in ['category', 'sequence', 'coming_soon', 'dynamic']:
-            return {"error": f"Invalid filler type: {filler_type}. Must be 'category', 'sequence', 'coming_soon', or 'dynamic'"}
+        if filler_type not in ['category', 'sequence', 'preroll', 'coming_soon', 'dynamic']:
+            return {"error": f"Invalid filler type: {filler_type}. Must be 'category', 'sequence', 'preroll', 'coming_soon', or 'dynamic'"}
         setting.filler_type = filler_type
     if category_id is not None:
         # Validate category exists
@@ -19456,6 +19494,11 @@ def update_filler_settings(
         if not seq:
             return {"error": f"Sequence ID {sequence_id} not found"}
         setting.filler_sequence_id = sequence_id
+    if preroll_id is not None:
+        preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+        if not preroll:
+            return {"error": f"Preroll ID {preroll_id} not found"}
+        setting.filler_preroll_id = preroll_id
     if coming_soon_layout is not None:
         if coming_soon_layout not in ['grid', 'list']:
             return {"error": f"Invalid coming_soon_layout: {coming_soon_layout}. Must be 'grid' or 'list'"}
@@ -19480,33 +19523,36 @@ def update_filler_settings(
     log_event('INFO', 'system', f"Filler {filler_status}", 
               source='update_filler_settings', 
               details={"type": setting.filler_type, "enabled": setting.filler_enabled,
-                       "category_id": setting.filler_category_id, "sequence_id": setting.filler_sequence_id}, db=db)
+                       "category_id": setting.filler_category_id, "sequence_id": setting.filler_sequence_id,
+                       "preroll_id": setting.filler_preroll_id}, db=db)
     
-    # If filler is enabled, immediately apply it to Plex.
-    # If it's disabled, run a scheduler tick so the dashboard reflects whichever
-    # schedule (or "nothing") takes over without the up-to-60s wait. Resolves
-    # DASHBOARD-3 — disable transition used to leave the tile stale until the
-    # next normal tick.
-    applied = False
-    if setting.filler_enabled:
-        try:
-            applied = scheduler.apply_filler_now()
-        except Exception as e:
-            print(f"Error applying filler immediately: {e}")
-            _file_log(f"Error applying filler immediately: {e}")
-            log_event('ERROR', 'system', f'Filler apply failed: {e}', source='update_filler_settings')
-    else:
-        try:
-            scheduler.trigger_immediate_check()
-        except Exception:
-            pass
+    # Run a scheduler tick so the change takes effect (or stops) without the
+    # up-to-60s wait (DASHBOARD-3). The tick decides whether filler plays at
+    # all: only with no active schedule, no stored fallback and no manual
+    # override, and never under Coexistence Mode or Clear When Inactive. Saving
+    # used to write the filler straight away, which switched every server to
+    # filler during an active schedule until the next tick.
+    try:
+        scheduler.trigger_immediate_check()
+    except Exception as e:
+        _file_log(f"Scheduler check after a filler change failed: {e}")
+    db.refresh(setting)
+    expected = {
+        "category": f"category:{setting.filler_category_id}",
+        "sequence": f"sequence:{setting.filler_sequence_id}",
+        "preroll": f"preroll:{setting.filler_preroll_id}",
+        "coming_soon": f"coming_soon:{setting.filler_coming_soon_layout}",
+        "dynamic": f"dynamic:{setting.filler_dynamic_filename}",
+    }.get(setting.filler_type)
+    applied = bool(setting.filler_enabled and expected and setting.filler_active == expected)
 
     return {
-        "message": f"Filler category updated" + (" and applied to Plex" if applied else ""),
+        "message": "Filler updated" + (" and applied" if applied else ""),
         "enabled": setting.filler_enabled,
         "type": setting.filler_type,
         "category_id": setting.filler_category_id,
         "sequence_id": setting.filler_sequence_id,
+        "preroll_id": setting.filler_preroll_id,
         "coming_soon_layout": setting.filler_coming_soon_layout,
         "dynamic_filename": setting.filler_dynamic_filename,
         "applied": applied
@@ -31609,6 +31655,14 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
                                          os.path.basename(filler_value))
                     if os.path.isfile(video):
                         return {"paths": [os.path.abspath(video)], "mode": "single"}
+
+            elif filler_type == "preroll":
+                try:
+                    preroll = db.query(models.Preroll).filter(models.Preroll.id == int(filler_value)).first()
+                except (ValueError, TypeError):
+                    preroll = None
+                if preroll and preroll.path and os.path.isfile(preroll.path):
+                    return {"paths": [os.path.abspath(preroll.path)], "mode": "single"}
 
             elif filler_type == "sequence":
                 try:

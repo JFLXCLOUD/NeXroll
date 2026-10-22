@@ -1,4 +1,4 @@
-"""A skipped block plays nothing.
+"""A skipped block plays nothing, and filler can be one fixed preroll.
 
 User report (Discord, October 21): "Unless the genre is Family, play one from
 JellyJo; otherwise skip" played a JellyJo preroll before Family movies too.
@@ -10,8 +10,10 @@ condition may now play nothing on purpose, on every server and every path
 category fallback.
 
 Also covered: Emby's cache sync gets every file a sequence could play (it plays
-only cached files), and Jellyfin/Emby take a sequence Plex has nothing to play
-for.
+only cached files), Jellyfin/Emby take a sequence Plex has nothing to play for,
+generated and preroll fillers and Clear When Inactive wait for the playback
+guard, saving filler settings doesn't override an active schedule, and the
+new fixed-preroll filler on Plex, Jellyfin/Emby and both.
 """
 import datetime
 import json
@@ -193,3 +195,145 @@ class SkipOnServersTests(RotationHarness):
         self.run_minutes(0)
         self.assertEqual(self.state()[0], f"sequence:{seq_id}", "Jellyfin never got the filler")
         self.assertEqual(FakePlex.writes, [], "Plex keeps its list when there is nothing for it")
+
+
+class FillerPrerollTests(RotationHarness):
+    def preroll(self):
+        with self.Session() as db:
+            p = db.query(models.Preroll).filter(models.Preroll.category_id == self.cat_b).first()
+            return p.id, os.path.abspath(p.path)
+
+    def state(self):
+        with self.Session() as db:
+            s = db.query(models.Setting).first()
+            return s.filler_active, s.filler_preroll_id
+
+    def test_plex_gets_the_one_preroll_once(self):
+        pid, path = self.preroll()
+        self.set_filler(filler_type="preroll", filler_preroll_id=pid)
+        self.run_minutes(10)
+        self.assertEqual(FakePlex.writes, [path])
+        self.assertEqual(self.state()[0], f"preroll:{pid}")
+
+    def test_jellyfin_only_records_it(self):
+        pid, _ = self.preroll()
+        with self.Session() as db:
+            s = db.query(models.Setting).first()
+            s.plex_url, s.jellyfin_url = None, "http://jellyfin.test"
+            db.commit()
+        self.set_filler(filler_type="preroll", filler_preroll_id=pid)
+        self.run_minutes(0)
+        self.assertEqual(self.state()[0], f"preroll:{pid}")
+        self.assertEqual(FakePlex.writes, [])
+
+    def test_it_waits_for_the_playback_guard_but_reaches_jellyfin_at_once(self):
+        pid, path = self.preroll()
+        with self.Session() as db:
+            db.query(models.Setting).first().jellyfin_url = "http://jellyfin.test"
+            db.commit()
+        self.set_filler(filler_type="preroll", filler_preroll_id=pid)
+        self.defer[0] = True
+        self.run_minutes(2)
+        self.assertEqual(FakePlex.writes, [])
+        self.assertEqual(self.state()[0], f"preroll:{pid}")
+        self.defer[0] = False
+        self.run_minutes(2)
+        self.assertEqual(FakePlex.writes, [path])
+
+    def test_a_generated_filler_waits_for_the_playback_guard(self):
+        folder = os.path.join(self.tmp.name, "dynamic_prerolls")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "promo.mp4"), "wb") as handle:
+            handle.write(b"x")
+        with self.Session() as db:
+            db.query(models.Setting).first().nexup_storage_path = self.tmp.name
+            db.commit()
+        self.set_filler(filler_type="dynamic", filler_dynamic_filename="promo.mp4")
+        self.defer[0] = True
+        self.run_minutes(2)
+        self.assertEqual(FakePlex.writes, [], "written while prerolls were playing")
+        self.defer[0] = False
+        self.run_minutes(0)
+        self.assertEqual(len(FakePlex.writes), 1)
+
+    def test_deleting_the_preroll_clears_the_choice(self):
+        pid, _ = self.preroll()
+        self.set_filler(filler_type="preroll", filler_preroll_id=pid)
+        with self.Session() as db:
+            db.delete(db.query(models.Preroll).filter(models.Preroll.id == pid).one())
+            db.commit()
+        self.assertIsNone(self.state()[1])
+
+    def test_a_missing_preroll_plays_nothing_and_logs(self):
+        self.set_filler(filler_type="preroll", filler_preroll_id=987654)
+        self.run_minutes(0)
+        self.assertEqual(FakePlex.writes, [])
+        self.assertIsNone(self.state()[0])
+
+
+class ClearWhenInactiveGuardTests(RotationHarness):
+    def test_a_held_clear_reaches_jellyfin_at_once_and_plex_later(self):
+        with self.Session() as db:
+            db.query(models.Setting).first().jellyfin_url = "http://jellyfin.test"
+            db.commit()
+        schedule_id = self.add_schedule(category_id=self.cat_a)
+        self.run_minutes(0)
+        with self.Session() as db:
+            db.query(models.Schedule).filter(models.Schedule.id == schedule_id).one().is_active = False
+            s = db.query(models.Setting).first()
+            s.clear_when_inactive = True
+            db.commit()
+        self.defer[0] = True
+        self.run_minutes(2)
+        self.assertNotEqual(FakePlex.writes[-1], "", "cleared while prerolls were playing")
+        with self.Session() as db:
+            self.assertIsNone(db.query(models.Setting).first().active_category, "Jellyfin kept the schedule")
+        self.defer[0] = False
+        self.run_minutes(0)
+        self.assertEqual(FakePlex.writes[-1], "")
+
+
+# -- saving filler settings ---------------------------------------------------------
+
+def test_saving_filler_runs_the_scheduler_instead_of_writing_filler(db, tmp_path):
+    _, files = add_category(db, tmp_path, "Filler")
+    pid = db.query(models.Preroll).first().id
+    ticks = []
+
+    class FakeScheduler:
+        def trigger_immediate_check(self):
+            ticks.append(True)
+
+        def apply_filler_now(self):
+            raise AssertionError("filler written without the scheduler's checks")
+
+    update = route('update_filler_settings', scheduler=FakeScheduler(), _file_log=lambda *a, **k: None,
+                   log_event=lambda *a, **k: None)
+    result = update(enabled=True, filler_type="preroll", preroll_id=pid, db=db)
+    assert ticks == [True]
+    assert result["preroll_id"] == pid and result["applied"] is False
+    assert update(preroll_id=999999, db=db) == {"error": "Preroll ID 999999 not found"}
+    assert update(filler_type="nonsense", db=db)["error"].startswith("Invalid filler type")
+
+
+def test_the_plugin_plays_the_filler_preroll(db, tmp_path):
+    _, files = add_category(db, tmp_path, "Filler")
+    pid = db.query(models.Preroll).first().id
+    setting = db.query(models.Setting).first()
+    setting.filler_active = f"preroll:{pid}"
+    db.commit()
+    result = route('_resolve_current_intros')(db, server_type="Emby")
+    assert result == {"paths": [os.path.abspath(files[0])], "mode": "single"}
+
+
+def test_a_restore_translates_the_filler_preroll(tmp_path):
+    from tests.test_backup_restore import FakeSecrets, load, session
+    restore = load(FakeSecrets())['_restore_settings']
+    db = session(tmp_path / "db.db")
+    restore(db, {"filler_type": "preroll", "filler_preroll_id": 7}, {}, {}, {7: 42})
+    assert db.query(models.Setting).first().filler_preroll_id == 42
+    db.query(models.Setting).first().filler_preroll_id = 5
+    db.commit()
+    restore(db, {"filler_type": "category"}, {}, {}, {})  # a backup from before the filler preroll
+    assert db.query(models.Setting).first().filler_preroll_id is None
+    db.close()

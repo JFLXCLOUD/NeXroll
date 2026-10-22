@@ -10066,6 +10066,11 @@ body.light :is(.nx-connect-card,.nx-content-connect .nx-route-summary > div,.nx-
 .nx-filler-choice:disabled { opacity: .55; cursor: not-allowed; }
 .nx-filler-choice.capitalize { text-transform: capitalize; }
 .nx-filler-block select.input { max-width: 100%; min-height: 32px; font-size: 12px; }
+.nx-filler-block input.input[type="search"] { width: 100%; min-height: 32px; font-size: 12px; }
+.nx-filler-preroll-picker { margin: 6px 0 0; }
+/* Settings inputs get a 34px minimum height, which made every radio row 49px. */
+.nx-filler-preroll-picker .nx-draft-preroll-row input { min-height: 0; height: 15px; margin: 0; }
+.nx-filler-preroll-picker .nx-filler-hint { margin: 4px; }
 .nx-filler-hint { margin: 7px 0 0; color: var(--text-secondary); font-size: .63rem; line-height: 1.45; }
 /* Inline "go do this elsewhere" link inside a hint. A button, not an anchor,
    because it navigates within the app rather than to a URL. */

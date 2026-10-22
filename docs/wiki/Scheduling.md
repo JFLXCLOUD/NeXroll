@@ -137,7 +137,9 @@ The **Filler Category** fills gaps when **no schedules are active at all**:
 2. Choose a filler type:
    - **Category** — Use any category as the gap filler
    - **Sequence** — Use a saved sequence
+   - **Fixed Preroll** — Play one preroll from your library
    - **Coming Soon List** — Use a generated Coming Soon List video
+   - **Dynamic Preroll** — Use a video made in the NeX-Up Generator
 3. Toggle to enable/disable
 
 **Priority Order:**

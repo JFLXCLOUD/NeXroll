@@ -69,7 +69,7 @@ The Filler Category provides a global fallback when **no schedules are active**.
 ### Configuration
 
 1. Go to **Settings → General**
-2. Find the **Filler Category** section
+2. Find the **Fallback filler** section
 3. Toggle to enable/disable
 4. Select your filler type:
 
@@ -77,7 +77,11 @@ The Filler Category provides a global fallback when **no schedules are active**.
 |-------------|-------------|
 | **Category** | Use any category as the gap filler |
 | **Sequence** | Use a saved sequence as the gap filler |
+| **Fixed Preroll** | Play one preroll from your library, picked by name (search box above the list). Deleting that preroll from the Library clears the choice, and the card asks you to pick another |
 | **Coming Soon List** | Use a generated Coming Soon List video |
+| **Dynamic Preroll** | Use one video made in the NeX-Up Generator |
+
+Saving a change takes effect within seconds when filler is what should be playing. While a schedule, a schedule's fallback, a manual apply, Coexistence Mode or Clear Prerolls When Inactive has the field, saving only stores the choice; filler starts when that ends.
 
 ### Priority Order
 
