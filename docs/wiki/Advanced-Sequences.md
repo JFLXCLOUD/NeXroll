@@ -230,6 +230,9 @@ Flow view shows the same sequence as a workflow, running left to right from **Pl
 | Reorder playback | Select a block and use the earlier / later arrows beside its step number |
 | Tidy the canvas | Click **Auto arrange** to restore the left-to-right layout and fit the sequence |
 | Edit | Click a block; its settings open in **Block settings** |
+| Change a block's type | Hover over it and click the pencil, then pick a type. Its condition, Otherwise, Else if link and position stay; the new type starts with its usual settings |
+| Delete a block | Hover over it and click the bin. On a conditional block this removes the IF and both branches with it |
+| Change what plays instead | Hover over an **Otherwise** and click the pencil, or the bin to make it a **Skip**. Hover over a **Skip** and click the pencil to play something instead |
 | Move around | Drag the background to pan, and scroll or use the **+ / -** buttons to zoom |
 | Find your place in a long sequence | Use the minimap in the corner |
 
@@ -241,6 +244,10 @@ In Advanced mode, a conditional block is drawn as an **IF** node with two branch
 Both branches join the next block. In Simple mode a conditional block is a single node marked **Conditional**.
 
 An [Else if chain](#else-if-first-match-wins) is drawn as an **IF** node followed by **ELSE IF** nodes along the false branches: each one is only reached when the one before it is false. Each true branch steps up from the main line so its line to the join stays clear, and the chain's Else (a block with no condition) sits on the last false branch. Every branch joins the block after the chain.
+
+On a touch screen, where nothing can hover, the pencil and bin show on the selected block.
+
+Deleting, moving or adding blocks keeps [Else if chains](#else-if-first-match-wins) together, in Flow and List alike: delete the first block of a chain and the next one starts it; a block added or dropped between two members joins the chain; a block moved out of a chain plays on its own. (Before 2.2.8, deleting a chain's first block left the next one following whatever block was above, so an unconditional block there always won.)
 
 Flow view hides the Block library column to give the canvas more room, since the **+** on each connection adds blocks. Long sequences open at the start and continue to the right, rather than shrinking until they can't be read.
 

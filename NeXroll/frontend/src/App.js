@@ -24,7 +24,7 @@ import SequencePreviewModal from './components/SequencePreviewModal';
 import SequenceConditionPanel from './components/SequenceConditionPanel';
 import CategorySelect from './components/CategorySelect';
 import GenrePicker from './components/GenrePicker';
-import { blocksHaveConditions, chainInfo, chainLabel, hasCondition, needsPlaybackInfo, useBuilderMode, useBuilderView } from './utils/sequenceConditions';
+import { blocksHaveConditions, chainInfo, chainLabel, hasCondition, insertBlockAt, moveBlockTo, needsPlaybackInfo, otherwiseForChoice, removeBlockAt, useBuilderMode, useBuilderView } from './utils/sequenceConditions';
 import Sidebar from './components/Sidebar';
 import YearlyScheduleFields from './components/YearlyScheduleFields';
 import OnboardingWizard from './components/OnboardingWizard';
@@ -20261,31 +20261,52 @@ const DashboardTiles = {
       ...generatedPrerolls.map(item => ({ filename: item.filename, name: item.name || item.template_id, kind: 'dynamic' })),
       ...generatedComingSoonLists.map(item => ({ filename: item.filename, name: item.name || `Coming Soon (${item.layout})`, kind: 'coming_soon' }))
     ];
+    const blockPreset = type => ({
+      random: { type: 'random', category_id: categories[0]?.id || null, count: 1, label: 'Category' },
+      fixed: { type: 'fixed', preroll_ids: prerolls[0] ? [prerolls[0].id] : [], label: 'Fixed preroll' },
+      nexup_trailers: { type: 'nexup_trailers', source: 'both', count: 2, mode: 'random', match_playing: false, label: 'NeX-Up trailers' },
+      library_trailers: { type: 'library_trailers', count: 2, mode: 'random', genres: [], match_playing: false, label: 'Library trailers' },
+      dynamic_preroll: { type: 'dynamic_preroll', filename: generatedItems[0]?.filename || null, label: 'Generated preroll' }
+    }[type]);
+    // Insert, remove and move keep Else if chains whole (see the helpers).
     const addBlock = (type, atIndex = sequenceBlocks.length) => {
-      const presets = {
-        random: { type: 'random', category_id: categories[0]?.id || null, count: 1, label: 'Category' },
-        fixed: { type: 'fixed', preroll_ids: prerolls[0] ? [prerolls[0].id] : [], label: 'Fixed preroll' },
-        nexup_trailers: { type: 'nexup_trailers', source: 'both', count: 2, mode: 'random', match_playing: false, label: 'NeX-Up trailers' },
-        library_trailers: { type: 'library_trailers', count: 2, mode: 'random', genres: [], match_playing: false, label: 'Library trailers' },
-        dynamic_preroll: { type: 'dynamic_preroll', filename: generatedItems[0]?.filename || null, label: 'Generated preroll' }
-      };
-      const next = cloneSequenceWithIds([presets[type]])[0];
-      setSequenceBlocks(blocks => [...blocks.slice(0, atIndex), next, ...blocks.slice(atIndex)]);
+      const next = cloneSequenceWithIds([blockPreset(type)])[0];
+      setSequenceBlocks(blocks => insertBlockAt(blocks, atIndex, next));
       setScheduleBuilderSelectedIndex(atIndex);
     };
     const removeBlock = index => {
-      setSequenceBlocks(blocks => blocks.filter((_, blockIndex) => blockIndex !== index));
-      setScheduleBuilderSelectedIndex(index => Math.max(0, index - 1));
+      setSequenceBlocks(blocks => removeBlockAt(blocks, index));
+      // Keep the same block selected; removing the selected one selects the
+      // block above it. Flow can remove any block, not just the selected one.
+      setScheduleBuilderSelectedIndex(current => (index < current || (index === current && current > 0) ? current - 1 : current));
     };
     const moveBlock = (fromIndex, toIndex) => {
       if (toIndex < 0 || toIndex >= sequenceBlocks.length || fromIndex === toIndex) return;
-      setSequenceBlocks(blocks => {
-        const next = [...blocks];
-        const [moved] = next.splice(fromIndex, 1);
-        next.splice(toIndex, 0, moved);
-        return next;
-      });
+      setSequenceBlocks(blocks => moveBlockTo(blocks, fromIndex, toIndex));
       setScheduleBuilderSelectedIndex(toIndex);
+    };
+    // Flow's Edit: another block type in the same place. The condition,
+    // Otherwise, Else if link and canvas position stay; the new type's own
+    // settings start as a new block's would.
+    const changeBlockType = (index, type) => {
+      const preset = blockPreset(type);
+      if (!preset) return;
+      setSequenceBlocks(blocks => blocks.map((block, blockIndex) => {
+        if (blockIndex !== index || block.type === type || (type === 'random' && block.type === 'sequential')) return block;
+        const kept = ['id', 'condition', 'otherwise', 'else_if', 'flow_positions'].filter(key => key in block);
+        return { ...preset, ...Object.fromEntries(kept.map(key => [key, block[key]])) };
+      }));
+      setScheduleBuilderSelectedIndex(index);
+    };
+    // Flow's Otherwise and Skip nodes: what plays when the condition fails
+    // (null is Skip).
+    const changeOtherwise = (index, otherwise) => {
+      setSequenceBlocks(blocks => blocks.map((block, blockIndex) => {
+        if (blockIndex !== index) return block;
+        const { otherwise: _previous, ...rest } = block;
+        return otherwise ? { ...rest, otherwise } : rest;
+      }));
+      setScheduleBuilderSelectedIndex(index);
     };
     // Named by type first, falling back to any stored label. Block labels are
     // written by the presets and are not user-editable, so a label saved by an
@@ -20402,6 +20423,9 @@ const DashboardTiles = {
                       ...Object.fromEntries(updates.map(change => [change.key, change.position])) } };
                   }))}
                   onInsert={addBlock}
+                  onRemove={removeBlock}
+                  onChangeType={changeBlockType}
+                  onChangeOtherwise={(index, choice) => changeOtherwise(index, otherwiseForChoice(choice, categories))}
                   blockTitle={blockTitle}
                   blockDescription={blockDescription}
                   getCategoryName={categoryName}

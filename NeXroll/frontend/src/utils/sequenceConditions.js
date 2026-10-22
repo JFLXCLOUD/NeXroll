@@ -112,6 +112,66 @@ export const chainInfo = (blocks, index) => {
 /** Short label for a chained block: "Else if" with a condition, "Else" without. */
 export const chainLabel = (block) => (hasCondition(block) ? 'Else if' : 'Else');
 
+const withElseIf = (block, on) => {
+  if (!block || isElseIf(block) === on) return block;
+  const { else_if: _dropped, ...rest } = block;
+  return on ? { ...rest, else_if: true } : rest;
+};
+
+/**
+ * The first block follows nothing, so a flag it kept from an earlier
+ * position (its chain head deleted or moved away) would only make it join
+ * whatever block is later put above it.
+ */
+export const tidyChains = (blocks) => {
+  const list = Array.isArray(blocks) ? blocks : [];
+  return list.length && isElseIf(list[0]) ? [withElseIf(list[0], false), ...list.slice(1)] : list;
+};
+
+/**
+ * Blocks with one removed. Removing the block that starts a chain makes the
+ * next member start it; left as it was, that member joined whatever block
+ * sat above the chain, and an unconditional one above it then always won.
+ */
+export const removeBlockAt = (blocks, index) => {
+  const list = tidyChains(blocks);
+  const next = list.filter((_, i) => i !== index);
+  if (!isElseIf(list[index]) && isElseIf(next[index])) next[index] = withElseIf(next[index], false);
+  return tidyChains(next);
+};
+
+/**
+ * Blocks with one inserted at ``index``. A block placed between two members
+ * of a chain joins it, rather than splitting it in two.
+ */
+export const insertBlockAt = (blocks, index, block) => {
+  const list = tidyChains(blocks);
+  const joins = index > 0 && isElseIf(list[index]);
+  return tidyChains([...list.slice(0, index), withElseIf(block, joins), ...list.slice(index)]);
+};
+
+/**
+ * Blocks with one moved from ``from`` to ``to``. Inside its own chain a move
+ * changes priority, so the first slot stays the chain's start and the rest
+ * stay members. A block leaving its chain plays on its own (the next member
+ * starts the chain if it was first), and one dropped between two members of
+ * another chain joins that chain.
+ */
+export const moveBlockTo = (blocks, from, to) => {
+  const list = tidyChains(blocks);
+  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return list;
+  const [start, end] = chainBounds(list, from);
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  if (start !== end && to >= start && to <= end) {
+    next.splice(to, 0, moved);
+    return tidyChains(next.map((block, i) => (i < start || i > end ? block : withElseIf(block, i > start))));
+  }
+  if (!isElseIf(moved) && isElseIf(next[from])) next[from] = withElseIf(next[from], false);
+  next.splice(to, 0, withElseIf(moved, to > 0 && isElseIf(next[to])));
+  return tidyChains(next);
+};
+
 export const blocksHaveConditions = (blocks) =>
   Array.isArray(blocks) && blocks.some((block, index) => hasCondition(block) || (index > 0 && isElseIf(block)));
 

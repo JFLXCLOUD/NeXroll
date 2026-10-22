@@ -11601,6 +11601,21 @@ body.light .nx-draft-cal-event { color: color-mix(in srgb, var(--nx-section-acce
 .nx-flow-toolbar button { flex-shrink: 0; }
 @media (max-width: 700px) { .nx-flow-toolbar { max-width: calc(100% - 32px); } }
 
+/* Flow node tools: Edit and Delete on a block's top edge, shown on hover or
+   keyboard focus, and on the selected block where nothing can hover. */
+.nx-flow-node, .nx-flow-skip { position: relative; }
+.nx-flow-node-tools { position: absolute; top: -15px; right: 34px; display: flex; gap: 4px; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.nx-flow-skip .nx-flow-node-tools { right: -6px; }
+.nx-flow-node:hover .nx-flow-node-tools, .nx-flow-skip:hover .nx-flow-node-tools, .nx-flow-node-tools:focus-within, .nx-flow-node-tools.open { opacity: 1; pointer-events: all; }
+@media (hover: none) { .nx-flow-node.selected .nx-flow-node-tools, .nx-flow-skip.selected .nx-flow-node-tools { opacity: 1; pointer-events: all; } }
+.nx-flow-node-tools > button { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border-color); border-radius: 7px; background: var(--card-bg); color: var(--text-secondary); cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.nx-flow-node-tools > button:hover, .nx-flow-node-tools > button:focus-visible, .nx-flow-node-tools > button[aria-expanded="true"] { border-color: var(--accent-color); color: var(--accent-color); }
+.nx-flow-node-tools > button.danger:hover, .nx-flow-node-tools > button.danger:focus-visible { border-color: var(--error-color); color: var(--error-color); }
+.nx-flow-node-menu { top: 32px; left: auto; right: 0; transform: none; }
+.nx-flow-node-menu button.current { font-weight: 700; }
+.nx-flow-node-menu .tick { margin-left: auto; color: var(--accent-color); }
+@media (max-width: 700px) { .nx-flow-node-tools > button { width: 34px; height: 34px; } .nx-flow-node-tools { top: -19px; } .nx-flow-node-menu { top: 40px; } }
+
 /* Path Mappings: Plex path tools (PlexPathTools.js). Colors come from the
    health-state tokens so every theme carries them. */
 .nx-plexpath-tools { display: grid; gap: 0.75rem; margin-bottom: 1.25rem; }

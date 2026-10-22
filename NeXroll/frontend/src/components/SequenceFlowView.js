@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -17,8 +17,8 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Play, Clapperboard, GitBranch, Plus, SkipForward, LayoutGrid, ArrowLeft, ArrowRight } from 'lucide-react';
-import { hasCondition, describeCondition, describeOtherwise, needsPlaybackInfo, chainBounds, chainLabel } from '../utils/sequenceConditions';
+import { Play, Clapperboard, GitBranch, Plus, SkipForward, LayoutGrid, ArrowLeft, ArrowRight, Pencil, Trash2, Check } from 'lucide-react';
+import { hasCondition, describeCondition, describeOtherwise, needsPlaybackInfo, chainBounds, chainLabel, otherwiseChoiceOf } from '../utils/sequenceConditions';
 
 /**
  * SequenceFlowView - the Sequence Builder's Flow view: the same sequence drawn
@@ -34,6 +34,9 @@ import { hasCondition, describeCondition, describeOtherwise, needsPlaybackInfo, 
  *   - an Else if chain is drawn as IF, ELSE IF... nodes along the false
  *     branch, each met block one step lower than the one before, and every
  *     branch joining the step after the chain
+ *   - hovering a block shows Edit (change its type) and Delete; an Otherwise
+ *     node's Edit picks what plays instead and its Delete makes it a Skip,
+ *     and a Skip's Edit picks something to play instead
  * Selecting any node selects its block for the Block settings panel.
  */
 
@@ -54,9 +57,69 @@ export const INSERTABLE_BLOCKS = [
   { type: 'dynamic_preroll', code: 'GEN', label: 'Generated preroll' },
 ];
 
+// What an Otherwise can be (Skip is its Delete). Values match OTHERWISE_CHOICES.
+export const OTHERWISE_BLOCKS = [
+  { type: 'random', code: 'CAT', label: 'Category' },
+  { type: 'nexup_trailers', code: 'TRL', label: 'NeX-Up trailers' },
+  { type: 'library_trailers', code: 'LIB', label: 'Library trailers' },
+];
+
 const BLOCK_CODES = {
   random: 'CAT', sequential: 'CAT', fixed: 'FIX', nexup_trailers: 'TRL', library_trailers: 'LIB',
   dynamic_preroll: 'GEN', coming_soon_list: 'GEN', separator: 'II',
+};
+
+// ---- Node tools (Edit / Delete on hover) -------------------------------
+
+// The canvas hands its actions to the nodes through context, so they reach
+// every node without re-running the layout.
+const FlowActions = createContext(null);
+
+const NodeTools = ({ nodeId, choices, current, onPick, editLabel, onDelete, deleteLabel }) => {
+  const actions = useContext(FlowActions);
+  if (!actions) return null;
+  const open = actions.toolMenu === nodeId;
+  return (
+    // Clicks stay here: a click on a tool is not a click on the node, and
+    // nodrag keeps a press on a tool from starting a drag.
+    <div className={`nx-flow-node-tools nodrag nopan${open ? ' open' : ''}`} onClick={event => event.stopPropagation()}>
+      <button type="button" aria-label={editLabel} title="Edit" aria-haspopup="menu" aria-expanded={open}
+        onClick={() => actions.setToolMenu(open ? null : nodeId)}>
+        <Pencil size={12} />
+      </button>
+      {onDelete && (
+        <button type="button" className="danger" aria-label={deleteLabel} title="Delete"
+          onClick={() => { actions.setToolMenu(null); onDelete(); }}>
+          <Trash2 size={12} />
+        </button>
+      )}
+      {open && (
+        <div className="nx-flow-insert-menu nx-flow-node-menu" role="menu">
+          {choices.map(item => (
+            <button type="button" role="menuitem" key={item.type} className={item.type === current ? 'current' : ''}
+              aria-current={item.type === current ? 'true' : undefined}
+              onClick={() => { actions.setToolMenu(null); if (item.type !== current) onPick(item.type); }}>
+              <i>{item.code}</i>{item.label}{item.type === current && <Check size={12} className="tick" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const BlockTools = ({ id, data }) => {
+  const actions = useContext(FlowActions);
+  if (!actions || data.index == null) return null;
+  const step = data.index + 1;
+  if (data.branch === 'otherwise') {
+    return <NodeTools nodeId={id} choices={OTHERWISE_BLOCKS} current={data.otherwiseChoice}
+      onPick={type => actions.onChangeOtherwise(data.index, type)} editLabel={`Change what plays instead at step ${step}`}
+      onDelete={() => actions.onChangeOtherwise(data.index, 'skip')} deleteLabel={`Skip instead at step ${step}`} />;
+  }
+  return <NodeTools nodeId={id} choices={INSERTABLE_BLOCKS} current={data.type === 'sequential' ? 'random' : data.type}
+    onPick={type => actions.onChangeType(data.index, type)} editLabel={`Change the type of block ${step}`}
+    onDelete={() => actions.onRemove(data.index)} deleteLabel={`Delete block ${step}`} />;
 };
 
 // ---- Nodes -------------------------------------------------------------
@@ -70,7 +133,7 @@ const TerminalNode = ({ data }) => (
   </div>
 );
 
-const BlockNode = ({ data, selected }) => (
+const BlockNode = ({ id, data, selected }) => (
   <div className={`nx-flow-node${selected || data.active ? ' selected' : ''}${data.branch ? ` branch ${data.branch}` : ''}`}>
     <Handle type="target" position={Position.Left} />
     <i>{data.code}</i>
@@ -80,14 +143,24 @@ const BlockNode = ({ data, selected }) => (
       {data.badge && <em className="nx-draft-badge violet"><GitBranch size={10} /> {data.badge}</em>}
     </span>
     {data.order != null && <span className="order">{data.order}</span>}
+    <BlockTools id={id} data={data} />
     <Handle type="source" position={Position.Right} />
   </div>
 );
 
-const SkipNode = ({ data }) => (
+const SkipTools = ({ id, data }) => {
+  const actions = useContext(FlowActions);
+  if (!actions || data.index == null) return null;
+  return <NodeTools nodeId={id} choices={OTHERWISE_BLOCKS} current={null}
+    onPick={type => actions.onChangeOtherwise(data.index, type)}
+    editLabel={`Play something instead of skipping at step ${data.index + 1}`} />;
+};
+
+const SkipNode = ({ id, data }) => (
   <div className={`nx-flow-skip${data.active ? ' selected' : ''}`}>
     <Handle type="target" position={Position.Left} />
     <SkipForward size={13} /> Skip
+    <SkipTools id={id} data={data} />
     <Handle type="source" position={Position.Right} />
   </div>
 );
@@ -180,6 +253,7 @@ export const layoutSequence = ({ blocks, advanced, selectedIndex, blockTitle, bl
 
   const dataFor = index => ({
     index,
+    type: blocks[index].type,
     code: BLOCK_CODES[blocks[index].type] || 'BLK',
     title: blockTitle(blocks[index]),
     description: blockDescription(blocks[index]),
@@ -239,7 +313,7 @@ export const layoutSequence = ({ blocks, advanced, selectedIndex, blockTitle, bl
         const falseId = `o-${index}`;
         if (block.otherwise) {
           nodes.push({ id: falseId, type: 'block', position: { x, y: BRANCH_Y }, draggable: false,
-            data: { index, code: BLOCK_CODES[block.otherwise.type] || 'BLK', title: 'Otherwise',
+            data: { index, code: BLOCK_CODES[block.otherwise.type] || 'BLK', title: 'Otherwise', otherwiseChoice: otherwiseChoiceOf(block.otherwise),
                     description: describeOtherwise(block.otherwise, getCategoryName), branch: 'otherwise', active: blockData.active } });
         } else {
           nodes.push({ id: falseId, type: 'skip', position: { x: x + 60, y: BRANCH_Y + 14 }, draggable: false,
@@ -280,7 +354,7 @@ export const layoutSequence = ({ blocks, advanced, selectedIndex, blockTitle, bl
       const falseId = `o-${index}`;
       if (block.otherwise) {
         nodes.push({ id: falseId, type: 'block', position: { x, y: BRANCH_Y }, draggable: false,
-          data: { index, code: BLOCK_CODES[block.otherwise.type] || 'BLK', title: 'Otherwise',
+          data: { index, code: BLOCK_CODES[block.otherwise.type] || 'BLK', title: 'Otherwise', otherwiseChoice: otherwiseChoiceOf(block.otherwise),
                   description: describeOtherwise(block.otherwise, getCategoryName), branch: 'otherwise', active } });
       } else {
         nodes.push({ id: falseId, type: 'skip', position: { x: x + 60, y: BRANCH_Y + 14 }, draggable: false,
@@ -335,8 +409,10 @@ export const layoutSequence = ({ blocks, advanced, selectedIndex, blockTitle, bl
 
 // ---- View --------------------------------------------------------------
 
-const FlowCanvas = ({ blocks, advanced, selectedIndex, onSelect, onMove, onInsert, onPositionsChange, blockTitle, blockDescription, getCategoryName, darkMode }) => {
+const FlowCanvas = ({ blocks, advanced, selectedIndex, onSelect, onMove, onInsert, onPositionsChange, onRemove, onChangeType, onChangeOtherwise, blockTitle, blockDescription, getCategoryName, darkMode }) => {
   const [insertOpen, setInsertOpen] = useState(null);
+  // The node whose Edit menu is open. One menu at a time, insert menus included.
+  const [toolMenu, setToolMenu] = useState(null);
   const { fitView, setViewport } = useReactFlow();
   const wrapperRef = useRef(null);
 
@@ -361,7 +437,18 @@ const FlowCanvas = ({ blocks, advanced, selectedIndex, onSelect, onMove, onInser
       return previous?.dragging ? { ...node, position: previous.position, dragging: true } : node;
     }));
   }, [layout.nodes, setNodes]);
-  useEffect(() => { setInsertOpen(null); }, [blocks.length, advanced]);
+  useEffect(() => { setInsertOpen(null); setToolMenu(null); }, [blocks.length, advanced]);
+  const openInsert = useCallback(at => { setToolMenu(null); setInsertOpen(at); }, []);
+  const actions = useMemo(() => (onRemove && onChangeType && onChangeOtherwise ? {
+    toolMenu,
+    setToolMenu: id => { setInsertOpen(null); setToolMenu(id); },
+    onRemove,
+    onChangeType,
+    onChangeOtherwise,
+  } : null), [toolMenu, onRemove, onChangeType, onChangeOtherwise]);
+  // A node with its menu open sits above its neighbours, so they can't cover the menu.
+  const shownNodes = useMemo(() => (toolMenu ? nodes.map(node => (node.id === toolMenu ? { ...node, zIndex: 1000 } : node)) : nodes),
+    [nodes, toolMenu]);
 
   // Frame on opening or switching modes; inserting and editing preserve the viewport.
   // Fit the whole flow when it fits at a readable size. A longer one is not
@@ -386,9 +473,9 @@ const FlowCanvas = ({ blocks, advanced, selectedIndex, onSelect, onMove, onInser
   const edges = useMemo(() => layout.edges.map(edge => (
     edge.data.insertAt == null ? edge : {
       ...edge,
-      data: { ...edge.data, menuOpen: insertOpen === edge.data.insertAt, onOpenInsert: setInsertOpen, onInsert: handleInsert },
+      data: { ...edge.data, menuOpen: insertOpen === edge.data.insertAt, onOpenInsert: openInsert, onInsert: handleInsert },
     }
-  )), [layout.edges, insertOpen, handleInsert]);
+  )), [layout.edges, insertOpen, openInsert, handleInsert]);
 
   const onNodeDragStop = useCallback((event, node, draggedNodes) => {
     onPositionsChange((draggedNodes || [node]).filter(item => item.data?.index != null).map(item => ({
@@ -407,20 +494,21 @@ const FlowCanvas = ({ blocks, advanced, selectedIndex, onSelect, onMove, onInser
   };
 
   return (
-    <div ref={wrapperRef} className="nx-flow-canvas" onKeyDown={event => { if (event.key === 'Escape') setInsertOpen(null); }}>
+    <div ref={wrapperRef} className="nx-flow-canvas" onKeyDown={event => { if (event.key === 'Escape') { setInsertOpen(null); setToolMenu(null); } }}>
+    <FlowActions.Provider value={actions}>
     <ReactFlow
-      nodes={nodes}
+      nodes={shownNodes}
       edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       onNodesChange={onNodesChange}
       onNodeClick={(event, node) => { if (node.data?.index != null) onSelect(node.data.index); }}
       onNodeDragStop={onNodeDragStop}
-      onPaneClick={() => setInsertOpen(null)}
+      onPaneClick={() => { setInsertOpen(null); setToolMenu(null); }}
       nodesConnectable={false}
       deleteKeyCode={null}
       edgesFocusable={false}
-      onNodeDragStart={(event, node) => { setInsertOpen(null); if (node.data?.index != null) onSelect(node.data.index); }}
+      onNodeDragStart={(event, node) => { setInsertOpen(null); setToolMenu(null); if (node.data?.index != null) onSelect(node.data.index); }}
       colorMode={darkMode ? 'dark' : 'light'}
       minZoom={0.3}
       maxZoom={1.6}
@@ -447,6 +535,7 @@ const FlowCanvas = ({ blocks, advanced, selectedIndex, onSelect, onMove, onInser
         maskColor={darkMode ? 'rgba(10,10,12,.55)' : 'rgba(240,241,245,.6)'}
       />
     </ReactFlow>
+    </FlowActions.Provider>
     </div>
   );
 };

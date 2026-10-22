@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Download, Upload, Play, Save, Edit, Trash2, X, Film, Shuffle, Pin, LayoutGrid, BarChart3, Sparkles, SlidersHorizontal, GitBranch } from 'lucide-react';
 import SequenceBlock from './SequenceBlock';
 import BlockEditor from './BlockEditor';
@@ -10,7 +10,7 @@ import SequenceStats from './SequenceStats';
 import SequencePreviewModal from './SequencePreviewModal';
 import PatternExport from './PatternExport';
 import PatternImport from './PatternImport';
-import { blocksHaveConditions, chainInfo, useBuilderMode } from '../utils/sequenceConditions';
+import { blocksHaveConditions, chainInfo, insertBlockAt, moveBlockTo, removeBlockAt, useBuilderMode } from '../utils/sequenceConditions';
 
 /**
  * SequenceBuilder - Visual preroll sequence builder for NeXroll
@@ -96,7 +96,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
       setBlocks((items) => {
         const oldIndex = items.findIndex((item) => item.id === active.id);
         const newIndex = items.findIndex((item) => item.id === over.id);
-        const newBlocks = arrayMove(items, oldIndex, newIndex);
+        const newBlocks = moveBlockTo(items, oldIndex, newIndex);
         setIsModified(true);
         return newBlocks;
       });
@@ -127,7 +127,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
 
   const handleDeleteBlock = (index) => {
     setBlocks((items) => {
-      const newBlocks = items.filter((_, i) => i !== index);
+      const newBlocks = removeBlockAt(items, index);
       setIsModified(true);
       return newBlocks;
     });
@@ -136,13 +136,13 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
   const handleMoveBlock = (index, direction) => {
     if (direction === 'up' && index > 0) {
       setBlocks((items) => {
-        const newBlocks = arrayMove(items, index, index - 1);
+        const newBlocks = moveBlockTo(items, index, index - 1);
         setIsModified(true);
         return newBlocks;
       });
     } else if (direction === 'down' && index < blocks.length - 1) {
       setBlocks((items) => {
-        const newBlocks = arrayMove(items, index, index + 1);
+        const newBlocks = moveBlockTo(items, index, index + 1);
         setIsModified(true);
         return newBlocks;
       });
@@ -187,11 +187,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
       ...block,
       id: `block-${Date.now()}-duplicate`,
     };
-    setBlocks((items) => {
-      const newBlocks = [...items];
-      newBlocks.splice(index + 1, 0, duplicated);
-      return newBlocks;
-    });
+    setBlocks((items) => insertBlockAt(items, index + 1, duplicated));
     setIsModified(true);
   };
 
