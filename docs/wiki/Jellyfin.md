@@ -126,10 +126,10 @@ The NeXroll Jellyfin plugin uses Jellyfin's `IIntroProvider` interface:
 
 1. **Preroll Fetch**: When a user presses play, Jellyfin calls the plugin's `GetIntros()` method
 2. **NeXroll API Call**: The plugin calls NeXroll's `/plugin/intros` endpoint to get the currently-active preroll list (respecting your schedules, fillers, and sequences)
-3. **Local Cache**: Preroll files are downloaded to a local cache directory via NeXroll's `/plugin/stream` endpoint
+3. **Local Cache**: Preroll files are downloaded to a local cache directory via NeXroll's `/plugin/stream` endpoint. From NeXroll 2.2.8 with plugin 1.14.2 (Jellyfin 10.11) or 1.15.2 (Jellyfin 12), a file NeXroll rewrites under the same name, such as a regenerated Coming Soon list or a preroll uploaded again, is downloaded again on its next play, the old copy is removed, and Jellyfin measures its length again (also when Jellyfin reads NeXroll's files directly). Older versions keep playing the first copy they downloaded, and show the first length they measured
 4. **Database Registration**: Cached files are resolved via Jellyfin's `ILibraryManager` and saved as `Video` items in the database so Jellyfin can play them
 5. **Playback Injection**: The plugin returns `IntroInfo` items with the registered `ItemId` — Jellyfin plays them before the main content
-6. **Cache Location** (plugin v1.14.0+): Jellyfin's own plugin data folder (under the server config dir), falling back to the system temp directory. Older versions cached to `%LocalAppData%\NeXroll\intro_cache` / `~/.local/share/NeXroll`, which **failed on Docker/Unraid** — the service has no `HOME`, so the path collapsed to `/NeXroll` at the container root and threw `Access to the path '/NeXroll' is denied`. Update to **v1.14.0+** if you hit that error.
+6. **Cache Location** (plugin v1.14.0+): `plugins/NeXroll.Jellyfin/intro_cache` in Jellyfin's data folder (on Windows `C:\ProgramData\Jellyfin\Server\plugins\NeXroll.Jellyfin\intro_cache`; in Docker, the `plugins` folder of Jellyfin's config volume), falling back to the system temp directory. Older versions cached to `%LocalAppData%\NeXroll\intro_cache` / `~/.local/share/NeXroll`, which **failed on Docker/Unraid** — the service has no `HOME`, so the path collapsed to `/NeXroll` at the container root and threw `Access to the path '/NeXroll' is denied`. Update to **v1.14.0+** if you hit that error.
 
 ## Docker Setup
 
@@ -213,6 +213,7 @@ If NeXroll's event log says it is returning the full sequence, including trailer
 | Only the first preroll plays / sequence items skipped | Update the plugin to 1.14.1 (Jellyfin 10.11) or 1.15.1 (Jellyfin 12); a plugin installed from the NeXroll repository updates itself. On an older plugin, set **Max Intros** to `0`. Compare the Jellyfin log's `Injecting N intro(s)` line to your sequence length |
 | Every preroll in a random category plays before each movie | Update NeXroll to 2.2.1, which picks one (or the number set as **Prerolls from a random category** on the Connect page) |
 | Normal prerolls play, but NeX-Up trailers do not | Mount the NeX-Up storage directory into Jellyfin at `/data/nexup_trailers` (read-only is sufficient), or map `/data/nexup_trailers` to Jellyfin's actual trailer path. Restart Jellyfin and check its log for `NeXroll` or `Failed to download intro` |
+| An old Coming Soon list, or the old version of a preroll you uploaded again, keeps playing | Update NeXroll to 2.2.8 and the plugin to 1.14.2 (Jellyfin 10.11) or 1.15.2 (Jellyfin 12). On older versions, delete the plugin's `intro_cache` folder (see Cache Location above) after regenerating; files are downloaded again on the next play (Jellyfin may still show the old length; the video plays in full) |
 | Plugin detected but 0 intros | Make sure you have an active category or filler set in NeXroll |
 | Prerolls play for movies but not episodes | Check that "Enable for Episodes" is turned on in the plugin config |
 | Test Connection fails | Ensure NeXroll is running and the URL includes the port (e.g., `http://192.168.1.50:9393`) |

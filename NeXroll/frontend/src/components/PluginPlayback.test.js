@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import PluginPlayback, { pluginPlaysExactList, legacyPluginWarning } from './PluginPlayback';
+import PluginPlayback, { pluginPlaysExactList, legacyPluginWarning, pluginRefreshesRewrittenFiles, stalePluginCacheNote } from './PluginPlayback';
 
 const apiUrl = p => '/' + p;
 
@@ -21,6 +21,20 @@ test('an older Jellyfin plugin warns only when Max intros caps the list', () => 
   expect(legacyPluginWarning('jellyfin', '1.15.0.0', 0)).toBeNull();
 });
 
+test.each([
+  ['1.14.1.0', false], ['1.14.2.0', true], ['1.15.1.0', false], ['1.15.2.0', true], ['1.16.0.0', true], ['', null],
+])('plugin %s downloads a rewritten file again: %s', (version, expected) => {
+  expect(pluginRefreshesRewrittenFiles(version)).toBe(expected);
+});
+
+test('a plugin that keeps old copies of rewritten files says how to update', () => {
+  expect(stalePluginCacheNote('jellyfin', '1.14.1.0')).toMatch(/regenerated Coming Soon list.*Update it to 1\.14\.2 or later\. A plugin installed from the NeXroll repository/);
+  expect(stalePluginCacheNote('jellyfin', '1.15.1.0')).toMatch(/Update it to 1\.15\.2 or later/);
+  expect(stalePluginCacheNote('emby', '1.14.1.0')).toMatch(/restart Emby/);
+  expect(stalePluginCacheNote('jellyfin', '1.14.2.0')).toBeNull();
+  expect(stalePluginCacheNote('jellyfin', '')).toBeNull();
+});
+
 test('current plugins never warn', () => {
   expect(legacyPluginWarning('jellyfin', '1.15.1.0', 1)).toBeNull();
   expect(legacyPluginWarning('emby', '1.14.1.0', 0)).toBeNull();
@@ -33,7 +47,7 @@ test('loads and saves the random-category count', async () => {
     }
     return Promise.resolve({ ok: true, json: async () => ({ random_count: 1, max: 20 }) });
   });
-  render(<PluginPlayback apiUrl={apiUrl} server="jellyfin" pluginVersion="1.14.1.0" maxIntros={0} />);
+  render(<PluginPlayback apiUrl={apiUrl} server="jellyfin" pluginVersion="1.14.2.0" maxIntros={0} />);
   const input = screen.getByLabelText('Prerolls from a random category');
   await waitFor(() => expect(input).toHaveValue(1));
   fireEvent.change(input, { target: { value: '2' } });
@@ -55,4 +69,11 @@ test('refuses a count outside the range without calling the server', async () =>
   expect(await screen.findByText('Choose between 1 and 20.')).toBeInTheDocument();
   expect(fetch.mock.calls.some(([, o]) => o && o.method === 'PUT')).toBe(false);
   expect(screen.getByRole('alert')).toHaveTextContent(/Download the updated plugin/);
+});
+
+test('a plugin that plays the list as sent but caches by path gets the update note', async () => {
+  global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({ random_count: 1, max: 20 }) }));
+  render(<PluginPlayback apiUrl={apiUrl} server="jellyfin" pluginVersion="1.14.1.0" maxIntros={0} />);
+  await waitFor(() => expect(screen.getByLabelText('Prerolls from a random category')).toHaveValue(1));
+  expect(screen.getByRole('alert')).toHaveTextContent(/regenerated Coming Soon list/);
 });

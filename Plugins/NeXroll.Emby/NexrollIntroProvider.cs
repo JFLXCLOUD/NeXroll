@@ -275,7 +275,13 @@ public class NexrollIntroProvider : IIntroProvider
                 {
                     var cached = GetCachedPath(intro);
                     if (cached is null) continue;
-                    if (File.Exists(cached)) continue;
+                    // NeXroll 2.2.8 and later sends each file's version (its size
+                    // and modified time). Emby plays only intros it registered, by
+                    // path, so a new version replaces the cached copy in place
+                    // rather than getting a new name. Before, a file NeXroll
+                    // rewrote under the same name (a regenerated Coming Soon list)
+                    // kept playing its first download.
+                    if (File.Exists(cached) && IsCurrent(cached, intro.Version)) continue;
 
                     if (string.IsNullOrWhiteSpace(intro.StreamUrl)) continue;
 
@@ -291,6 +297,7 @@ public class NexrollIntroProvider : IIntroProvider
                     }
 
                     File.Move(tmpPath, cached, overwrite: true);
+                    WriteVersion(cached, intro.Version);
                     downloadCount++;
                 }
                 catch (Exception ex)
@@ -301,7 +308,7 @@ public class NexrollIntroProvider : IIntroProvider
 
             if (downloadCount > 0)
             {
-                _logger.Info("NeXroll: Cache sync — downloaded {0} new intro(s), {1} total in cache",
+                _logger.Info("NeXroll: Cache sync — downloaded {0} new or updated intro(s), {1} total in cache",
                     downloadCount, Directory.GetFiles(GetCacheDir()).Length);
             }
 
@@ -372,6 +379,43 @@ public class NexrollIntroProvider : IIntroProvider
         public string Path { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string StreamUrl { get; set; } = string.Empty;
+
+        /// <summary>Changes whenever the file is rewritten (NeXroll 2.2.8+); empty from older NeXroll.</summary>
+        public string Version { get; set; } = string.Empty;
+    }
+
+    /// <summary>Where the version of a cached intro is kept, beside it.</summary>
+    private static string VersionFile(string cached) => cached + ".version";
+
+    /// <summary>
+    /// Whether the cached copy is the version NeXroll sent. Older NeXroll sends
+    /// no version, and the cached copy is kept, as before.
+    /// </summary>
+    private static bool IsCurrent(string cached, string version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return true;
+        try
+        {
+            var file = VersionFile(cached);
+            return File.Exists(file) && File.ReadAllText(file).Trim() == version;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void WriteVersion(string cached, string version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return;
+        try
+        {
+            File.WriteAllText(VersionFile(cached), version);
+        }
+        catch
+        {
+            // Without it the copy is downloaded again on the next sync.
+        }
     }
 
     private static string SHA256Hash(string input)

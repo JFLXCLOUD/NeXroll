@@ -110,3 +110,26 @@ def test_the_endpoints_are_not_shadowed_by_the_generic_settings_route():
     generic = src.index('@app.get("/settings/{key}")')
     assert src.index('@app.get("/settings/plugin-playback")') < generic
     assert src.index('@app.put("/settings/plugin-playback")') < src.index('@app.put("/settings/{key}")')
+
+
+def test_a_rewritten_file_gets_a_new_version(tmp_path):
+    """The plugins cache by path, so a file rewritten under the same name (a
+    regenerated Coming Soon list, a preroll uploaded again) kept playing its
+    first download. Each item now carries a version that a rewrite changes."""
+    import os
+    version = route("_file_version")
+    path = tmp_path / "coming_soon_grid.mp4"
+    path.write_bytes(b"old grid")
+    first = version(str(path))
+    assert first and version(str(path)) == first
+    path.write_bytes(b"the regenerated grid")
+    os.utime(path, ns=(1, 2_000_000_000_000_000_000))
+    assert version(str(path)) not in ("", first)
+    assert version(str(tmp_path / "missing.mp4")) == ""
+
+
+def test_every_plugin_item_carries_its_version():
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "backend" / "main.py").read_text(encoding="utf-8")
+    body = src[src.index("def plugin_get_intros("):src.index('@app.get("/plugin/health")')]
+    assert 'item["Version"] = _file_version(p)' in body

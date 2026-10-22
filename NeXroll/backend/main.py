@@ -30917,6 +30917,21 @@ def _plugin_play_list(setting, paths: list, mode: str, rotation=None) -> list:
     return shuffle_bag_sample(key, pool, _plugin_random_count(setting))
 
 
+def _file_version(path: str) -> str:
+    """A file's size and modification time, which change whenever it is written.
+
+    The plugins cache what they download by path, so a file NeXroll rewrites
+    under the same name (a regenerated Coming Soon list) kept playing its first
+    download. Plugins from 1.14.2 (Jellyfin 10.11, Emby) and 1.15.2 (Jellyfin
+    12) download it again when this changes; older ones ignore it.
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return ""
+    return f"{stat.st_size}-{stat.st_mtime_ns}"
+
+
 @app.get("/plugin/intros")
 def plugin_get_intros(
     request: Request,
@@ -30988,6 +31003,7 @@ def plugin_get_intros(
             # Include a signed streaming URL so plugins can fall back to HTTP
             # when the file path isn't resolvable by the media server.
             item["StreamUrl"] = _build_stream_url(base_url, p)
+            item["Version"] = _file_version(p)
             items.append(item)
 
         log_event(

@@ -143,7 +143,7 @@ The NeXroll Emby plugin uses Emby's `IIntroProvider` interface:
 3. **Playback Selection**: When a user starts a movie/episode, `GetIntros()` is called: the plugin asks NeXroll what to play for this item and plays exactly that list from its cache (one preroll from a random category, every block of a sequence). Plugins older than 1.14.1 apply `MaxIntros` instead
 4. **Cache Location**: Emby's own plugin data folder (under the server config dir), falling back to the system temp directory. Older plugin builds cached to `%LocalAppData%\NeXroll\intro_cache` / `~/.local/share/NeXroll`, which **failed on Docker/Unraid** — the service has no `HOME`, so the path collapsed to `/NeXroll` at the container root and threw `Access to the path '/NeXroll' is denied`. Re-download the latest `NeXroll.Emby.dll` if you hit that error.
 
-The cache syncs every 10 minutes to pick up schedule changes in NeXroll.
+The cache syncs every 10 minutes to pick up schedule changes in NeXroll. From NeXroll 2.2.8 with plugin 1.14.2, a sync also replaces a cached copy of a file NeXroll has rewritten under the same name (a regenerated Coming Soon list, a preroll uploaded again), in place, so Emby's registered intro keeps working; older versions kept the first copy. For a sequence, the sync downloads every file it could play: each block's whole category, every eligible trailer, and every branch of its conditions (from 2.2.8; before, it got one random pick per block and none of the genre, tag, file path or audio branches, so those never played on Emby).
 
 ## Docker Setup
 
@@ -181,6 +181,7 @@ In the plugin config, set up path mapping:
 | Plugin not visible in Emby | Verify `NeXroll.Emby.dll` is directly in the `plugins/` folder (not a subfolder). Restart Emby |
 | "Could not reach NeXroll" in logs | Check the NeXroll URL in plugin settings. Verify port 9393 is accessible |
 | Intros not updating | Run "Refresh Custom Intros" from Scheduled Tasks. The cache syncs every 10 minutes |
+| An old Coming Soon list, or the old version of a preroll you uploaded again, keeps playing | Update NeXroll to 2.2.8 and the Emby plugin to 1.14.2: the next cache sync (within 10 minutes) replaces a copy NeXroll has rewritten. On older versions, delete the file from the plugin's `intro_cache` folder and restart Emby |
 | Files not found after schedule change | Wait for the next cache sync (10 min) or restart Emby to force a fresh sync |
 | `Access to the path '/NeXroll' is denied` (Docker/Unraid) | Re-download the latest `NeXroll.Emby.dll` — older builds cached prerolls to an unwritable path |
 | Only the first preroll plays / sequence items skipped | Update the plugin to 1.14.1: download it from NeXroll's Connect page, replace it in Emby's plugins folder and restart Emby. Older Emby plugins play only the first Max Intros prerolls, and treat `0` as `1`. Compare the Emby log's `Injecting N intro(s)` line to your sequence length |

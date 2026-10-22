@@ -260,19 +260,27 @@ public class NexrollIntroProvider : IIntroProvider
             return null;
         }
 
+        var cacheDir = GetCacheDir();
+        var ext = Path.GetExtension(intro.Path);
+        if (string.IsNullOrEmpty(ext)) ext = ".mp4";
+        var key = SHA256Hash(intro.Path);
+        // NeXroll 2.2.8 and later sends each file's version (its size and
+        // modified time), and each version gets its own cache file. Named by
+        // path alone, a file NeXroll rewrites under the same name, such as a
+        // regenerated Coming Soon list, kept playing its first download. A new
+        // name also gives Jellyfin a fresh item, so its stored size is right.
+        var cached = Path.Combine(cacheDir, string.IsNullOrWhiteSpace(intro.Version)
+            ? $"{key}{ext}"
+            : $"{key}-{SHA256Hash(intro.Version)[..12]}{ext}");
+
         try
         {
-            var cacheDir = GetCacheDir();
             Directory.CreateDirectory(cacheDir);
-
-            var ext = Path.GetExtension(intro.Path);
-            if (string.IsNullOrEmpty(ext)) ext = ".mp4";
-            var hash = SHA256Hash(intro.Path);
-            var cached = Path.Combine(cacheDir, $"{hash}{ext}");
 
             if (File.Exists(cached))
             {
                 _logger.LogDebug("NeXroll: Using cached intro '{Name}' at {Path}", intro.Name, cached);
+                RemoveOtherCopies(cacheDir, key, cached);
                 return cached;
             }
 
@@ -290,11 +298,67 @@ public class NexrollIntroProvider : IIntroProvider
             File.Move(tmpPath, cached, overwrite: true);
             _logger.LogInformation("NeXroll: Cached intro '{Name}' ({Size:N0} bytes) at {Path}",
                 intro.Name, new FileInfo(cached).Length, cached);
+            RemoveOtherCopies(cacheDir, key, cached);
             return cached;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "NeXroll: Failed to download intro '{Name}' from streaming endpoint", intro.Name);
+            // An earlier version still beats playing nothing.
+            var fallback = NewestCopy(cacheDir, key);
+            _logger.LogWarning(ex, "NeXroll: Failed to download intro '{Name}' from streaming endpoint{Fallback}",
+                intro.Name, fallback is null ? string.Empty : "; playing the copy cached earlier");
+            return fallback;
+        }
+    }
+
+    /// <summary>
+    /// Delete this intro's cached copies other than <paramref name="keep"/>:
+    /// earlier versions, and the copy older plugins named by path alone. A copy
+    /// that is playing can't be deleted on Windows; it goes on a later play.
+    /// </summary>
+    private void RemoveOtherCopies(string cacheDir, string key, string keep)
+    {
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(cacheDir, key + "*"))
+            {
+                if (string.Equals(file, keep, StringComparison.OrdinalIgnoreCase)
+                    || file.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    File.Delete(file);
+                    _logger.LogDebug("NeXroll: Removed outdated cached intro {Path}", file);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "NeXroll: Could not tidy the intro cache");
+        }
+    }
+
+    /// <summary>The most recently written cached copy of an intro, or null.</summary>
+    private static string? NewestCopy(string cacheDir, string key)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(cacheDir, key + "*")
+                .Where(file => !file.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+        }
+        catch
+        {
             return null;
         }
     }
@@ -321,14 +385,27 @@ public class NexrollIntroProvider : IIntroProvider
 
             // Check if it already exists in the database
             var existing = _libraryManager.GetItemById(video.Id);
+            var file = new FileInfo(localPath);
             if (existing is Video)
             {
-                _logger.LogDebug("NeXroll: Video '{Name}' already in DB with Id {Id}", introName, video.Id);
-                return video.Id;
+                if (!ChangedSinceRegistered(existing, file))
+                {
+                    _logger.LogDebug("NeXroll: Video '{Name}' already in DB with Id {Id}", introName, video.Id);
+                    return video.Id;
+                }
+
+                // Jellyfin keeps an intro's length and size from when it first
+                // played it. A file rewritten at the same path, such as a
+                // regenerated Coming Soon list read straight from NeXroll's
+                // folder, kept the old ones, so the player showed the old
+                // length. Registered afresh, Jellyfin reads the file again.
+                _logger.LogInformation("NeXroll: Intro '{Name}' changed on disk; registering it again", introName);
+                _libraryManager.DeleteItem(existing, new DeleteOptions { DeleteFileLocation = false });
             }
 
             // Not in DB yet — save it
             video.Name = introName;
+            video.DateModified = file.LastWriteTimeUtc;
             _libraryManager.CreateItem(video, null);
             _logger.LogInformation("NeXroll: Registered intro '{Name}' in Jellyfin DB with Id {Id}", introName, video.Id);
 
@@ -339,6 +416,30 @@ public class NexrollIntroProvider : IIntroProvider
             _logger.LogError(ex, "NeXroll: Failed to register video in DB for '{Path}'", localPath);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Whether the file was rewritten after Jellyfin registered it: written
+    /// later than the record says, or a different size than Jellyfin measured.
+    /// Records are compared as UTC (Jellyfin stores UTC, often without saying
+    /// so); a second of slack covers file systems with coarse timestamps.
+    /// </summary>
+    private static bool ChangedSinceRegistered(BaseItem existing, FileInfo file)
+    {
+        if (!file.Exists)
+        {
+            return false;
+        }
+
+        if (existing.Size is long size && size > 0 && size != file.Length)
+        {
+            return true;
+        }
+
+        var recorded = existing.DateModified.Kind == DateTimeKind.Local
+            ? existing.DateModified.ToUniversalTime()
+            : DateTime.SpecifyKind(existing.DateModified, DateTimeKind.Utc);
+        return file.LastWriteTimeUtc > recorded.AddSeconds(1);
     }
 
     /// <summary>
@@ -392,6 +493,9 @@ public class NexrollIntroProvider : IIntroProvider
         public string Path { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string StreamUrl { get; set; } = string.Empty;
+
+        /// <summary>Changes whenever the file is rewritten (NeXroll 2.2.8+); empty from older NeXroll.</summary>
+        public string Version { get; set; } = string.Empty;
     }
 
     private static string SHA256Hash(string input)

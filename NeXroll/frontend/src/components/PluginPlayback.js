@@ -8,14 +8,37 @@ import { AlertTriangle, Save } from 'lucide-react';
 // which is what used to cut sequences short, so this also says when an
 // installed plugin needs updating.
 
-// True when the plugin plays NeXroll's list as sent (1.14.1+ / 1.15.1+).
-export function pluginPlaysExactList(version) {
+// Whether a plugin is at least patch `wanted` of its line: 1.14.x (Jellyfin
+// 10.11, Emby) and 1.15.x (Jellyfin 12) gain features at the same patch.
+// null when the version is unknown.
+function pluginPatchAtLeast(version, wanted) {
   const parts = String(version || '').split('.').map((n) => parseInt(n, 10));
   if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return null; // unknown
   const [major, minor, patch] = parts;
   if (major !== 1) return major > 1;
-  if (minor === 14 || minor === 15) return patch >= 1;
+  if (minor === 14 || minor === 15) return patch >= wanted;
   return minor > 15;
+}
+
+// True when the plugin plays NeXroll's list as sent (1.14.1+ / 1.15.1+).
+export function pluginPlaysExactList(version) {
+  return pluginPatchAtLeast(version, 1);
+}
+
+// True when the plugin downloads a file again once NeXroll rewrites it under
+// the same name (1.14.2+ / 1.15.2+). Older plugins cache by path alone.
+export function pluginRefreshesRewrittenFiles(version) {
+  return pluginPatchAtLeast(version, 2);
+}
+
+// Why an older plugin keeps playing an old copy of a rewritten file, or null.
+export function stalePluginCacheNote(server, version) {
+  if (pluginRefreshesRewrittenFiles(version) !== false) return null;
+  const wanted = String(version).startsWith('1.15.') ? '1.15.2' : '1.14.2';
+  const how = server === 'emby'
+    ? "Download the updated plugin above, replace it in Emby's plugins folder and restart Emby."
+    : 'A plugin installed from the NeXroll repository updates itself.';
+  return `This plugin (v${version}) keeps the first copy it downloaded of a file NeXroll rewrites under the same name, such as a regenerated Coming Soon list or a preroll uploaded again, so the old video keeps playing. Update it to ${wanted} or later. ${how}`;
 }
 
 // Why an older plugin will still cut sequences short, or null when it won't.
@@ -65,7 +88,9 @@ export default function PluginPlayback({ apiUrl, server, pluginVersion, maxIntro
     }
   };
 
-  const warning = legacyPluginWarning(server, pluginVersion, maxIntros);
+  // One notice at a time: updating for the first also fixes the second.
+  const warning = legacyPluginWarning(server, pluginVersion, maxIntros)
+    || stalePluginCacheNote(server, pluginVersion);
   const serverName = server === 'emby' ? 'Emby' : 'Jellyfin';
   return (
     <div className="nx-plugin-playback">
