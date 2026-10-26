@@ -66,6 +66,16 @@
             the NeXroll streaming endpoint if the file is remote or UNC.
             </summary>
         </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.RemoveOtherCopies(System.String,System.String,System.String)">
+            <summary>
+            Delete this intro's cached copies other than <paramref name="keep"/>:
+            earlier versions, and the copy older plugins named by path alone. A copy
+            that is playing can't be deleted on Windows; it goes on a later play.
+            </summary>
+        </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.NewestCopy(System.String,System.String)">
+            <summary>The most recently written cached copy of an intro, or null.</summary>
+        </member>
         <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.EnsureVideoInDatabase(System.String,System.String)">
             <summary>
             Ensure a video file at the given local path is registered in Jellyfin's
@@ -73,6 +83,14 @@
             the DB when looking up by ItemId.  We use ResolvePath to create the
             Video object (which computes its deterministic GUID), then check if it
             already exists in the DB.  If not, we save it.
+            </summary>
+        </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.ChangedSinceRegistered(MediaBrowser.Controller.Entities.BaseItem,System.IO.FileInfo)">
+            <summary>
+            Whether the file was rewritten after Jellyfin registered it: written
+            later than the record says, or a different size than Jellyfin measured.
+            Records are compared as UTC (Jellyfin stores UTC, often without saying
+            so); a second of slack covers file systems with coarse timestamps.
             </summary>
         </member>
         <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.TranslatePath(System.String,NeXroll.Jellyfin.PluginConfiguration)">
@@ -83,6 +101,9 @@
         </member>
         <member name="P:NeXroll.Jellyfin.NexrollIntroProvider.NexrollIntroResponse.Exact">
             <summary>True when NeXroll has picked exactly what to play (2.2.1+).</summary>
+        </member>
+        <member name="P:NeXroll.Jellyfin.NexrollIntroProvider.NexrollIntroItem.Version">
+            <summary>Changes whenever the file is rewritten (NeXroll 2.2.8+); empty from older NeXroll.</summary>
         </member>
         <member name="T:NeXroll.Jellyfin.Plugin">
             <summary>
