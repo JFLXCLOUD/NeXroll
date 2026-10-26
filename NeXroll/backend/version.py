@@ -13,7 +13,7 @@ without the root file beside it.
 import os
 import re
 
-__version__ = '2.2.7'
+__version__ = '2.2.8'
 
 _ROOT_VERSION_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'version.py'

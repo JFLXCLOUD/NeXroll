@@ -1,5 +1,35 @@
 ﻿# Changelog
 
+## [2.2.8] - 10-26-2026
+
+> Skip in a sequence now really skips: Jellyfin and Emby could play the skipped block anyway. Also: a regenerated Coming Soon list, or a preroll uploaded again, plays its new version on Jellyfin and Emby; Flow view can change or delete a block on the canvas; and fallback filler can be a single preroll.
+
+### Upgrading
+
+- **Update the Jellyfin or Emby plugin** to 1.14.2.0 (Jellyfin 10.11 and Emby) or 1.15.2.0 (Jellyfin 12) so files NeXroll rewrites play their new version. A plugin installed from the NeXroll repository updates itself; for Emby, download it again from Connect. Older plugins keep working as before.
+- **Plex:** a sequence whose blocks are all skipped now empties Plex's preroll list instead of leaving the previous schedule's prerolls in it. Genre, tag, file path and audio blocks are always skipped on Plex, which never says what is starting.
+- **No settings to change.** One settings column is added on first start.
+
+### Added
+
+- **Edit and Delete in Flow view.** Hover a block to change its type or delete it. An Otherwise can be changed or turned into a Skip, and a Skip can be given something to play. On touch screens the buttons show on the selected block.
+- **Fallback filler can be one preroll,** picked from your library by name.
+
+### Changed
+
+- **The Generator page header is one compact row.**
+
+### Fixed
+
+- **A block set to Skip could still play on Jellyfin and Emby.** When every block was skipped, NeXroll fell back to the schedule's category, which is the first category block's, so the skipped block played anyway. Plex kept the previous schedule's list.
+- **Jellyfin and Emby kept playing the old version of a file NeXroll rewrote,** such as a regenerated Coming Soon list or a preroll uploaded again under the same name, and Jellyfin showed the old length (needs the updated plugin).
+- **Genre, tag, file path and audio blocks never played on Emby.** Emby plays only files it has downloaded ahead of time, and it was never given the files for those blocks.
+- **Saving filler settings during a schedule** switched every server to the filler until the next minute.
+- **Deleting the first block of an Else if chain** joined the rest of the chain to the block above it, so they never played.
+- **Generated and Coming Soon fillers and Clear Prerolls When Inactive** could change Plex's list between two prerolls and stop Plex on the next one. They now wait, like every other change.
+- **Windows: the update notice could offer a release you already had,** and a preroll folder picked in the installer was ignored. The installer skipped writing its version and folders.
+- **Smaller:** Jellyfin-only installs re-applied a sequence with nothing to play every minute, the dashboard showed nothing while a generated preroll filler ran, and choosing "-- Select --" for a filler category failed to save.
+
 ## [2.2.7] - 10-16-2026
 
 > A security update: anyone who could reach NeXroll could download files from it, its database included, and other websites could use it through your browser. Also: length filters and one row per preroll in Community Prerolls, themes that recolor the whole app, and a Windows installer on Python 3.14.
