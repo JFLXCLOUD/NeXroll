@@ -13,7 +13,7 @@ Unlike Plex (which uses a simple preroll path string), Jellyfin requires a plugi
 
 ## Requirements
 
-- **Jellyfin 10.11.x or 12.x**, with the matching plugin build (1.14.0.0 for 10.11; 1.15.0.0 for 12)
+- **Jellyfin 10.11.x or 12.x**, with the matching plugin build (1.14.x for 10.11, currently 1.14.2.0; 1.15.x for 12, currently 1.15.2.0)
 - **NeXroll v1.12.0+** — use **plugin v1.14.0+** for Docker/Unraid; it fixes preroll caching when Jellyfin can't read the files directly
 - **.NET 9 SDK for Jellyfin 10.11, or .NET 10 SDK for Jellyfin 12** (only needed if building from source)
 - Network access between NeXroll and Jellyfin (default port: 9393)

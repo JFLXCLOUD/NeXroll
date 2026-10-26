@@ -13,6 +13,14 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.2.8
+
+- **Skip really skips.** A block set to Skip when its condition fails no longer plays on Jellyfin and Emby anyway, and a sequence with nothing to play empties Plex's list. See [Adding a condition](Advanced-Sequences#adding-a-condition).
+- **Rewritten files play their new version** on Jellyfin and Emby: a regenerated Coming Soon list, or a preroll uploaded again under the same name. Update the plugin to 1.14.2.0 (Jellyfin 10.11, Emby) or 1.15.2.0 (Jellyfin 12).
+- **Flow view:** hover a block to change its type or delete it. See [Flow view](Advanced-Sequences#flow-view).
+- **Fallback filler can be one preroll.** See [Filler Category](Configuration#filler-category).
+- **Fixes:** genre, tag, file path and audio blocks now play on Emby, saving filler settings no longer interrupts a schedule, and deleting the first block of an Else if chain keeps the chain.
+
 ## What's New in v2.2.7
 
 - **A security update.** Anyone who could reach NeXroll could download files from it, its database included, and other websites could use it through your browser while login was off. Update soon, especially on Docker.
