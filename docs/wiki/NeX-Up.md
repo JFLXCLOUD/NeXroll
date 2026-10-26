@@ -414,6 +414,16 @@ Resolution, frame rate and encoding profile are shared with the dynamic generato
 4. Preview the result in the built-in video player
 5. The video is saved and registered to the "Coming Soon Lists" category
 
+### Available Now!
+
+Once a title is out and on your server, the list shows **Available Now!** in place of its date for a while:
+
+- A movie gets the label once Radarr has downloaded it; a show once Sonarr has downloaded its season premiere. Before 2.2.9 shows never got it.
+- **Days visible** (Generator → Availability and automation, 1-30, default 1) is how many days after its release or premiere date a title keeps the label. After that it leaves the list.
+- **Maximum items** keeps only the most recently released Available Now titles; 0 keeps them all.
+- A movie that is out but not downloaded keeps its date for up to 7 days, then leaves the list. A show that has aired but isn't downloaded leaves the list the next day, and comes back as Available Now if Sonarr downloads it within the window.
+- The list is a video: changes show up in the next render or the next automatic regeneration.
+
 ### Auto-Regeneration
 
 Enable auto-regeneration to keep your Coming Soon List fresh:

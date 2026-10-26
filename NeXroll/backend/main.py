@@ -20423,18 +20423,19 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
     connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
     include_unmonitored = getattr(setting, 'nexup_include_unmonitored_shows', False)
-    
-    # Use the calendar-based premiere detection for accurate dates
-    shows = await connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored)
+
+    # Get the "Available Now!" grace period setting
+    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+
+    # Use the calendar-based premiere detection for accurate dates. Downloaded
+    # premieres inside the Available Now window are listed too, as movies are.
+    shows = await connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored, recent_days=available_days)
     _file_log(f"Sonarr: Found {len(shows)} upcoming shows within {days_ahead} days")
-    
+
     # Get existing TV trailers to mark which are already downloaded and excluded
     existing_trailers = db.query(models.ComingSoonTVTrailer).all()
     existing_map = {f"{t.sonarr_series_id}_S{t.season_number}": t for t in existing_trailers}
-    
-    # Get the "Available Now!" grace period setting
-    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
-    
+
     filtered_shows = []
     for show in shows:
         key = f"{show['sonarr_id']}_S{show['season_number']}"
@@ -20958,7 +20959,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 try:
                     sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
                     include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                    shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows)
+                    shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
                     for show in shows:
                         is_available = show.get('has_file', False)
                         # Apply "Available Now!" grace period — skip items past the cutoff
@@ -25024,7 +25025,7 @@ async def generate_coming_soon_list(
             try:
                 sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
                 include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows)
+                shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
                 for show in shows:
                     is_available = show.get('has_file', False)
                     # Apply "Available Now!" grace period — skip items past the cutoff
@@ -25297,7 +25298,8 @@ async def preview_coming_soon_list(
     
     items = []
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-    
+    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+
     def calc_days_until(release_str):
         if not release_str:
             return None
@@ -25316,12 +25318,16 @@ async def preview_coming_soon_list(
                 release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
                 movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
                 for movie in movies:
+                    days_until = calc_days_until(movie.get('release_date'))
+                    # Same "Available Now!" window as the rendered list
+                    if movie.get('has_file', False) and days_until is not None and -days_until > available_days:
+                        continue
                     items.append({
                         'title': movie.get('title', ''),
                         'release_date': movie.get('release_date', ''),
                         'poster_url': movie.get('poster_url', ''),
                         'type': 'movie',
-                        'days_until_release': calc_days_until(movie.get('release_date')),
+                        'days_until_release': days_until,
                         'available_now': movie.get('has_file', False)
                     })
             except Exception as e:
@@ -25333,7 +25339,7 @@ async def preview_coming_soon_list(
             try:
                 sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
                 include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows)
+                shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
                 for show in shows:
                     title = show.get('title', '')
                     season_number = show.get('season_number', 1)

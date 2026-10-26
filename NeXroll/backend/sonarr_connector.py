@@ -246,16 +246,22 @@ class SonarrConnector:
             logger.error(f"Error fetching Sonarr calendar: {e}")
             return []
     
-    async def get_upcoming_premieres(self, days_ahead: int = 90, include_unmonitored: bool = False) -> List[Dict[str, Any]]:
+    async def get_upcoming_premieres(self, days_ahead: int = 90, include_unmonitored: bool = False, recent_days: int = 0) -> List[Dict[str, Any]]:
         """
         Get upcoming season premieres and new show premieres using the calendar API.
-        Only returns future shows (today or later).
+        Returns shows premiering today or later. With recent_days, also returns
+        premieres from the last recent_days days that Sonarr has downloaded, so
+        the Coming Soon list can show them as "Available Now!" (a premiere is
+        only downloaded after it airs, so a today-onward list never had one).
         Optionally includes unmonitored shows.
         """
         try:
+            now = datetime.now()
+            recent_days = max(0, int(recent_days or 0))
             calendar = await self.get_calendar(
-                start_date=datetime.now(),  # Only future shows from today
-                end_date=datetime.now() + timedelta(days=days_ahead)
+                # One extra day back: Sonarr filters the calendar on UTC air times.
+                start_date=now - timedelta(days=recent_days + 1) if recent_days else now,
+                end_date=now + timedelta(days=days_ahead)
             )
             
             premieres = {}  # Use dict to deduplicate by series+season
@@ -328,8 +334,12 @@ class SonarrConnector:
                     'monitored': series.get('monitored', False)
                 }
             
-            # Convert to list, filter to only future shows, and sort by release date
-            result = [p for p in premieres.values() if p['days_until_release'] >= 0]
+            # Keep future premieres, plus downloaded ones inside the recent window
+            result = [
+                p for p in premieres.values()
+                if p['days_until_release'] >= 0
+                or (p['has_file'] and -p['days_until_release'] <= recent_days)
+            ]
             result.sort(key=lambda x: x['release_date'] or '9999-99-99')
             
             return result
