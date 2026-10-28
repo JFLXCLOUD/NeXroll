@@ -13,6 +13,11 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.2.9
+
+- **Three new themes:** Silent Film, VHS Rewind and Screenplay, a light one. Terminal and Nocturne now change the whole look, not just the colors. See [Theme](Configuration#theme).
+- **Coming Soon lists show "Available Now!" for TV shows** Sonarr has downloaded; it only ever worked for movies. See [Available Now!](NeX-Up#available-now).
+
 ## What's New in v2.2.8
 
 - **Skip really skips.** A block set to Skip when its condition fails no longer plays on Jellyfin and Emby anyway, and a sequence with nothing to play empties Plex's list. See [Adding a condition](Advanced-Sequences#adding-a-condition).

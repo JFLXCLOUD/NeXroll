@@ -12,7 +12,23 @@ Go to the **Settings** tab in NeXroll to configure these options. Settings are o
 
 ### Theme
 
-Toggle between **Light Mode** and **Dark Mode** for the interface.
+Pick how NeXroll looks under **Settings > General > Theme**. The button in the top bar steps through the themes in order. The choice is saved in your browser.
+
+| Theme | Look |
+|-------|------|
+| **Midnight** (dark, default) | Neutral graphite with violet accents |
+| **Daylight** (light) | Cool paper white with indigo accents |
+| **Cinema** (dark) | Warm black, velvet crimson and marquee gold |
+| **Nocturne** (dark) | A moonlit night: a moon behind the page header, drifting cloud, frosted panels |
+| **Parchment** (light) | Warm sepia paper, no pure white |
+| **Terminal** (dark) | Green phosphor on black: monospace text, DOS prompts and scanlines |
+| **Neon** (dark) | Synthwave violet-black, magenta and electric cyan |
+| **Carbon** (dark) | True black for OLED screens, with an amber accent |
+| **Silent Film** (dark) | Black and white: title cards, a strip of film and an iris between pages |
+| **VHS Rewind** (dark) | A rental tape: a VCR's on-screen display, marker labels and rainbow stripes |
+| **Screenplay** (light) | A shooting script: Courier on white, scene headings, and each section on its own colored revision page |
+
+Terminal, Silent Film, VHS Rewind and Screenplay use their own fonts, which download the first time you pick the theme. With **reduce motion** turned on in your system settings, page-change effects such as the Silent Film iris are skipped.
 
 ### Timezone
 
