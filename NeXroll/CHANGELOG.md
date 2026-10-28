@@ -1,5 +1,25 @@
 ﻿# Changelog
 
+## [2.2.9] - 10-28-2026
+
+> Three new themes: Silent Film, VHS Rewind and Screenplay, a light one. Terminal and Nocturne now change the whole look, not just the colors. Also: Coming Soon lists show "Available Now!" for TV shows.
+
+### Upgrading
+
+- **No settings to change and no plugin update.** Themes are in Settings > General > Theme.
+
+### Added
+
+- **New themes.** Silent Film: black and white, title cards and an iris between pages. VHS Rewind: a VCR's on-screen display and marker-labelled titles. Screenplay (light): Courier on white, scene headings, and each section on its own colored revision page.
+
+### Changed
+
+- **Terminal and Nocturne are full themes.** Terminal is a green phosphor screen with DOS prompts and scanlines; Nocturne a moonlit night with frosted panels.
+
+### Fixed
+
+- **Coming Soon lists now show "Available Now!" for TV shows Sonarr has downloaded** (it only ever worked for movies).
+
 ## [2.2.8] - 10-26-2026
 
 > Skip in a sequence now really skips: Jellyfin and Emby could play the skipped block anyway. Also: a regenerated Coming Soon list, or a preroll uploaded again, plays its new version on Jellyfin and Emby; Flow view can change or delete a block on the canvas; and fallback filler can be a single preroll.
