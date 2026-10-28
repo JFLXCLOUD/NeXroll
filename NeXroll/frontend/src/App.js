@@ -279,9 +279,9 @@ const THEMES = {
   midnight:  { label: 'Midnight',  base: 'dark',  blurb: 'Neutral graphite with violet accents.', swatch: ['#101112', '#7667ff', '#35d06f'] },
   daylight:  { label: 'Daylight',  base: 'light', blurb: 'Cool paper white with indigo accents.', swatch: ['#f4f5f7', '#6657f4', '#15945d'] },
   cinema:    { label: 'Cinema',    base: 'dark',  blurb: 'Warm black, velvet crimson, marquee gold.', swatch: ['#131010', '#b02a37', '#e3b04b'] },
-  nocturne:  { label: 'Nocturne',  base: 'dark',  blurb: 'Deep navy with a cyan highlight.', swatch: ['#0c1017', '#2f7ff0', '#38c8d8'] },
+  nocturne:  { label: 'Nocturne',  base: 'dark',  blurb: 'A moonlit night: a rising moon, drifting cloud and frosted panels.', swatch: ['#070c1a', '#c9d8f4', '#38c8d8'] },
   parchment: { label: 'Parchment', base: 'light', blurb: 'Warm sepia paper, no pure white.', swatch: ['#f2eadb', '#9a5b23', '#4d7a41'] },
-  terminal:  { label: 'Terminal',  base: 'dark',  blurb: 'Green phosphor CRT, dialled back to stay readable.', swatch: ['#080b08', '#1f7a33', '#4ade80'] },
+  terminal:  { label: 'Terminal',  base: 'dark',  blurb: 'Green phosphor on black: monospace text, DOS prompts and scanlines.', swatch: ['#000000', '#1d9140', '#3cff6e'] },
   neon:      { label: 'Neon',      base: 'dark',  blurb: 'Synthwave violet-black, magenta and electric cyan.', swatch: ['#0b0714', '#ff2e97', '#00e5ff'] },
   carbon:    { label: 'Carbon',    base: 'dark',  blurb: 'True black for OLED panels, with an amber accent.', swatch: ['#000000', '#f0a020', '#3ecf6d'] },
   // Secret: listed only once unlocked (the Konami code, or searching "drive-in").
@@ -8616,11 +8616,13 @@ const DashboardTiles = {
       : PAGE_HEADERS[activeTab];
     if (!cfg) return null;
     const Icon = cfg.icon;
+    // The Terminal theme turns the eyebrow into a DOS prompt (C:\NEXROLL\LIBRARY\TRASH>).
+    const dosPath = activeTab.replace(/^community-prerolls/, 'community').split('/').join('\\');
     return (
       <div className="nx-page-header">
         <div className="nx-page-header-inner">
           <div className="nx-page-header-copy">
-            <div className="nx-page-header-eyebrow">{cfg.section || activeTab.split('/')[0]}</div>
+            <div className="nx-page-header-eyebrow" data-dos-path={dosPath}>{cfg.section || activeTab.split('/')[0]}</div>
             <h1 className="nx-page-header-title">
               <Icon size={24} className="header-icon" aria-hidden="true" /> {cfg.title}
             </h1>
@@ -30015,7 +30017,7 @@ const DashboardTiles = {
     <div className="nx-settings-general-grid">
     <div className="card nx-settings-appearance">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Palette size={20} style={{ color: '#7667ff' }} /> Appearance &amp; locale
+        <Palette size={20} style={{ color: 'var(--nx-sec-library)' }} /> Appearance &amp; locale
       </h2>
       {/* Theme Settings */}
       <div className="nx-setting-row nx-setting-row-theme">
@@ -30037,6 +30039,7 @@ const DashboardTiles = {
                 role="radio"
                 aria-checked={selected}
                 className={`nx-theme-option${selected ? ' selected' : ''}${t.secret ? ' is-secret' : ''}`}
+                data-theme-id={id}
                 onClick={() => setTheme(id)}
                 title={t.blurb}
               >

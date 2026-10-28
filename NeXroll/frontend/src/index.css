@@ -7680,55 +7680,63 @@ body.theme-parchment .nx-section-nexup { --nx-section-accent: #a37211; --nx-sect
 body.theme-parchment .nx-section-connect { --nx-section-accent: #3f6f8a; --nx-section-soft: rgba(63, 111, 138, 0.13); }
 body.theme-parchment .nx-section-community { --nx-section-accent: #a8551a; --nx-section-soft: rgba(168, 85, 26, 0.12); }
 
-/* Terminal — green phosphor. Body text is a soft green-white rather than
-   saturated green: the CRT read survives, but so does legibility over a long
-   session. The green lives in the borders, accents and actions instead. */
+/* Terminal — a green phosphor screen. Black glass, every line of text in
+   phosphor green (bright, normal, dim), amber and red kept only for warnings
+   and errors. The palette is monochrome on purpose: sections are told apart
+   by the prompt and the sidebar, not by hue. The look itself (monospace,
+   square corners, inverted bars, scanlines) is the Terminal skin near the
+   end of this file. */
+@font-face {
+  font-family: 'VT323';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/vt323-latin-400-normal.woff2') format('woff2');
+}
 body.theme-terminal {
   color-scheme: dark;
-  --bg-color: #080b08;
-  --card-bg: #0e130e;
-  --raised-bg: #141b14;
-  --input-bg: #0a0f0a;
-  --header-bg: #0e130e;
-  --hover-bg: #182118;
-  --border-color: #234023;
-  --text-color: #c8f5c8;
-  --text-secondary: #7aab7a;
-  --text-muted: #567856;
-  --shadow: rgba(0, 0, 0, 0.5);
-  --button-bg: #1f7a33;
-  --button-hover: #196628;
-  --button-secondary-bg: #182118;
-  --button-text: #eafeea;
-  --accent-color: #4ade80;
-  --success-color: #4ade80;
-  --warning-color: #d4c74a;
-  --error-color: #ff6b6b;
-  --success-soft: rgba(74, 222, 128, 0.13);
-  --warning-soft: rgba(212, 199, 74, 0.14);
-  --error-soft: rgba(255, 107, 107, 0.12);
-  --neutral-soft: rgba(122, 171, 122, 0.09);
-  --header-icon-color: #c8f5c8;
-  --sb-deep: #050805;
-  --sb-surface: #0b0f0b;
-  --sb-text: #b8e8b8;
-  --sb-text-2: #7aab7a;
-  --sb-text-3: #567856;
-  --sb-border: #234023;
-  --sb-border-strong: #2d5230;
-  --sb-hover: #182118;
-  --sb-action: #4ade80;
-  --sb-active: rgba(74, 222, 128, 0.15);
+  --bg-color: #000000;
+  --card-bg: #000000;
+  --raised-bg: #03140a;
+  --input-bg: #000000;
+  --header-bg: #000000;
+  --hover-bg: #0a2914;
+  --border-color: #1a7a38;
+  --text-color: #3cff6e;
+  --text-secondary: #2bc257;
+  --text-muted: #1d9140;
+  --shadow: rgba(0, 0, 0, 0);
+  --button-bg: #3cff6e;
+  --button-hover: #8dffaa;
+  --button-secondary-bg: #000000;
+  --button-text: #000000;
+  --accent-color: #3cff6e;
+  --success-color: #3cff6e;
+  --warning-color: #ffc23d;
+  --error-color: #ff5f56;
+  --success-soft: rgba(60, 255, 110, 0.12);
+  --warning-soft: rgba(255, 194, 61, 0.13);
+  --error-soft: rgba(255, 95, 86, 0.13);
+  --neutral-soft: rgba(60, 255, 110, 0.07);
+  --header-icon-color: #3cff6e;
+  --sb-deep: #000000;
+  --sb-surface: #000000;
+  --sb-text: #3cff6e;
+  --sb-text-2: #2bc257;
+  --sb-text-3: #1d9140;
+  --sb-border: #1a7a38;
+  --sb-border-strong: #2bc257;
+  --sb-hover: #0a2914;
+  --sb-action: #3cff6e;
+  --sb-active: #3cff6e;
 }
-/* Section hues borrow the classic ANSI set, which stays distinguishable
-   without leaving the terminal's world. */
 body.theme-terminal .nx-shell,
 body.theme-terminal .nx-section-library,
-body.theme-terminal .nx-section-settings { --nx-section-accent: #4ade80; --nx-section-soft: rgba(74, 222, 128, 0.13); }
-body.theme-terminal .nx-section-schedules { --nx-section-accent: #2bd9d9; --nx-section-soft: rgba(43, 217, 217, 0.12); }
-body.theme-terminal .nx-section-nexup { --nx-section-accent: #d9a441; --nx-section-soft: rgba(217, 164, 65, 0.13); }
-body.theme-terminal .nx-section-connect { --nx-section-accent: #58a6ff; --nx-section-soft: rgba(88, 166, 255, 0.12); }
-body.theme-terminal .nx-section-community { --nx-section-accent: #ff6b6b; --nx-section-soft: rgba(255, 107, 107, 0.12); }
+body.theme-terminal .nx-section-settings,
+body.theme-terminal .nx-section-schedules,
+body.theme-terminal .nx-section-nexup,
+body.theme-terminal .nx-section-connect,
+body.theme-terminal .nx-section-community { --nx-section-accent: #3cff6e; --nx-section-soft: rgba(60, 255, 110, 0.1); }
 
 /* Neon — synthwave. Violet-black ground, hot magenta on actions, electric
    cyan as the highlight. Saturation stays on the accents; the surfaces below
@@ -7878,12 +7886,15 @@ body.theme-parchment {
   --nx-sec-community-btn: #a8551a;
   --success-btn: #4d7a41; --warning-btn: #a37211; --error-btn: #ab362f;
 }
+/* Terminal: one phosphor for every section. The -btn shades are a dark green
+   because some buttons hardcode white text; the skin gives the main button
+   classes inverted black-on-green faces instead. */
 body.theme-terminal {
-  --nx-sec-library: #4ade80; --nx-sec-schedules: #2bd9d9; --nx-sec-nexup: #d9a441;
-  --nx-sec-connect: #58a6ff; --nx-sec-community: #ff6b6b; --nx-sec-settings: #4ade80;
-  --nx-sec-schedules-btn: #1c8d8d; --nx-sec-nexup-btn: #9e782f; --nx-sec-connect-btn: #4581c7;
-  --nx-sec-community-btn: #d15858;
-  --success-btn: #309053; --warning-btn: #887f2f; --error-btn: #d15858;
+  --nx-sec-library: #3cff6e; --nx-sec-schedules: #3cff6e; --nx-sec-nexup: #3cff6e;
+  --nx-sec-connect: #3cff6e; --nx-sec-community: #3cff6e; --nx-sec-settings: #3cff6e;
+  --nx-sec-schedules-btn: #0e5524; --nx-sec-nexup-btn: #0e5524; --nx-sec-connect-btn: #0e5524;
+  --nx-sec-community-btn: #0e5524;
+  --success-btn: #0e5524; --warning-btn: #6b4d00; --error-btn: #8a1f1a;
 }
 body.theme-neon {
   --nx-sec-library: #b45cff; --nx-sec-schedules: #3df5a0; --nx-sec-nexup: #ffcc33;
@@ -13044,3 +13055,576 @@ body.theme-drivein .nx-sidebar-child.active {
   60.1%, 100% { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .nx-cue-mark { display: none; } }
+
+/* --------------------------------------------------------------------
+   The Terminal skin: a green phosphor screen. Everything here is scoped to
+   body.theme-terminal; the palette is the Terminal block further up.
+   * Type: the system monospace font for everything, and VT323 (a DOS-era
+     pixel face bundled in src/fonts, OFL) for page titles, the dashboard
+     greeting and dialog titles. Text glows faintly, like phosphor.
+   * Shapes: square corners, no drop shadows; panels are ruled with green
+     lines, the main ones with a double line like box-drawing characters.
+   * Highlights are inverted bars: the active sidebar item, primary
+     buttons, hovered buttons and selected text are black on green.
+   * The page eyebrow is a DOS prompt (C:\NEXROLL\LIBRARY\TRASH>) built
+     from data-dos-path, and the title types itself out and ends in a
+     blinking block cursor.
+   * The glass: still scanlines and a vignette over everything. No
+     background animation (JB, October 28).
+   Left alone: the generator's preview stage and theme thumbnails, font
+   samples (inline font-family) and the Intermission overlay, which show
+   their own type and colors. Reduced motion: nothing types, and the
+   cursor stays lit.
+   -------------------------------------------------------------------- */
+body.theme-terminal {
+  --term-font: Consolas, "Cascadia Mono", "SF Mono", Menlo, "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace;
+  --term-pixel: "VT323", var(--term-font);
+  --term-bright: #a8ffbf;
+  --term-glow: 0 0 3px rgba(60, 255, 110, .38);
+  background: #000;
+  caret-color: #3cff6e;
+  text-shadow: var(--term-glow);
+}
+html:has(> body.theme-terminal) { scrollbar-color: #2bc257 #000; }
+body.theme-terminal * { scrollbar-color: #1a7a38 #000; }
+body.theme-terminal ::selection { background: #3cff6e; color: #000; text-shadow: none; }
+body.theme-terminal ::placeholder { color: #1d9140 !important; opacity: 1; }
+
+/* Monospace everywhere, square corners, no shadows. :where() keeps these at
+   the lowest weight, so anything below can still restyle an element. */
+body.theme-terminal,
+body.theme-terminal :where(*:not(:is(.nx-gen-stage, .nx-gen-theme-grid, .nx-intermission) *, .nx-intermission, [style*="font-family"])) {
+  font-family: var(--term-font) !important;
+}
+/* Corners and shadows go through #root to outrank the component rules that
+   pin a radius with !important. */
+body.theme-terminal #root :where(*:not(:is(.nx-gen-stage, .nx-gen-theme-grid, .nx-intermission) *, .nx-intermission)),
+body.theme-terminal #root :where(*:not(:is(.nx-gen-stage, .nx-gen-theme-grid, .nx-intermission) *, .nx-intermission))::before,
+body.theme-terminal #root :where(*:not(:is(.nx-gen-stage, .nx-gen-theme-grid, .nx-intermission) *, .nx-intermission))::after {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+body.theme-terminal :is(.nx-gen-stage, .nx-intermission) { text-shadow: none; }
+body.theme-terminal :focus-visible {
+  outline: 1px dashed #3cff6e !important;
+  outline-offset: 2px !important;
+}
+body.theme-terminal .nx-content :is(input, select, textarea):focus-visible,
+body.theme-terminal .nx-sidebar-search-box:focus-within {
+  border-color: #3cff6e !important;
+  box-shadow: none !important;
+  outline: 1px dashed #3cff6e !important;
+  outline-offset: 2px !important;
+}
+/* Headings and bold text are the bright phosphor, as on a real terminal.
+   Mixing from the inherited color keeps bold text in a warning amber. */
+:where(body.theme-terminal) :where(h1, h2, h3, h4, strong, b, th) { color: color-mix(in srgb, currentColor 58%, #fff); }
+
+/* Page titles: a DOS prompt over a pixel-font title with a blinking cursor. */
+body.theme-terminal .nx-page-header-eyebrow[data-dos-path],
+body.theme-terminal .nx-dash-eyebrow {
+  font-size: 0 !important;
+  letter-spacing: 0 !important;
+}
+body.theme-terminal .nx-page-header-eyebrow[data-dos-path]::before,
+body.theme-terminal .nx-dash-eyebrow::before {
+  content: "C:\\NEXROLL\\" attr(data-dos-path) ">";
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+body.theme-terminal .nx-dash-eyebrow::before { content: "C:\\NEXROLL>"; }
+body.theme-terminal .nx-page-header-title,
+body.theme-terminal .nx-dash-greeting {
+  font-family: var(--term-pixel) !important;
+  font-size: 42px !important;
+  font-weight: 400 !important;
+  line-height: 1 !important;
+  letter-spacing: .02em !important;
+  text-transform: uppercase;
+  color: var(--term-bright);
+  text-shadow: 0 0 4px rgba(60, 255, 110, .75), 0 0 16px rgba(60, 255, 110, .3);
+  animation: nx-term-type .7s steps(18, end) 1 both;
+}
+body.theme-terminal .nx-page-header-title .header-icon { display: none !important; }
+body.theme-terminal .nx-page-header-title::after,
+body.theme-terminal .nx-dash-greeting::after {
+  content: "";
+  display: inline-block;
+  width: .5em;
+  height: .78em;
+  margin-left: .12em;
+  vertical-align: -.04em;
+  background: currentColor;
+  animation: nx-term-blink 1.06s steps(1) infinite;
+}
+body.theme-terminal .nx-page-header-desc { color: var(--text-secondary); }
+@keyframes nx-term-type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes nx-term-blink { 50% { opacity: 0; } }
+
+/* Panels: green rules, a double line on the main ones. */
+body.theme-terminal .nx-content :is(.card, .nx-hybrid-command, .nx-hybrid-list-view, .nx-command-toolbar, .nx-command-rows, .nx-today-rail, .nx-connect-card, .nx-ap-service-card, .nx-conn-banner),
+body.theme-terminal .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card {
+  border: 3px double var(--border-color) !important;
+  background: #000 !important;
+}
+body.theme-terminal .nx-content .card:hover,
+body.theme-terminal .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card:hover { border-color: #2bc257 !important; }
+
+/* Buttons: primary ones inverted, the rest invert on hover. The page's own
+   actions and dialog buttons are [ BRACKETED ] (toolbars have no room). */
+body.theme-terminal :is(.button, .nx-gen-btn, .nx-dash-action, .nx-iconbtn) {
+  border: 1px solid var(--border-color) !important;
+  background: #000 !important;
+  background-image: none !important;
+  color: var(--text-color) !important;
+  font-weight: 700;
+  text-transform: uppercase;
+  transition: none !important;
+}
+body.theme-terminal :is(.nx-page-header-actions, .nx-dash-header-actions, .nx-modal) :is(.button, .nx-dash-action)::before { content: "["; font-weight: 400; }
+body.theme-terminal :is(.nx-page-header-actions, .nx-dash-header-actions, .nx-modal) :is(.button, .nx-dash-action)::after { content: "]"; font-weight: 400; }
+@media (max-width: 600px) {
+  body.theme-terminal :is(.nx-page-header-actions, .nx-dash-header-actions, .nx-modal) :is(.button, .nx-dash-action)::before,
+  body.theme-terminal :is(.nx-page-header-actions, .nx-dash-header-actions, .nx-modal) :is(.button, .nx-dash-action)::after { content: none; }
+}
+body.theme-terminal :is(.button:not(.button-secondary):not(.danger), .nx-gen-btn.primary) {
+  border-color: #3cff6e !important;
+  background: #3cff6e !important;
+  color: #000 !important;
+  text-shadow: none;
+}
+body.theme-terminal :is(.button, .nx-gen-btn, .nx-dash-action, .nx-iconbtn):not(:disabled):hover {
+  border-color: #8dffaa !important;
+  background: #8dffaa !important;
+  color: #000 !important;
+  text-shadow: none;
+  filter: none !important;
+}
+body.theme-terminal .button.danger { border-color: var(--error-color) !important; color: var(--error-color) !important; }
+body.theme-terminal .button.danger:not(:disabled):hover { border-color: var(--error-color) !important; background: var(--error-color) !important; color: #000 !important; }
+body.theme-terminal :is(.button, .nx-gen-btn, .nx-dash-action, .nx-iconbtn):disabled { opacity: .45; }
+
+/* Inputs: black wells with a green rule. */
+body.theme-terminal :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), select, textarea) {
+  background-color: #000 !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-color) !important;
+}
+body.theme-terminal :is(input, select, textarea, progress) { accent-color: #3cff6e; }
+body.theme-terminal select option { background: #000; color: #3cff6e; }
+
+/* Switches: a square slot with a block that slides across. */
+body.theme-terminal .nx-switch-track { background: #000; border: 1px solid var(--border-color); }
+body.theme-terminal .nx-switch-track::after { top: 2px; left: 2px; background: #1d9140; }
+body.theme-terminal .nx-switch input:checked + .nx-switch-track { background: #000; border-color: #3cff6e; }
+body.theme-terminal .nx-switch input:checked + .nx-switch-track::after { background: #3cff6e; }
+
+/* Spinners turn into the old | / - \ character spinner. */
+body.theme-terminal .nx-spinner {
+  display: inline-grid;
+  place-items: center;
+  border: 0 !important;
+  animation: none;
+  color: #3cff6e;
+  font-size: 14px;
+  line-height: 1;
+}
+body.theme-terminal .nx-spinner::after { content: "|"; animation: nx-term-spin .48s steps(1) infinite; }
+@keyframes nx-term-spin { 25% { content: "/"; } 50% { content: "-"; } 75% { content: "\\"; } }
+
+/* Colors the app hardcodes: the Library's violet, schedule accents, the AI
+   badge. The storage bar is told apart by shading, like the old block
+   characters (solid, dense, medium, light) instead of hue. */
+body.theme-terminal .nx-hybrid-library { --hybrid-violet: #3cff6e; --hybrid-soft: rgba(60, 255, 110, .12); }
+body.theme-terminal .nx-hybrid-page.is-active { color: #000 !important; text-shadow: none; }
+body.theme-terminal .nx-command-row-accent { background: #3cff6e !important; }
+body.theme-terminal .nx-comm-ai-badge { border: 1px dashed currentColor; background: transparent; color: var(--term-bright); }
+body.theme-terminal .nx-content-dashboard .nx-storage-seg-0 { background: #3cff6e; }
+body.theme-terminal .nx-content-dashboard .nx-storage-seg-1 { background: repeating-linear-gradient(90deg, #3cff6e 0 3px, transparent 3px 4px); }
+body.theme-terminal .nx-content-dashboard .nx-storage-seg-2 { background: repeating-conic-gradient(#3cff6e 0 25%, transparent 0 50%) 0 0 / 2px 2px; }
+body.theme-terminal .nx-content-dashboard .nx-storage-seg-3 { background: repeating-linear-gradient(90deg, #3cff6e 0 1px, transparent 1px 4px); }
+
+/* Inline-styled badges painted in a theme color with white text: in Terminal
+   those colors are bright phosphor, so their text turns black. */
+body.theme-terminal :is(
+  [style*="background-color: var(--button-bg)"], [style*="background: var(--button-bg)"],
+  [style*="background-color: var(--accent-color)"], [style*="background: var(--accent-color)"],
+  [style*="background-color: var(--success-color)"], [style*="background: var(--success-color)"],
+  [style*="background-color: var(--nx-sec-library)"], [style*="background-color: var(--nx-sec-connect)"]) {
+  color: #000 !important;
+  text-shadow: none;
+}
+
+/* Monospace runs wider than the proportional face these were sized for. */
+@media (min-width: 801px) {
+  body.theme-terminal .nx-content-schedules .nx-command-toolbar { grid-template-columns: minmax(180px, 1fr) 116px 124px 70px 76px; }
+}
+
+/* Pictures show in phosphor until you point at them. */
+body.theme-terminal .nx-content img {
+  filter: grayscale(1) sepia(1) hue-rotate(70deg) saturate(2.6) brightness(.92);
+}
+body.theme-terminal .nx-content img:hover { filter: none; }
+body.theme-terminal .nx-content :is(.nx-gen-stage, .nx-gen-theme-grid) img { filter: none; }
+
+/* Top bar. */
+body.theme-terminal .nx-content .nx-topbar {
+  background: #000 !important;
+  border-bottom: 3px double var(--border-color);
+  backdrop-filter: none;
+}
+body.theme-terminal .nx-service-status { border: 1px solid currentColor; background: #000 !important; text-transform: uppercase; }
+body.theme-terminal .nx-focus-avatar { background: #3cff6e !important; color: #000 !important; text-shadow: none; }
+
+/* Sidebar: a DOS menu. */
+body.theme-terminal .nx-sidebar {
+  background: #000 !important;
+  border-right: 3px double var(--border-color) !important;
+}
+/* Turns the white logo phosphor green (#3cff6e), with a glow. */
+body.theme-terminal .nx-sidebar-logo {
+  filter: sepia(.95) saturate(17.37) hue-rotate(57.5deg) brightness(1.105) drop-shadow(0 0 3px rgba(60, 255, 110, .6));
+}
+body.theme-terminal .nx-sidebar-parent { text-transform: uppercase; }
+body.theme-terminal .nx-sidebar-item:hover { background: #0a2914; }
+body.theme-terminal :is(.nx-sidebar-parent.active, .nx-sidebar-section:first-child .nx-sidebar-parent.active, .nx-sidebar-child.active, .nx-sidebar-item.active, .nx-sidebar-search-item.active) {
+  background: #3cff6e !important;
+  color: #000 !important;
+  text-shadow: none;
+}
+body.theme-terminal :is(.nx-sidebar-item.active, .nx-sidebar-search-item.active) :is(.nx-sidebar-icon, .nx-sidebar-caret, .nx-sidebar-search-item-icon, .nx-sidebar-search-item-label, .nx-sidebar-search-item-enter) { color: #000 !important; }
+body.theme-terminal .nx-sidebar-parent.active::before { display: none; }
+body.theme-terminal .nx-sidebar-children { border-left: 1px dashed var(--border-color); }
+body.theme-terminal .nx-sidebar-search-box { background: #000 !important; border: 1px solid var(--border-color) !important; }
+
+/* Dialogs: an inverted title bar, like a DOS window. */
+body.theme-terminal .nx-modal-overlay { background: rgba(0, 0, 0, .82); backdrop-filter: none; }
+body.theme-terminal .nx-modal { border: 3px double #2bc257 !important; background: #000 !important; animation: none; }
+body.theme-terminal .nx-modal-header { background: #3cff6e !important; color: #000; border-bottom: 0; }
+body.theme-terminal .nx-modal-header,
+body.theme-terminal .nx-modal-header * {
+  color: #000 !important;
+  text-shadow: none;
+}
+body.theme-terminal .nx-modal-title { font-family: var(--term-pixel) !important; font-size: 26px !important; font-weight: 400 !important; text-transform: uppercase; }
+body.theme-terminal .nx-modal-close { color: #000 !important; }
+body.theme-terminal .nx-modal-close:hover { background: #000 !important; color: #3cff6e !important; }
+
+/* The glass: still scanlines and a vignette over everything (pointer events
+   pass through). */
+body.theme-terminal::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, .3) 2px 3px),
+    radial-gradient(130% 110% at 50% 50%, transparent 62%, rgba(0, 0, 0, .55) 100%);
+}
+
+/* The theme picker shows Terminal as a prompt on black, in any theme. */
+.nx-theme-option[data-theme-id="terminal"] .nx-theme-swatch {
+  position: relative;
+  border-color: #1a7a38;
+  border-radius: 0;
+  background: #000;
+}
+.nx-theme-option[data-theme-id="terminal"] .nx-theme-swatch i { display: none; }
+.nx-theme-option[data-theme-id="terminal"] .nx-theme-swatch::after {
+  content: ">_";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #3cff6e;
+  font: 700 11px/1 Consolas, Menlo, monospace;
+  text-shadow: 0 0 4px rgba(60, 255, 110, .7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.theme-terminal .nx-page-header-title,
+  body.theme-terminal .nx-dash-greeting,
+  body.theme-terminal .nx-page-header-title::after,
+  body.theme-terminal .nx-dash-greeting::after { animation: none; }
+}
+
+/* --------------------------------------------------------------------
+   The Nocturne skin: a moonlit night. Everything here is scoped to
+   body.theme-nocturne; the palette is the Nocturne block further up.
+   * Sky: navy deepening to black overhead, lit by the moon from the upper
+     right. No stars, which belong to the Drive-In.
+   * The moon rises in the empty stretch of the page header, between the
+     title and the actions, with a halo and a thin cloud drifting across
+     it; it scrolls away with the header. At 1100px and below it hangs in
+     the middle of the top bar instead.
+   * Moonlit cloud banks drift slowly behind the panels.
+   * Frosted panels: cards are a little see-through with a silver hairline
+     edge and a faint sheen at the top (no backdrop-filter: modals render
+     inside cards and a filter would trap their position: fixed). Menus and
+     dialogs stay solid.
+   * Light silver page titles, a crescent before section labels, a cool
+     cyan glow on the active sidebar item, buttons and focus rings.
+   Layers: sky on the canvas (body), clouds fixed at z-index -1 (above the
+   canvas, under the app), the moon behind the header's own text. Only
+   opacity and transform animate. Reduced motion: nothing drifts.
+   -------------------------------------------------------------------- */
+body.theme-nocturne {
+  /* The dark seas sit roughly where they do on the real full moon. */
+  --noc-moon:
+    radial-gradient(ellipse 30% 22% at 34% 36%, rgba(104, 120, 158, .2), transparent 72%),
+    radial-gradient(ellipse 22% 26% at 24% 52%, rgba(104, 120, 158, .16), transparent 72%),
+    radial-gradient(ellipse 15% 12% at 58% 30%, rgba(104, 120, 158, .22), transparent 72%),
+    radial-gradient(ellipse 13% 15% at 66% 46%, rgba(104, 120, 158, .2), transparent 72%),
+    radial-gradient(ellipse 14% 9% at 44% 68%, rgba(104, 120, 158, .12), transparent 72%),
+    radial-gradient(circle at 52% 84%, rgba(255, 255, 255, .5) 0 3%, transparent 7%),
+    radial-gradient(circle at 38% 34%, #fdfeff 0%, #eef2fb 40%, #d3dcee 72%, #b4c1db 100%);
+  background-color: #050913;
+  background-image:
+    radial-gradient(55vmax 42vmax at 74% 2%, rgba(160, 192, 255, .17), rgba(120, 160, 240, .06) 42%, transparent 72%),
+    radial-gradient(80vmax 50vmax at 8% 112%, rgba(40, 90, 170, .18), transparent 70%),
+    linear-gradient(180deg, #04070f 0%, #08112a 58%, #0c1838 100%);
+  background-attachment: fixed;
+}
+html:has(> body.theme-nocturne) { scrollbar-color: #2a3a5e #050913; }
+body.theme-nocturne :is(.nx-sidebar, .nx-content, .nx-content *) { scrollbar-color: #2a3a5e transparent; }
+body.theme-nocturne .nx-shell,
+body.theme-nocturne .nx-content { background: transparent; }
+body.theme-nocturne ::selection { background: rgba(95, 211, 230, .34); color: #fff; }
+
+/* Cloud banks, lit from above by the moon, drifting very slowly. */
+body.theme-nocturne .nx-shell::before,
+body.theme-nocturne .nx-shell::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  pointer-events: none;
+  inset: -10vh -20vw;
+}
+body.theme-nocturne .nx-shell::before {
+  background:
+    radial-gradient(30% 9% at 34% 24%, rgba(190, 210, 250, .13), transparent 70%),
+    radial-gradient(22% 7% at 44% 27%, rgba(150, 175, 230, .1), transparent 70%),
+    radial-gradient(28% 8% at 74% 58%, rgba(170, 195, 245, .1), transparent 70%),
+    radial-gradient(36% 10% at 20% 82%, rgba(150, 180, 240, .1), transparent 70%);
+  filter: blur(8px);
+  animation: nx-noc-drift 110s ease-in-out infinite alternate;
+}
+body.theme-nocturne .nx-shell::after {
+  background:
+    radial-gradient(26% 8% at 62% 16%, rgba(200, 218, 252, .1), transparent 70%),
+    radial-gradient(32% 9% at 88% 86%, rgba(160, 190, 245, .09), transparent 70%),
+    radial-gradient(24% 7% at 46% 50%, rgba(170, 195, 245, .08), transparent 70%);
+  filter: blur(10px);
+  animation: nx-noc-drift 150s -50s ease-in-out infinite alternate-reverse;
+}
+@keyframes nx-noc-drift { to { transform: translate3d(11vw, -2vh, 0); } }
+
+/* Top bar: dark glass with a silver hairline. */
+body.theme-nocturne .nx-content .nx-topbar {
+  background: linear-gradient(180deg, rgba(4, 7, 15, .82), rgba(6, 11, 25, .62));
+  border-bottom-color: rgba(180, 205, 255, .12);
+}
+
+/* The moon. It sits behind the header's own text and buttons. */
+body.theme-nocturne .nx-dash-header { position: relative; }
+body.theme-nocturne .nx-page-header,
+body.theme-nocturne .nx-dash-header { isolation: isolate; }
+body.theme-nocturne .nx-page-header::before,
+body.theme-nocturne .nx-dash-header::before,
+body.theme-nocturne .nx-content .nx-topbar::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: 50%;
+  background: var(--noc-moon);
+}
+body.theme-nocturne .nx-page-header::before,
+body.theme-nocturne .nx-dash-header::before {
+  top: 4px;
+  right: 30%;
+  width: 76px;
+  height: 76px;
+  box-shadow:
+    inset -11px -7px 18px rgba(58, 78, 122, .38),
+    inset 3px 3px 8px rgba(255, 255, 255, .45),
+    0 0 22px 4px rgba(210, 225, 255, .42),
+    0 0 70px 18px rgba(160, 192, 255, .17),
+    0 0 190px 70px rgba(120, 160, 240, .08);
+}
+body.theme-nocturne .nx-dash-header::before { top: -10px; }
+/* A thin cloud crossing the moon now and then. */
+body.theme-nocturne .nx-page-header::after,
+body.theme-nocturne .nx-dash-header::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 30px;
+  right: calc(30% - 70px);
+  width: 210px;
+  height: 30px;
+  pointer-events: none;
+  background:
+    radial-gradient(50% 50% at 50% 55%, rgba(196, 210, 240, .5), rgba(150, 172, 220, .2) 55%, transparent 76%),
+    radial-gradient(30% 40% at 26% 40%, rgba(214, 226, 250, .35), transparent 76%);
+  filter: blur(5px);
+  opacity: 0;
+  transform: translate3d(-170px, 0, 0);
+  animation: nx-noc-cloud 52s 4s linear infinite;
+}
+body.theme-nocturne .nx-dash-header::after { top: 16px; }
+@keyframes nx-noc-cloud {
+  0% { opacity: 0; transform: translate3d(-170px, 0, 0); }
+  8%, 34% { opacity: .85; }
+  42%, 100% { opacity: 0; transform: translate3d(170px, -4px, 0); }
+}
+/* Narrower screens: a small moon in the middle of the top bar. */
+body.theme-nocturne .nx-content .nx-topbar::before { display: none; }
+@media (max-width: 1100px) {
+  body.theme-nocturne .nx-page-header::before,
+  body.theme-nocturne .nx-dash-header::before,
+  body.theme-nocturne .nx-page-header::after,
+  body.theme-nocturne .nx-dash-header::after { display: none; }
+  body.theme-nocturne .nx-content .nx-topbar::before {
+    display: block;
+    z-index: 0;
+    top: 10px;
+    left: 50%;
+    width: 28px;
+    height: 28px;
+    margin-left: -14px;
+    box-shadow:
+      inset -4px -3px 7px rgba(58, 78, 122, .38),
+      0 0 12px 2px rgba(210, 225, 255, .4),
+      0 0 40px 10px rgba(160, 192, 255, .14);
+  }
+}
+
+/* Moonlit titles: light silver with a soft halo. */
+body.theme-nocturne .nx-page-header-title,
+body.theme-nocturne .nx-dash-greeting {
+  color: #eef3fc;
+  font-weight: 300 !important;
+  letter-spacing: -.01em;
+  background: linear-gradient(180deg, #ffffff 20%, #b4c5e4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 14px rgba(150, 190, 255, .3));
+}
+body.theme-nocturne .nx-page-header-title .header-icon { color: #9fe3f2 !important; }
+/* A crescent before the section label. */
+body.theme-nocturne .nx-page-header-eyebrow::before,
+body.theme-nocturne .nx-dash-eyebrow::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 7px;
+  vertical-align: -1px;
+  border-radius: 50%;
+  box-shadow: inset 3px -1px 0 0 #d6e4ff;
+  filter: drop-shadow(0 0 4px rgba(170, 205, 255, .75));
+}
+
+/* Frosted panels: the night shows through a little. Anything that floats
+   over content stays solid. */
+body.theme-nocturne .nx-content {
+  --card-bg: rgba(13, 20, 37, .78);
+  --raised-bg: rgba(22, 32, 54, .8);
+}
+body.theme-nocturne .nx-content :is([class*="modal"], [class*="dialog"], [class*="menu"], [class*="dropdown"], [class*="popover"], [class*="picker"], [role="dialog"], [role="menu"], [role="listbox"]) {
+  --card-bg: #111a2b;
+  --raised-bg: #182338;
+}
+body.theme-nocturne .nx-content :is(.card, .nx-hybrid-command, .nx-hybrid-list-view, .nx-command-toolbar, .nx-command-rows, .nx-today-rail, .nx-connect-card, .nx-ap-service-card, .nx-conn-banner) {
+  border-color: rgba(190, 210, 255, .14);
+  background-image: linear-gradient(180deg, rgba(200, 220, 255, .04), rgba(200, 220, 255, 0) 140px);
+  box-shadow: inset 0 1px 0 rgba(220, 232, 255, .08), 0 18px 40px -24px rgba(0, 0, 0, .85);
+}
+body.theme-nocturne .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card { border-color: rgba(190, 210, 255, .14) !important; }
+body.theme-nocturne .nx-content .card:hover,
+body.theme-nocturne .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card:hover {
+  border-color: rgba(160, 205, 255, .3) !important;
+  box-shadow: inset 0 1px 0 rgba(220, 232, 255, .1), 0 0 30px -12px rgba(120, 190, 255, .45), 0 18px 40px -24px rgba(0, 0, 0, .85);
+}
+
+/* Buttons: a moonlit face and a cool glow. */
+body.theme-nocturne .nx-content .button:not(.button-secondary) {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, 0) 60%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 8px 22px -10px color-mix(in srgb, var(--nx-section-accent) 80%, transparent);
+  transition: box-shadow .25s ease, filter .25s ease;
+}
+body.theme-nocturne .nx-content .button:not(.button-secondary):hover {
+  filter: brightness(1.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), 0 0 0 1px color-mix(in srgb, var(--nx-section-accent) 50%, transparent), 0 0 24px -4px color-mix(in srgb, var(--nx-section-accent) 65%, transparent);
+}
+body.theme-nocturne .nx-content .button-secondary:hover {
+  box-shadow: 0 0 0 1px rgba(160, 205, 255, .3), 0 0 18px -6px rgba(120, 190, 255, .55);
+}
+body.theme-nocturne .nx-sidebar-search-box:focus-within,
+body.theme-nocturne .nx-content :is(input, select, textarea):focus-visible {
+  box-shadow: 0 0 0 3px rgba(95, 211, 230, .16), 0 0 16px -2px rgba(95, 211, 230, .5) !important;
+}
+
+/* Sidebar: deeper night with a silver edge; the active item glows cyan. */
+body.theme-nocturne .nx-sidebar {
+  background: linear-gradient(180deg, rgba(4, 7, 16, .95), rgba(8, 14, 32, .95));
+  border-right-color: rgba(180, 205, 255, .1);
+  box-shadow: 1px 0 22px rgba(110, 160, 255, .06);
+}
+body.theme-nocturne .nx-sidebar-logo { filter: drop-shadow(0 0 6px rgba(170, 205, 255, .4)); }
+body.theme-nocturne .nx-sidebar-parent.active,
+body.theme-nocturne .nx-sidebar-section:first-child .nx-sidebar-parent.active {
+  color: #e2f8ff;
+  background: linear-gradient(90deg, rgba(95, 211, 230, .2), rgba(95, 211, 230, .03));
+  box-shadow: inset 0 0 0 1px rgba(95, 211, 230, .26), 0 0 18px -6px rgba(95, 211, 230, .55);
+  text-shadow: 0 0 10px rgba(95, 211, 230, .55);
+}
+body.theme-nocturne .nx-sidebar-parent.active .nx-sidebar-icon,
+body.theme-nocturne .nx-sidebar-child.active .nx-sidebar-icon { color: #7fe0f0; filter: drop-shadow(0 0 5px rgba(95, 211, 230, .8)); }
+body.theme-nocturne .nx-sidebar-parent.active::before { background: #7fe0f0; box-shadow: 0 0 8px rgba(95, 211, 230, .9); }
+body.theme-nocturne .nx-sidebar-child.active {
+  color: #e2f8ff;
+  background: rgba(95, 211, 230, .12);
+  text-shadow: 0 0 9px rgba(95, 211, 230, .5);
+}
+/* At the foot of the sidebar, the far shore and the moon's path on the
+   water; the glints shimmer, and hold still for reduced motion. A flex
+   spacer between the nav and the footer that shrinks from the top when an
+   open section needs the room, as the Drive-In lot does. */
+body.theme-nocturne .nx-sidebar::after {
+  content: "";
+  order: 1;
+  flex: 0 1 calc(var(--nx-sidebar-w) * .4333);
+  min-height: 0;
+  pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cdefs%3E%3ClinearGradient id='sea' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%2314264d'/%3E%3Cstop offset='.35' stop-color='%230b1734'/%3E%3Cstop offset='1' stop-color='%23050913'/%3E%3C/linearGradient%3E%3CradialGradient id='haze' cx='.53' cy='1' r='.6'%3E%3Cstop offset='0' stop-color='%239fb8ee' stop-opacity='.28'/%3E%3Cstop offset='1' stop-color='%239fb8ee' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='pool' cx='0.533' cy='0' r='.42'%3E%3Cstop offset='0' stop-color='%23b9cdf5' stop-opacity='.22'/%3E%3Cstop offset='1' stop-color='%23b9cdf5' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cfilter id='soft' x='-20%25' y='-60%25' width='140%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='.35'/%3E%3C/filter%3E%3C/defs%3E%3Crect x='0' y='0' width='240' height='58' fill='url(%23haze)'/%3E%3Cpath d='M0,59 L0.0,52.0 L14.0,50.0 L30.0,47.5 L44.0,49.0 L58.0,45.0 L70.0,46.5 L84.0,50.5 L98.0,52.5 L150.0,53.0 L164.0,50.0 L178.0,47.0 L190.0,48.5 L204.0,46.0 L220.0,49.5 L240.0,51.0 L240,59 Z' fill='%23070d1d'/%3E%3Cpath d='M0.0,52.0 L14.0,50.0 L30.0,47.5 L44.0,49.0 L58.0,45.0 L70.0,46.5 L84.0,50.5 L98.0,52.5 L150.0,53.0 L164.0,50.0 L178.0,47.0 L190.0,48.5 L204.0,46.0 L220.0,49.5 L240.0,51.0' fill='none' stroke='%23c3d4f7' stroke-opacity='.28' stroke-width='.6' stroke-linejoin='round'/%3E%3Crect x='0' y='58' width='240' height='46' fill='url(%23sea)'/%3E%3Crect x='0' y='58' width='240' height='46' fill='url(%23pool)'/%3E%3Crect x='0' y='58' width='240' height='.6' fill='%23c3d4f7' fill-opacity='.22'/%3E%3Cg filter='url(%23soft)'%3E%3Crect x='125.9' y='59.5' width='2.7' height='0.47' rx='0.24' fill='%23e4edff' opacity='0.83'%3E%3Canimate attributeName='opacity' values='0.83;0.21;0.83' dur='2.4s' begin='-1.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='127.8' y='59.5' width='2.0' height='0.47' rx='0.24' fill='%23e4edff' opacity='0.83'%3E%3Canimate attributeName='opacity' values='0.83;0.21;0.83' dur='2.4s' begin='-1.2s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='129.4' y='60.7' width='1.4' height='0.49' rx='0.25' fill='%23e4edff' opacity='0.68'%3E%3Canimate attributeName='opacity' values='0.68;0.17;0.68' dur='2.5s' begin='-1.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='126.5' y='60.7' width='3.3' height='0.49' rx='0.25' fill='%23e4edff' opacity='0.91'%3E%3Canimate attributeName='opacity' values='0.91;0.23;0.91' dur='2.6s' begin='-0.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='120.9' y='61.9' width='2.8' height='0.51' rx='0.25' fill='%23e4edff' opacity='0.37'%3E%3Canimate attributeName='opacity' values='0.37;0.09;0.37' dur='3.5s' begin='-3.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='121.5' y='61.9' width='1.3' height='0.51' rx='0.25' fill='%23e4edff' opacity='0.35'%3E%3Canimate attributeName='opacity' values='0.35;0.09;0.35' dur='4.9s' begin='-1.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='127.1' y='63.3' width='2.1' height='0.53' rx='0.27' fill='%23e4edff' opacity='0.90'%3E%3Canimate attributeName='opacity' values='0.90;0.22;0.90' dur='4.8s' begin='-0.9s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='127.0' y='63.3' width='3.0' height='0.53' rx='0.27' fill='%23e4edff' opacity='0.87'%3E%3Canimate attributeName='opacity' values='0.87;0.22;0.87' dur='4.2s' begin='-1.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='124.8' y='64.7' width='1.4' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.72'%3E%3Canimate attributeName='opacity' values='0.72;0.18;0.72' dur='2.9s' begin='-1.9s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='125.1' y='64.7' width='2.6' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.79'%3E%3Canimate attributeName='opacity' values='0.79;0.20;0.79' dur='3.2s' begin='-1.9s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='121.7' y='64.7' width='3.8' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.59'%3E%3Canimate attributeName='opacity' values='0.59;0.15;0.59' dur='4.4s' begin='-1.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='126.1' y='66.1' width='3.3' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.87'%3E%3Canimate attributeName='opacity' values='0.87;0.22;0.87' dur='3.9s' begin='-3.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='123.7' y='66.1' width='4.7' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.77'%3E%3Canimate attributeName='opacity' values='0.77;0.19;0.77' dur='2.6s' begin='-1.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='120.9' y='66.1' width='3.9' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.57'%3E%3Canimate attributeName='opacity' values='0.57;0.14;0.57' dur='2.7s' begin='-1.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='131.5' y='67.7' width='4.2' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.57'%3E%3Canimate attributeName='opacity' values='0.57;0.14;0.57' dur='4.0s' begin='-3.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='126.9' y='67.7' width='2.4' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.87'%3E%3Canimate attributeName='opacity' values='0.87;0.22;0.87' dur='4.4s' begin='-2.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='119.2' y='67.7' width='4.5' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.52'%3E%3Canimate attributeName='opacity' values='0.52;0.13;0.52' dur='5.2s' begin='-2.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='121.0' y='69.3' width='4.0' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.63'%3E%3Canimate attributeName='opacity' values='0.63;0.16;0.63' dur='2.4s' begin='-1.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='112.9' y='69.3' width='4.7' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.26'%3E%3Canimate attributeName='opacity' values='0.26;0.06;0.26' dur='3.1s' begin='-1.2s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='109.7' y='69.3' width='4.0' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.10'%3E%3Canimate attributeName='opacity' values='0.10;0.05;0.10' dur='2.3s' begin='-1.0s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='126.5' y='71.1' width='1.5' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.82'%3E%3Canimate attributeName='opacity' values='0.82;0.21;0.82' dur='4.7s' begin='-0.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='127.3' y='71.1' width='2.3' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.83'%3E%3Canimate attributeName='opacity' values='0.83;0.21;0.83' dur='3.5s' begin='-3.0s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='129.9' y='71.1' width='3.7' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.69'%3E%3Canimate attributeName='opacity' values='0.69;0.17;0.69' dur='5.0s' begin='-4.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='126.4' y='72.9' width='5.5' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.79'%3E%3Canimate attributeName='opacity' values='0.79;0.20;0.79' dur='3.1s' begin='-1.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='113.3' y='72.9' width='5.9' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.40'%3E%3Canimate attributeName='opacity' values='0.40;0.10;0.40' dur='2.7s' begin='-0.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='135.5' y='72.9' width='2.3' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.51'%3E%3Canimate attributeName='opacity' values='0.51;0.13;0.51' dur='2.9s' begin='-1.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='120.2' y='72.9' width='1.2' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.57'%3E%3Canimate attributeName='opacity' values='0.57;0.14;0.57' dur='3.5s' begin='-1.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='119.8' y='74.9' width='4.2' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.62'%3E%3Canimate attributeName='opacity' values='0.62;0.15;0.62' dur='5.2s' begin='-3.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='112.0' y='74.9' width='4.8' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.37'%3E%3Canimate attributeName='opacity' values='0.37;0.09;0.37' dur='2.4s' begin='-2.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='121.4' y='74.9' width='5.3' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.69'%3E%3Canimate attributeName='opacity' values='0.69;0.17;0.69' dur='5.0s' begin='-4.0s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='118.1' y='74.9' width='1.7' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.52'%3E%3Canimate attributeName='opacity' values='0.52;0.13;0.52' dur='4.2s' begin='-0.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='129.3' y='76.9' width='1.6' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.74'%3E%3Canimate attributeName='opacity' values='0.74;0.19;0.74' dur='2.9s' begin='-0.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='122.6' y='76.9' width='1.2' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.66'%3E%3Canimate attributeName='opacity' values='0.66;0.17;0.66' dur='2.7s' begin='-0.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='125.4' y='76.9' width='3.3' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.78'%3E%3Canimate attributeName='opacity' values='0.78;0.19;0.78' dur='2.3s' begin='-2.0s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='119.8' y='76.9' width='2.6' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.60'%3E%3Canimate attributeName='opacity' values='0.60;0.15;0.60' dur='3.3s' begin='-1.2s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='119.9' y='79.1' width='2.0' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.60'%3E%3Canimate attributeName='opacity' values='0.60;0.15;0.60' dur='4.9s' begin='-4.9s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='113.0' y='79.1' width='1.7' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.41'%3E%3Canimate attributeName='opacity' values='0.41;0.10;0.41' dur='2.5s' begin='-0.9s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='125.2' y='79.1' width='2.8' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.75'%3E%3Canimate attributeName='opacity' values='0.75;0.19;0.75' dur='4.9s' begin='-0.8s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='144.7' y='79.1' width='4.4' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.29'%3E%3Canimate attributeName='opacity' values='0.29;0.07;0.29' dur='2.7s' begin='-1.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='127.0' y='79.1' width='1.4' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.78'%3E%3Canimate attributeName='opacity' values='0.78;0.19;0.78' dur='3.9s' begin='-3.8s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='132.7' y='81.4' width='2.9' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.63'%3E%3Canimate attributeName='opacity' values='0.63;0.16;0.63' dur='3.4s' begin='-0.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='108.9' y='81.4' width='6.3' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.39'%3E%3Canimate attributeName='opacity' values='0.39;0.10;0.39' dur='3.9s' begin='-3.0s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='117.2' y='81.4' width='6.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.59'%3E%3Canimate attributeName='opacity' values='0.59;0.15;0.59' dur='5.4s' begin='-4.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='127.0' y='81.4' width='6.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.72'%3E%3Canimate attributeName='opacity' values='0.72;0.18;0.72' dur='4.8s' begin='-3.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='123.9' y='81.4' width='3.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.72'%3E%3Canimate attributeName='opacity' values='0.72;0.18;0.72' dur='2.3s' begin='-0.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='135.1' y='83.8' width='3.2' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.57'%3E%3Canimate attributeName='opacity' values='0.57;0.14;0.57' dur='3.0s' begin='-2.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='131.2' y='83.8' width='7.8' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.60'%3E%3Canimate attributeName='opacity' values='0.60;0.15;0.60' dur='5.4s' begin='-5.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='118.4' y='83.8' width='3.8' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.59'%3E%3Canimate attributeName='opacity' values='0.59;0.15;0.59' dur='2.9s' begin='-0.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='123.2' y='83.8' width='5.6' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.71'%3E%3Canimate attributeName='opacity' values='0.71;0.18;0.71' dur='5.1s' begin='-4.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='128.3' y='83.8' width='4.6' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.70'%3E%3Canimate attributeName='opacity' values='0.70;0.17;0.70' dur='4.3s' begin='-3.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='134.2' y='86.4' width='8.1' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.54'%3E%3Canimate attributeName='opacity' values='0.54;0.13;0.54' dur='4.7s' begin='-3.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='129.6' y='86.4' width='4.8' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.66'%3E%3Canimate attributeName='opacity' values='0.66;0.16;0.66' dur='2.8s' begin='-2.2s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='108.1' y='86.4' width='8.5' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.44'%3E%3Canimate attributeName='opacity' values='0.44;0.11;0.44' dur='3.5s' begin='-1.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='137.6' y='86.4' width='8.3' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.47'%3E%3Canimate attributeName='opacity' values='0.47;0.12;0.47' dur='4.5s' begin='-0.8s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='123.8' y='86.4' width='8.0' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.73'%3E%3Canimate attributeName='opacity' values='0.73;0.18;0.73' dur='4.8s' begin='-0.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='124.3' y='86.4' width='7.4' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.73'%3E%3Canimate attributeName='opacity' values='0.73;0.18;0.73' dur='5.3s' begin='-3.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='111.8' y='89.1' width='2.3' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.45'%3E%3Canimate attributeName='opacity' values='0.45;0.11;0.45' dur='2.2s' begin='-2.2s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='132.6' y='89.1' width='6.4' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.58'%3E%3Canimate attributeName='opacity' values='0.58;0.14;0.58' dur='3.9s' begin='-3.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='94.6' y='89.1' width='7.9' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.21'%3E%3Canimate attributeName='opacity' values='0.21;0.05;0.21' dur='2.9s' begin='-0.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='131.4' y='89.1' width='3.6' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.62'%3E%3Canimate attributeName='opacity' values='0.62;0.16;0.62' dur='3.0s' begin='-1.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='120.7' y='89.1' width='2.3' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.61'%3E%3Canimate attributeName='opacity' values='0.61;0.15;0.61' dur='5.1s' begin='-1.8s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='133.7' y='89.1' width='4.9' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.57'%3E%3Canimate attributeName='opacity' values='0.57;0.14;0.57' dur='4.1s' begin='-3.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='91.8' y='91.9' width='5.5' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.18'%3E%3Canimate attributeName='opacity' values='0.18;0.05;0.18' dur='3.9s' begin='-2.0s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='136.4' y='91.9' width='1.4' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.55'%3E%3Canimate attributeName='opacity' values='0.55;0.14;0.55' dur='3.6s' begin='-0.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='145.9' y='91.9' width='2.7' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.40'%3E%3Canimate attributeName='opacity' values='0.40;0.10;0.40' dur='3.7s' begin='-2.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='119.7' y='91.9' width='6.0' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.61'%3E%3Canimate attributeName='opacity' values='0.61;0.15;0.61' dur='3.2s' begin='-1.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='97.9' y='91.9' width='2.1' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.25'%3E%3Canimate attributeName='opacity' values='0.25;0.06;0.25' dur='4.0s' begin='-1.0s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='111.9' y='91.9' width='3.6' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.47'%3E%3Canimate attributeName='opacity' values='0.47;0.12;0.47' dur='4.7s' begin='-2.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='95.6' y='91.9' width='9.1' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.26'%3E%3Canimate attributeName='opacity' values='0.26;0.07;0.26' dur='3.6s' begin='-2.2s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='109.0' y='94.9' width='5.9' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.45'%3E%3Canimate attributeName='opacity' values='0.45;0.11;0.45' dur='3.8s' begin='-2.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='100.9' y='94.9' width='5.6' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.33'%3E%3Canimate attributeName='opacity' values='0.33;0.08;0.33' dur='5.2s' begin='-3.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='122.4' y='94.9' width='9.3' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.66'%3E%3Canimate attributeName='opacity' values='0.66;0.16;0.66' dur='5.2s' begin='-1.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='83.3' y='94.9' width='8.9' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.11'%3E%3Canimate attributeName='opacity' values='0.11;0.05;0.11' dur='2.6s' begin='-0.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='105.7' y='94.9' width='5.3' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.40'%3E%3Canimate attributeName='opacity' values='0.40;0.10;0.40' dur='2.4s' begin='-0.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='137.6' y='94.9' width='8.4' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.48'%3E%3Canimate attributeName='opacity' values='0.48;0.12;0.48' dur='5.1s' begin='-0.8s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='127.7' y='94.9' width='7.8' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.62'%3E%3Canimate attributeName='opacity' values='0.62;0.15;0.62' dur='4.3s' begin='-0.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='151.0' y='98.1' width='3.4' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.34'%3E%3Canimate attributeName='opacity' values='0.34;0.08;0.34' dur='5.2s' begin='-2.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='89.3' y='98.1' width='6.0' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.20'%3E%3Canimate attributeName='opacity' values='0.20;0.05;0.20' dur='5.4s' begin='-4.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='127.0' y='98.1' width='6.3' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.62'%3E%3Canimate attributeName='opacity' values='0.62;0.15;0.62' dur='3.3s' begin='-0.6s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='133.6' y='98.1' width='4.3' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.55'%3E%3Canimate attributeName='opacity' values='0.55;0.14;0.55' dur='4.5s' begin='-0.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='103.7' y='98.1' width='1.4' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.35'%3E%3Canimate attributeName='opacity' values='0.35;0.09;0.35' dur='3.3s' begin='-2.0s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='112.0' y='98.1' width='6.2' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.49'%3E%3Canimate attributeName='opacity' values='0.49;0.12;0.49' dur='2.4s' begin='-2.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='130.3' y='98.1' width='2.2' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.60'%3E%3Canimate attributeName='opacity' values='0.60;0.15;0.60' dur='3.0s' begin='-0.1s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='74.3' y='98.1' width='8.9' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.08'%3E%3Canimate attributeName='opacity' values='0.08;0.05;0.08' dur='3.1s' begin='-0.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='81.4' y='101.5' width='9.8' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.16'%3E%3Canimate attributeName='opacity' values='0.16;0.05;0.16' dur='3.0s' begin='-0.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='133.2' y='101.5' width='10.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.50'%3E%3Canimate attributeName='opacity' values='0.50;0.13;0.50' dur='4.0s' begin='-2.8s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='121.3' y='101.5' width='8.4' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.59'%3E%3Canimate attributeName='opacity' values='0.59;0.15;0.59' dur='3.6s' begin='-0.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='118.1' y='101.5' width='11.1' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.57'%3E%3Canimate attributeName='opacity' values='0.57;0.14;0.57' dur='4.2s' begin='-3.4s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='149.4' y='101.5' width='1.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.37'%3E%3Canimate attributeName='opacity' values='0.37;0.09;0.37' dur='5.0s' begin='-2.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='135.4' y='101.5' width='4.8' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.51'%3E%3Canimate attributeName='opacity' values='0.51;0.13;0.51' dur='4.0s' begin='-3.7s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='116.0' y='101.5' width='6.7' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.52'%3E%3Canimate attributeName='opacity' values='0.52;0.13;0.52' dur='3.0s' begin='-0.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3Crect x='128.2' y='101.5' width='2.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.60'%3E%3Canimate attributeName='opacity' values='0.60;0.15;0.60' dur='2.4s' begin='-0.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3C/g%3E%3C/svg%3E") center bottom / 100% auto no-repeat;
+}
+body.theme-nocturne .nx-sidebar-footer { order: 2; border-top-color: rgba(180, 205, 255, .08); background: #050913; }
+body.theme-nocturne .nx-sidebar.collapsed::after { display: none; }
+body.theme-nocturne .nx-sidebar.collapsed .nx-sidebar-footer { background: none; }
+@media (max-width: 900px) {
+  body.theme-nocturne .nx-sidebar:not(.mobile-open) { box-shadow: none; }
+}
+
+/* The theme picker shows Nocturne as a moon in a night sky, in any theme. */
+.nx-theme-option[data-theme-id="nocturne"] .nx-theme-swatch {
+  border-color: rgba(160, 190, 240, .45);
+  background:
+    radial-gradient(circle at 62% 38%, #f4f8ff 0 4px, rgba(190, 215, 255, .45) 5px, transparent 9px),
+    linear-gradient(180deg, #04070f, #0c1838);
+}
+.nx-theme-option[data-theme-id="nocturne"] .nx-theme-swatch i { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  body.theme-nocturne .nx-shell::before,
+  body.theme-nocturne .nx-shell::after { animation: none; }
+  body.theme-nocturne .nx-page-header::after,
+  body.theme-nocturne .nx-dash-header::after { display: none; }
+  body.theme-nocturne .nx-sidebar::after { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cdefs%3E%3ClinearGradient id='sea' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%2314264d'/%3E%3Cstop offset='.35' stop-color='%230b1734'/%3E%3Cstop offset='1' stop-color='%23050913'/%3E%3C/linearGradient%3E%3CradialGradient id='haze' cx='.53' cy='1' r='.6'%3E%3Cstop offset='0' stop-color='%239fb8ee' stop-opacity='.28'/%3E%3Cstop offset='1' stop-color='%239fb8ee' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='pool' cx='0.533' cy='0' r='.42'%3E%3Cstop offset='0' stop-color='%23b9cdf5' stop-opacity='.22'/%3E%3Cstop offset='1' stop-color='%23b9cdf5' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cfilter id='soft' x='-20%25' y='-60%25' width='140%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='.35'/%3E%3C/filter%3E%3C/defs%3E%3Crect x='0' y='0' width='240' height='58' fill='url(%23haze)'/%3E%3Cpath d='M0,59 L0.0,52.0 L14.0,50.0 L30.0,47.5 L44.0,49.0 L58.0,45.0 L70.0,46.5 L84.0,50.5 L98.0,52.5 L150.0,53.0 L164.0,50.0 L178.0,47.0 L190.0,48.5 L204.0,46.0 L220.0,49.5 L240.0,51.0 L240,59 Z' fill='%23070d1d'/%3E%3Cpath d='M0.0,52.0 L14.0,50.0 L30.0,47.5 L44.0,49.0 L58.0,45.0 L70.0,46.5 L84.0,50.5 L98.0,52.5 L150.0,53.0 L164.0,50.0 L178.0,47.0 L190.0,48.5 L204.0,46.0 L220.0,49.5 L240.0,51.0' fill='none' stroke='%23c3d4f7' stroke-opacity='.28' stroke-width='.6' stroke-linejoin='round'/%3E%3Crect x='0' y='58' width='240' height='46' fill='url(%23sea)'/%3E%3Crect x='0' y='58' width='240' height='46' fill='url(%23pool)'/%3E%3Crect x='0' y='58' width='240' height='.6' fill='%23c3d4f7' fill-opacity='.22'/%3E%3Cg filter='url(%23soft)'%3E%3Crect x='125.9' y='59.5' width='2.7' height='0.47' rx='0.24' fill='%23e4edff' opacity='0.83'%3E%3C/rect%3E%3Crect x='127.8' y='59.5' width='2.0' height='0.47' rx='0.24' fill='%23e4edff' opacity='0.83'%3E%3C/rect%3E%3Crect x='129.4' y='60.7' width='1.4' height='0.49' rx='0.25' fill='%23e4edff' opacity='0.68'%3E%3C/rect%3E%3Crect x='126.5' y='60.7' width='3.3' height='0.49' rx='0.25' fill='%23e4edff' opacity='0.91'%3E%3C/rect%3E%3Crect x='120.9' y='61.9' width='2.8' height='0.51' rx='0.25' fill='%23e4edff' opacity='0.37'%3E%3C/rect%3E%3Crect x='121.5' y='61.9' width='1.3' height='0.51' rx='0.25' fill='%23e4edff' opacity='0.35'%3E%3C/rect%3E%3Crect x='127.1' y='63.3' width='2.1' height='0.53' rx='0.27' fill='%23e4edff' opacity='0.90'%3E%3C/rect%3E%3Crect x='127.0' y='63.3' width='3.0' height='0.53' rx='0.27' fill='%23e4edff' opacity='0.87'%3E%3C/rect%3E%3Crect x='124.8' y='64.7' width='1.4' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.72'%3E%3C/rect%3E%3Crect x='125.1' y='64.7' width='2.6' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.79'%3E%3C/rect%3E%3Crect x='121.7' y='64.7' width='3.8' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.59'%3E%3C/rect%3E%3Crect x='126.1' y='66.1' width='3.3' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.87'%3E%3C/rect%3E%3Crect x='123.7' y='66.1' width='4.7' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.77'%3E%3C/rect%3E%3Crect x='120.9' y='66.1' width='3.9' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='131.5' y='67.7' width='4.2' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='126.9' y='67.7' width='2.4' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.87'%3E%3C/rect%3E%3Crect x='119.2' y='67.7' width='4.5' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.52'%3E%3C/rect%3E%3Crect x='121.0' y='69.3' width='4.0' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.63'%3E%3C/rect%3E%3Crect x='112.9' y='69.3' width='4.7' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.26'%3E%3C/rect%3E%3Crect x='109.7' y='69.3' width='4.0' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.10'%3E%3C/rect%3E%3Crect x='126.5' y='71.1' width='1.5' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.82'%3E%3C/rect%3E%3Crect x='127.3' y='71.1' width='2.3' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.83'%3E%3C/rect%3E%3Crect x='129.9' y='71.1' width='3.7' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.69'%3E%3C/rect%3E%3Crect x='126.4' y='72.9' width='5.5' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.79'%3E%3C/rect%3E%3Crect x='113.3' y='72.9' width='5.9' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.40'%3E%3C/rect%3E%3Crect x='135.5' y='72.9' width='2.3' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.51'%3E%3C/rect%3E%3Crect x='120.2' y='72.9' width='1.2' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='119.8' y='74.9' width='4.2' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.62'%3E%3C/rect%3E%3Crect x='112.0' y='74.9' width='4.8' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.37'%3E%3C/rect%3E%3Crect x='121.4' y='74.9' width='5.3' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.69'%3E%3C/rect%3E%3Crect x='118.1' y='74.9' width='1.7' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.52'%3E%3C/rect%3E%3Crect x='129.3' y='76.9' width='1.6' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.74'%3E%3C/rect%3E%3Crect x='122.6' y='76.9' width='1.2' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.66'%3E%3C/rect%3E%3Crect x='125.4' y='76.9' width='3.3' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.78'%3E%3C/rect%3E%3Crect x='119.8' y='76.9' width='2.6' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3Crect x='119.9' y='79.1' width='2.0' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3Crect x='113.0' y='79.1' width='1.7' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.41'%3E%3C/rect%3E%3Crect x='125.2' y='79.1' width='2.8' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.75'%3E%3C/rect%3E%3Crect x='144.7' y='79.1' width='4.4' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.29'%3E%3C/rect%3E%3Crect x='127.0' y='79.1' width='1.4' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.78'%3E%3C/rect%3E%3Crect x='132.7' y='81.4' width='2.9' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.63'%3E%3C/rect%3E%3Crect x='108.9' y='81.4' width='6.3' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.39'%3E%3C/rect%3E%3Crect x='117.2' y='81.4' width='6.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.59'%3E%3C/rect%3E%3Crect x='127.0' y='81.4' width='6.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.72'%3E%3C/rect%3E%3Crect x='123.9' y='81.4' width='3.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.72'%3E%3C/rect%3E%3Crect x='135.1' y='83.8' width='3.2' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='131.2' y='83.8' width='7.8' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3Crect x='118.4' y='83.8' width='3.8' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.59'%3E%3C/rect%3E%3Crect x='123.2' y='83.8' width='5.6' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.71'%3E%3C/rect%3E%3Crect x='128.3' y='83.8' width='4.6' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.70'%3E%3C/rect%3E%3Crect x='134.2' y='86.4' width='8.1' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.54'%3E%3C/rect%3E%3Crect x='129.6' y='86.4' width='4.8' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.66'%3E%3C/rect%3E%3Crect x='108.1' y='86.4' width='8.5' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.44'%3E%3C/rect%3E%3Crect x='137.6' y='86.4' width='8.3' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.47'%3E%3C/rect%3E%3Crect x='123.8' y='86.4' width='8.0' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.73'%3E%3C/rect%3E%3Crect x='124.3' y='86.4' width='7.4' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.73'%3E%3C/rect%3E%3Crect x='111.8' y='89.1' width='2.3' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.45'%3E%3C/rect%3E%3Crect x='132.6' y='89.1' width='6.4' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.58'%3E%3C/rect%3E%3Crect x='94.6' y='89.1' width='7.9' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.21'%3E%3C/rect%3E%3Crect x='131.4' y='89.1' width='3.6' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.62'%3E%3C/rect%3E%3Crect x='120.7' y='89.1' width='2.3' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.61'%3E%3C/rect%3E%3Crect x='133.7' y='89.1' width='4.9' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='91.8' y='91.9' width='5.5' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.18'%3E%3C/rect%3E%3Crect x='136.4' y='91.9' width='1.4' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.55'%3E%3C/rect%3E%3Crect x='145.9' y='91.9' width='2.7' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.40'%3E%3C/rect%3E%3Crect x='119.7' y='91.9' width='6.0' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.61'%3E%3C/rect%3E%3Crect x='97.9' y='91.9' width='2.1' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.25'%3E%3C/rect%3E%3Crect x='111.9' y='91.9' width='3.6' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.47'%3E%3C/rect%3E%3Crect x='95.6' y='91.9' width='9.1' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.26'%3E%3C/rect%3E%3Crect x='109.0' y='94.9' width='5.9' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.45'%3E%3C/rect%3E%3Crect x='100.9' y='94.9' width='5.6' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.33'%3E%3C/rect%3E%3Crect x='122.4' y='94.9' width='9.3' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.66'%3E%3C/rect%3E%3Crect x='83.3' y='94.9' width='8.9' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.11'%3E%3C/rect%3E%3Crect x='105.7' y='94.9' width='5.3' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.40'%3E%3C/rect%3E%3Crect x='137.6' y='94.9' width='8.4' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.48'%3E%3C/rect%3E%3Crect x='127.7' y='94.9' width='7.8' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.62'%3E%3C/rect%3E%3Crect x='151.0' y='98.1' width='3.4' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.34'%3E%3C/rect%3E%3Crect x='89.3' y='98.1' width='6.0' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.20'%3E%3C/rect%3E%3Crect x='127.0' y='98.1' width='6.3' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.62'%3E%3C/rect%3E%3Crect x='133.6' y='98.1' width='4.3' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.55'%3E%3C/rect%3E%3Crect x='103.7' y='98.1' width='1.4' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.35'%3E%3C/rect%3E%3Crect x='112.0' y='98.1' width='6.2' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.49'%3E%3C/rect%3E%3Crect x='130.3' y='98.1' width='2.2' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3Crect x='74.3' y='98.1' width='8.9' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.08'%3E%3C/rect%3E%3Crect x='81.4' y='101.5' width='9.8' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.16'%3E%3C/rect%3E%3Crect x='133.2' y='101.5' width='10.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.50'%3E%3C/rect%3E%3Crect x='121.3' y='101.5' width='8.4' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.59'%3E%3C/rect%3E%3Crect x='118.1' y='101.5' width='11.1' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='149.4' y='101.5' width='1.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.37'%3E%3C/rect%3E%3Crect x='135.4' y='101.5' width='4.8' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.51'%3E%3C/rect%3E%3Crect x='116.0' y='101.5' width='6.7' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.52'%3E%3C/rect%3E%3Crect x='128.2' y='101.5' width='2.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3C/g%3E%3C/svg%3E"); }
+}
