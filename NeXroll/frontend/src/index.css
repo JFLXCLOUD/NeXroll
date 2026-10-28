@@ -7693,6 +7693,25 @@ body.theme-parchment .nx-section-community { --nx-section-accent: #a8551a; --nx-
   font-display: swap;
   src: url('./fonts/vt323-latin-400-normal.woff2') format('woff2');
 }
+/* The Silent Film title cards and the VHS Rewind tape labels (both skins
+   are at the end of this file). Downloaded only while those themes show. */
+@font-face {
+  font-family: 'Limelight';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/limelight-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Permanent Marker';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/permanent-marker-latin-400-normal.woff2') format('woff2');
+}
+/* The scene change App.js mounts on every page change; only Silent Film
+   and VHS Rewind show it. */
+.nx-page-cut { display: none; }
 body.theme-terminal {
   color-scheme: dark;
   --bg-color: #000000;
@@ -13627,4 +13646,531 @@ body.theme-nocturne .nx-sidebar.collapsed .nx-sidebar-footer { background: none;
   body.theme-nocturne .nx-page-header::after,
   body.theme-nocturne .nx-dash-header::after { display: none; }
   body.theme-nocturne .nx-sidebar::after { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cdefs%3E%3ClinearGradient id='sea' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%2314264d'/%3E%3Cstop offset='.35' stop-color='%230b1734'/%3E%3Cstop offset='1' stop-color='%23050913'/%3E%3C/linearGradient%3E%3CradialGradient id='haze' cx='.53' cy='1' r='.6'%3E%3Cstop offset='0' stop-color='%239fb8ee' stop-opacity='.28'/%3E%3Cstop offset='1' stop-color='%239fb8ee' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='pool' cx='0.533' cy='0' r='.42'%3E%3Cstop offset='0' stop-color='%23b9cdf5' stop-opacity='.22'/%3E%3Cstop offset='1' stop-color='%23b9cdf5' stop-opacity='0'/%3E%3C/radialGradient%3E%3Cfilter id='soft' x='-20%25' y='-60%25' width='140%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='.35'/%3E%3C/filter%3E%3C/defs%3E%3Crect x='0' y='0' width='240' height='58' fill='url(%23haze)'/%3E%3Cpath d='M0,59 L0.0,52.0 L14.0,50.0 L30.0,47.5 L44.0,49.0 L58.0,45.0 L70.0,46.5 L84.0,50.5 L98.0,52.5 L150.0,53.0 L164.0,50.0 L178.0,47.0 L190.0,48.5 L204.0,46.0 L220.0,49.5 L240.0,51.0 L240,59 Z' fill='%23070d1d'/%3E%3Cpath d='M0.0,52.0 L14.0,50.0 L30.0,47.5 L44.0,49.0 L58.0,45.0 L70.0,46.5 L84.0,50.5 L98.0,52.5 L150.0,53.0 L164.0,50.0 L178.0,47.0 L190.0,48.5 L204.0,46.0 L220.0,49.5 L240.0,51.0' fill='none' stroke='%23c3d4f7' stroke-opacity='.28' stroke-width='.6' stroke-linejoin='round'/%3E%3Crect x='0' y='58' width='240' height='46' fill='url(%23sea)'/%3E%3Crect x='0' y='58' width='240' height='46' fill='url(%23pool)'/%3E%3Crect x='0' y='58' width='240' height='.6' fill='%23c3d4f7' fill-opacity='.22'/%3E%3Cg filter='url(%23soft)'%3E%3Crect x='125.9' y='59.5' width='2.7' height='0.47' rx='0.24' fill='%23e4edff' opacity='0.83'%3E%3C/rect%3E%3Crect x='127.8' y='59.5' width='2.0' height='0.47' rx='0.24' fill='%23e4edff' opacity='0.83'%3E%3C/rect%3E%3Crect x='129.4' y='60.7' width='1.4' height='0.49' rx='0.25' fill='%23e4edff' opacity='0.68'%3E%3C/rect%3E%3Crect x='126.5' y='60.7' width='3.3' height='0.49' rx='0.25' fill='%23e4edff' opacity='0.91'%3E%3C/rect%3E%3Crect x='120.9' y='61.9' width='2.8' height='0.51' rx='0.25' fill='%23e4edff' opacity='0.37'%3E%3C/rect%3E%3Crect x='121.5' y='61.9' width='1.3' height='0.51' rx='0.25' fill='%23e4edff' opacity='0.35'%3E%3C/rect%3E%3Crect x='127.1' y='63.3' width='2.1' height='0.53' rx='0.27' fill='%23e4edff' opacity='0.90'%3E%3C/rect%3E%3Crect x='127.0' y='63.3' width='3.0' height='0.53' rx='0.27' fill='%23e4edff' opacity='0.87'%3E%3C/rect%3E%3Crect x='124.8' y='64.7' width='1.4' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.72'%3E%3C/rect%3E%3Crect x='125.1' y='64.7' width='2.6' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.79'%3E%3C/rect%3E%3Crect x='121.7' y='64.7' width='3.8' height='0.55' rx='0.28' fill='%23e4edff' opacity='0.59'%3E%3C/rect%3E%3Crect x='126.1' y='66.1' width='3.3' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.87'%3E%3C/rect%3E%3Crect x='123.7' y='66.1' width='4.7' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.77'%3E%3C/rect%3E%3Crect x='120.9' y='66.1' width='3.9' height='0.57' rx='0.29' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='131.5' y='67.7' width='4.2' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='126.9' y='67.7' width='2.4' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.87'%3E%3C/rect%3E%3Crect x='119.2' y='67.7' width='4.5' height='0.60' rx='0.30' fill='%23e4edff' opacity='0.52'%3E%3C/rect%3E%3Crect x='121.0' y='69.3' width='4.0' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.63'%3E%3C/rect%3E%3Crect x='112.9' y='69.3' width='4.7' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.26'%3E%3C/rect%3E%3Crect x='109.7' y='69.3' width='4.0' height='0.62' rx='0.31' fill='%23e4edff' opacity='0.10'%3E%3C/rect%3E%3Crect x='126.5' y='71.1' width='1.5' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.82'%3E%3C/rect%3E%3Crect x='127.3' y='71.1' width='2.3' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.83'%3E%3C/rect%3E%3Crect x='129.9' y='71.1' width='3.7' height='0.65' rx='0.32' fill='%23e4edff' opacity='0.69'%3E%3C/rect%3E%3Crect x='126.4' y='72.9' width='5.5' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.79'%3E%3C/rect%3E%3Crect x='113.3' y='72.9' width='5.9' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.40'%3E%3C/rect%3E%3Crect x='135.5' y='72.9' width='2.3' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.51'%3E%3C/rect%3E%3Crect x='120.2' y='72.9' width='1.2' height='0.68' rx='0.34' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='119.8' y='74.9' width='4.2' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.62'%3E%3C/rect%3E%3Crect x='112.0' y='74.9' width='4.8' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.37'%3E%3C/rect%3E%3Crect x='121.4' y='74.9' width='5.3' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.69'%3E%3C/rect%3E%3Crect x='118.1' y='74.9' width='1.7' height='0.71' rx='0.35' fill='%23e4edff' opacity='0.52'%3E%3C/rect%3E%3Crect x='129.3' y='76.9' width='1.6' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.74'%3E%3C/rect%3E%3Crect x='122.6' y='76.9' width='1.2' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.66'%3E%3C/rect%3E%3Crect x='125.4' y='76.9' width='3.3' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.78'%3E%3C/rect%3E%3Crect x='119.8' y='76.9' width='2.6' height='0.74' rx='0.37' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3Crect x='119.9' y='79.1' width='2.0' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3Crect x='113.0' y='79.1' width='1.7' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.41'%3E%3C/rect%3E%3Crect x='125.2' y='79.1' width='2.8' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.75'%3E%3C/rect%3E%3Crect x='144.7' y='79.1' width='4.4' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.29'%3E%3C/rect%3E%3Crect x='127.0' y='79.1' width='1.4' height='0.77' rx='0.39' fill='%23e4edff' opacity='0.78'%3E%3C/rect%3E%3Crect x='132.7' y='81.4' width='2.9' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.63'%3E%3C/rect%3E%3Crect x='108.9' y='81.4' width='6.3' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.39'%3E%3C/rect%3E%3Crect x='117.2' y='81.4' width='6.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.59'%3E%3C/rect%3E%3Crect x='127.0' y='81.4' width='6.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.72'%3E%3C/rect%3E%3Crect x='123.9' y='81.4' width='3.5' height='0.81' rx='0.40' fill='%23e4edff' opacity='0.72'%3E%3C/rect%3E%3Crect x='135.1' y='83.8' width='3.2' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='131.2' y='83.8' width='7.8' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3Crect x='118.4' y='83.8' width='3.8' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.59'%3E%3C/rect%3E%3Crect x='123.2' y='83.8' width='5.6' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.71'%3E%3C/rect%3E%3Crect x='128.3' y='83.8' width='4.6' height='0.84' rx='0.42' fill='%23e4edff' opacity='0.70'%3E%3C/rect%3E%3Crect x='134.2' y='86.4' width='8.1' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.54'%3E%3C/rect%3E%3Crect x='129.6' y='86.4' width='4.8' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.66'%3E%3C/rect%3E%3Crect x='108.1' y='86.4' width='8.5' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.44'%3E%3C/rect%3E%3Crect x='137.6' y='86.4' width='8.3' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.47'%3E%3C/rect%3E%3Crect x='123.8' y='86.4' width='8.0' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.73'%3E%3C/rect%3E%3Crect x='124.3' y='86.4' width='7.4' height='0.88' rx='0.44' fill='%23e4edff' opacity='0.73'%3E%3C/rect%3E%3Crect x='111.8' y='89.1' width='2.3' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.45'%3E%3C/rect%3E%3Crect x='132.6' y='89.1' width='6.4' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.58'%3E%3C/rect%3E%3Crect x='94.6' y='89.1' width='7.9' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.21'%3E%3C/rect%3E%3Crect x='131.4' y='89.1' width='3.6' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.62'%3E%3C/rect%3E%3Crect x='120.7' y='89.1' width='2.3' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.61'%3E%3C/rect%3E%3Crect x='133.7' y='89.1' width='4.9' height='0.92' rx='0.46' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='91.8' y='91.9' width='5.5' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.18'%3E%3C/rect%3E%3Crect x='136.4' y='91.9' width='1.4' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.55'%3E%3C/rect%3E%3Crect x='145.9' y='91.9' width='2.7' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.40'%3E%3C/rect%3E%3Crect x='119.7' y='91.9' width='6.0' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.61'%3E%3C/rect%3E%3Crect x='97.9' y='91.9' width='2.1' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.25'%3E%3C/rect%3E%3Crect x='111.9' y='91.9' width='3.6' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.47'%3E%3C/rect%3E%3Crect x='95.6' y='91.9' width='9.1' height='0.97' rx='0.48' fill='%23e4edff' opacity='0.26'%3E%3C/rect%3E%3Crect x='109.0' y='94.9' width='5.9' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.45'%3E%3C/rect%3E%3Crect x='100.9' y='94.9' width='5.6' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.33'%3E%3C/rect%3E%3Crect x='122.4' y='94.9' width='9.3' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.66'%3E%3C/rect%3E%3Crect x='83.3' y='94.9' width='8.9' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.11'%3E%3C/rect%3E%3Crect x='105.7' y='94.9' width='5.3' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.40'%3E%3C/rect%3E%3Crect x='137.6' y='94.9' width='8.4' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.48'%3E%3C/rect%3E%3Crect x='127.7' y='94.9' width='7.8' height='1.01' rx='0.51' fill='%23e4edff' opacity='0.62'%3E%3C/rect%3E%3Crect x='151.0' y='98.1' width='3.4' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.34'%3E%3C/rect%3E%3Crect x='89.3' y='98.1' width='6.0' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.20'%3E%3C/rect%3E%3Crect x='127.0' y='98.1' width='6.3' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.62'%3E%3C/rect%3E%3Crect x='133.6' y='98.1' width='4.3' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.55'%3E%3C/rect%3E%3Crect x='103.7' y='98.1' width='1.4' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.35'%3E%3C/rect%3E%3Crect x='112.0' y='98.1' width='6.2' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.49'%3E%3C/rect%3E%3Crect x='130.3' y='98.1' width='2.2' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3Crect x='74.3' y='98.1' width='8.9' height='1.06' rx='0.53' fill='%23e4edff' opacity='0.08'%3E%3C/rect%3E%3Crect x='81.4' y='101.5' width='9.8' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.16'%3E%3C/rect%3E%3Crect x='133.2' y='101.5' width='10.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.50'%3E%3C/rect%3E%3Crect x='121.3' y='101.5' width='8.4' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.59'%3E%3C/rect%3E%3Crect x='118.1' y='101.5' width='11.1' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.57'%3E%3C/rect%3E%3Crect x='149.4' y='101.5' width='1.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.37'%3E%3C/rect%3E%3Crect x='135.4' y='101.5' width='4.8' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.51'%3E%3C/rect%3E%3Crect x='116.0' y='101.5' width='6.7' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.52'%3E%3C/rect%3E%3Crect x='128.2' y='101.5' width='2.9' height='1.11' rx='0.56' fill='%23e4edff' opacity='0.60'%3E%3C/rect%3E%3C/g%3E%3C/svg%3E"); }
+}
+
+/* --------------------------------------------------------------------
+   The Silent Film skin: a 1920s picture. Everything here is scoped to
+   body.theme-silentfilm.
+   * Black, white and silver. Status colors are the tints old prints were
+     dyed with (green, amber, red, blue), the only color on screen.
+   * Serif type throughout (Palatino, whose figures line up; Georgia's
+     old-style 1 reads as an I), and Limelight, a 1920s cinema face
+     bundled in src/fonts (OFL), on title cards.
+   * Page headers are intertitle cards: centered, in an ornamented double
+     frame (border-image), under a "Chapter" label for the section.
+   * The film: a still vignette, and an iris opening on every page change
+     (.nx-page-cut). No background animation (JB, October 28).
+   * The sidebar is a strip of film with perforations down its edge and a
+     hand-cranked camera at its foot. Thumbnails are black and white until
+     you point at them.
+   Layers: the vignette is fixed at z-index 902 (over the sidebar's 900,
+   under modals); the iris is 950. Left alone: the generator's preview
+   stage and theme thumbnails, font samples, the logs list and code, which
+   keep their own type. Reduced motion: no iris.
+   -------------------------------------------------------------------- */
+body.theme-silentfilm {
+  color-scheme: dark;
+  --bg-color: #0a0a0a;
+  --card-bg: #131313;
+  --raised-bg: #1b1b1b;
+  --input-bg: #0e0e0e;
+  --header-bg: #131313;
+  --hover-bg: #222222;
+  --border-color: #34332f;
+  --text-color: #ece9e2;
+  --text-secondary: #a8a59e;
+  --text-muted: #85827a;
+  --shadow: rgba(0, 0, 0, 0.5);
+  --button-bg: #ece9e2;
+  --button-hover: #ffffff;
+  --button-secondary-bg: #1b1b1b;
+  --button-text: #0a0a0a;
+  --accent-color: #ece9e2;
+  --success-color: #9cc5a1;
+  --warning-color: #e0b35e;
+  --error-color: #e07a70;
+  --success-soft: rgba(156, 197, 161, 0.12);
+  --warning-soft: rgba(224, 179, 94, 0.13);
+  --error-soft: rgba(224, 122, 112, 0.12);
+  --neutral-soft: rgba(236, 233, 226, 0.07);
+  --header-icon-color: #ece9e2;
+  --sb-deep: #050505;
+  --sb-surface: #0c0c0c;
+  --sb-text: #e4e1da;
+  --sb-text-2: #a19e97;
+  --sb-text-3: #807d76;
+  --sb-border: #2a2926;
+  --sb-border-strong: #44423d;
+  --sb-hover: #1c1c1c;
+  --sb-action: #ece9e2;
+  --sb-active: rgba(236, 233, 226, 0.1);
+  --nx-sec-library: #d9d5cc; --nx-sec-schedules: #d9d5cc; --nx-sec-nexup: #d9d5cc;
+  --nx-sec-connect: #d9d5cc; --nx-sec-community: #d9d5cc; --nx-sec-settings: #d9d5cc;
+  --nx-sec-schedules-btn: #55524b; --nx-sec-nexup-btn: #55524b; --nx-sec-connect-btn: #55524b;
+  --nx-sec-community-btn: #55524b;
+  --success-btn: #4d6b52; --warning-btn: #7a5a1c; --error-btn: #9c3f38;
+
+  --sf-serif: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, "DejaVu Serif", "Liberation Serif", serif;
+  --sf-title: "Limelight", var(--sf-serif);
+  background: #070707 radial-gradient(ellipse 85% 75% at 50% 42%, #171716, #070707 78%) fixed;
+}
+html:has(> body.theme-silentfilm) { scrollbar-color: #55524b #070707; }
+body.theme-silentfilm :is(.nx-sidebar, .nx-content, .nx-content *) { scrollbar-color: #44423d transparent; }
+body.theme-silentfilm .nx-shell,
+body.theme-silentfilm .nx-content { background: transparent; }
+body.theme-silentfilm ::selection { background: #ece9e2; color: #0a0a0a; }
+
+body.theme-silentfilm,
+body.theme-silentfilm :where(*:not(:is(.nx-gen-stage, .nx-gen-theme-grid, .nx-intermission, .nx-log-list) *, .nx-intermission, .nx-log-list, code, pre, kbd, samp, [style*="font-family"])) {
+  font-family: var(--sf-serif) !important;
+}
+
+/* Title cards. */
+body.theme-silentfilm .nx-page-header-copy,
+body.theme-silentfilm .nx-dash-header-text {
+  flex: 0 1 620px;
+  padding: 6px 26px 8px;
+  border: 26px solid transparent;
+  border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90' viewBox='0 0 90 90'%3E%3Crect x='.8' y='.8' width='88.4' height='88.4' fill='none' stroke='%23d9d4c7' stroke-width='1.6'/%3E%3Cpath d='M18,5 L72,5 A13,13 0 0 0 85,18 L85,72 A13,13 0 0 0 72,85 L18,85 A13,13 0 0 0 5,72 L5,18 A13,13 0 0 0 18,5 Z' fill='none' stroke='%23d9d4c7' stroke-width='1'/%3E%3Cpath d='M18,8 L72,8 A10,10 0 0 0 82,18 L82,72 A10,10 0 0 0 72,82 L18,82 A10,10 0 0 0 8,72 L8,18 A10,10 0 0 0 18,8 Z' fill='none' stroke='%23d9d4c7' stroke-opacity='.45' stroke-width='.6'/%3E%3Cpath d='M9.6,6.3999999999999995 L12.8,9.6 L9.6,12.8 L6.3999999999999995,9.6 Z' fill='%23d9d4c7'/%3E%3Cpath d='M80.4,6.3999999999999995 L83.60000000000001,9.6 L80.4,12.8 L77.2,9.6 Z' fill='%23d9d4c7'/%3E%3Cpath d='M80.4,77.2 L83.60000000000001,80.4 L80.4,83.60000000000001 L77.2,80.4 Z' fill='%23d9d4c7'/%3E%3Cpath d='M9.6,77.2 L12.8,80.4 L9.6,83.60000000000001 L6.3999999999999995,80.4 Z' fill='%23d9d4c7'/%3E%3C/svg%3E") 30 stretch;
+  background: radial-gradient(ellipse at 50% 42%, #1d1c1a, #0b0b0b 80%) border-box;
+  text-align: center;
+}
+body.theme-silentfilm .nx-page-header-title,
+body.theme-silentfilm .nx-dash-greeting {
+  justify-content: center;
+  margin: 4px 0 6px !important;
+  color: #f4f1ea;
+  font-family: var(--sf-title) !important;
+  font-size: 34px !important;
+  font-weight: 400 !important;
+  letter-spacing: .03em !important;
+  line-height: 1.15 !important;
+  text-shadow: 0 0 16px rgba(255, 248, 230, .2);
+}
+body.theme-silentfilm .nx-page-header-title .header-icon { display: none !important; }
+body.theme-silentfilm .nx-page-header-desc,
+body.theme-silentfilm .nx-dash-note { justify-content: center; margin: 0 !important; color: var(--text-secondary); font-style: italic; }
+/* "Chapter II" between two short rules. */
+body.theme-silentfilm .nx-page-header-eyebrow,
+body.theme-silentfilm .nx-dash-eyebrow {
+  margin: 0 !important;
+  font-size: 0 !important;
+  letter-spacing: 0 !important;
+  line-height: 1 !important;
+}
+body.theme-silentfilm .nx-page-header-eyebrow::before,
+body.theme-silentfilm .nx-dash-eyebrow::before {
+  display: inline-block;
+  padding: 0 44px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-style: italic;
+  font-variant: small-caps;
+  letter-spacing: .16em;
+  line-height: 1.4;
+  background:
+    linear-gradient(currentColor, currentColor) left center / 32px 1px no-repeat,
+    linear-gradient(currentColor, currentColor) right center / 32px 1px no-repeat;
+}
+body.theme-silentfilm .nx-dash-eyebrow::before { content: "Prologue"; }
+body.theme-silentfilm .nx-content-library .nx-page-header-eyebrow::before { content: "Chapter I"; }
+body.theme-silentfilm .nx-content-schedules .nx-page-header-eyebrow::before { content: "Chapter II"; }
+body.theme-silentfilm .nx-content-nexup .nx-page-header-eyebrow::before { content: "Chapter III"; }
+body.theme-silentfilm .nx-content-connect .nx-page-header-eyebrow::before { content: "Chapter IV"; }
+body.theme-silentfilm .nx-content-community .nx-page-header-eyebrow::before { content: "Chapter V"; }
+body.theme-silentfilm .nx-content-settings .nx-page-header-eyebrow::before { content: "Chapter VI"; }
+@media (max-width: 600px) {
+  body.theme-silentfilm .nx-page-header-copy,
+  body.theme-silentfilm .nx-dash-header-text { flex-basis: 100%; padding: 6px 12px 8px; border-width: 18px; }
+  body.theme-silentfilm .nx-page-header-title,
+  body.theme-silentfilm .nx-dash-greeting { font-size: 27px !important; }
+}
+
+/* Panels: a silver hairline, headings in small capitals. */
+body.theme-silentfilm .nx-content :is(.card, .nx-hybrid-command, .nx-hybrid-list-view, .nx-command-toolbar, .nx-command-rows, .nx-today-rail, .nx-connect-card, .nx-ap-service-card, .nx-conn-banner) {
+  border-color: rgba(236, 233, 226, .14);
+}
+body.theme-silentfilm .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card { border-color: rgba(236, 233, 226, .14) !important; }
+body.theme-silentfilm .nx-content .card:hover,
+body.theme-silentfilm .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card:hover { border-color: rgba(236, 233, 226, .34) !important; }
+
+/* Buttons: primary ones are white title-card plates. */
+body.theme-silentfilm :is(.button:not(.button-secondary):not(.danger), .nx-gen-btn.primary) {
+  border: 1px solid #ece9e2 !important;
+  background: #ece9e2 !important;
+  color: #0a0a0a !important;
+  font-variant: small-caps;
+  letter-spacing: .04em;
+  text-shadow: none;
+}
+body.theme-silentfilm :is(.button:not(.button-secondary):not(.danger), .nx-gen-btn.primary):not(:disabled):hover {
+  background: #ffffff !important;
+  box-shadow: 0 0 18px rgba(255, 248, 230, .28);
+}
+body.theme-silentfilm .button-secondary:not(:disabled):hover { border-color: #ece9e2 !important; }
+body.theme-silentfilm .button.danger { border: 1px solid var(--error-color) !important; background: transparent !important; color: var(--error-color) !important; }
+body.theme-silentfilm .button.danger:not(:disabled):hover { background: var(--error-color) !important; color: #0a0a0a !important; }
+/* Inline-styled badges painted in a light theme color get dark text. */
+body.theme-silentfilm :is(
+  [style*="background-color: var(--button-bg)"], [style*="background: var(--button-bg)"],
+  [style*="background-color: var(--accent-color)"], [style*="background: var(--accent-color)"],
+  [style*="background-color: var(--success-color)"], [style*="background: var(--success-color)"],
+  [style*="background-color: var(--nx-sec-library)"], [style*="background-color: var(--nx-sec-connect)"]) {
+  color: #0a0a0a !important;
+}
+
+/* Colors the app hardcodes. The storage bar uses the tints of dyed prints. */
+body.theme-silentfilm .nx-hybrid-library { --hybrid-violet: #ece9e2; --hybrid-soft: rgba(236, 233, 226, .1); }
+body.theme-silentfilm .nx-hybrid-page.is-active { color: #0a0a0a !important; }
+body.theme-silentfilm .nx-command-row-accent { background: #d9d5cc !important; }
+body.theme-silentfilm .nx-comm-ai-badge { border: 1px dashed currentColor; background: transparent; color: #d9d5cc; }
+body.theme-silentfilm .nx-connect-card-mark { filter: grayscale(1); }
+body.theme-silentfilm .nx-content-dashboard .nx-storage-seg-0 { background: #d9d5cc; }
+body.theme-silentfilm .nx-content-dashboard .nx-storage-seg-1 { background: #e0b35e; }
+body.theme-silentfilm .nx-content-dashboard .nx-storage-seg-2 { background: #9cc5a1; }
+body.theme-silentfilm .nx-content-dashboard .nx-storage-seg-3 { background: #8fb3d9; }
+
+/* Pictures are black and white until you point at them. */
+body.theme-silentfilm .nx-content img { filter: grayscale(1) contrast(1.08) brightness(.96); }
+body.theme-silentfilm .nx-content img:hover { filter: none; }
+body.theme-silentfilm .nx-content :is(.nx-gen-stage, .nx-gen-theme-grid) img { filter: none; }
+
+/* Dialogs: a title in the card face and a double rule. */
+body.theme-silentfilm .nx-modal { border-color: #55524b !important; box-shadow: 0 0 0 4px #0b0b0b, 0 0 0 5px #3a3833, 0 24px 60px rgba(0, 0, 0, .7) !important; }
+body.theme-silentfilm .nx-modal-title { font-family: var(--sf-title) !important; font-weight: 400 !important; letter-spacing: .03em; }
+
+/* Top bar. */
+body.theme-silentfilm .nx-content .nx-topbar { background: rgba(7, 7, 7, .88); border-bottom-color: #2a2926; }
+
+/* Sidebar: a strip of film. */
+body.theme-silentfilm .nx-sidebar {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='16' viewBox='0 0 10 16'%3E%3Crect x='1.5' y='4' width='7' height='8' rx='1.6' fill='%23d9d4c7' fill-opacity='.42'/%3E%3C/svg%3E") right 0 top 0 / 9px 15px repeat-y,
+    linear-gradient(90deg, transparent calc(100% - 9px), #020202 calc(100% - 9px)),
+    #0c0c0c !important;
+  border-right-color: #2a2926;
+}
+body.theme-silentfilm .nx-sidebar-parent.active,
+body.theme-silentfilm .nx-sidebar-section:first-child .nx-sidebar-parent.active {
+  color: #ffffff;
+  background: rgba(236, 233, 226, .08);
+  box-shadow: inset 0 0 0 1px rgba(236, 233, 226, .45);
+  text-shadow: 0 0 10px rgba(255, 248, 230, .35);
+}
+body.theme-silentfilm .nx-sidebar-parent.active::before { background: #ece9e2; }
+body.theme-silentfilm .nx-sidebar-child.active {
+  color: #ffffff;
+  background: rgba(236, 233, 226, .06);
+  box-shadow: inset 0 0 0 1px rgba(236, 233, 226, .22);
+}
+body.theme-silentfilm :is(.nx-sidebar-parent, .nx-sidebar-child).active .nx-sidebar-icon { color: #ffffff; }
+/* A hand-cranked camera under a spotlight at the foot of the sidebar; a
+   flex spacer like the Drive-In lot. */
+body.theme-silentfilm .nx-sidebar::after {
+  content: "";
+  order: 1;
+  flex: 0 1 calc(var(--nx-sidebar-w) * .4333);
+  min-height: 0;
+  margin-right: 9px;
+  pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cdefs%3E%3CradialGradient id='l' cx='.5' cy='.62' r='.5'%3E%3Cstop offset='0' stop-color='%23efe9da' stop-opacity='.2'/%3E%3Cstop offset='1' stop-color='%23efe9da' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='f' cx='.5' cy='.5' r='.5'%3E%3Cstop offset='0' stop-color='%23efe9da' stop-opacity='.16'/%3E%3Cstop offset='1' stop-color='%23efe9da' stop-opacity='0'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect x='0' y='0' width='240' height='104' fill='url(%23l)'/%3E%3Cellipse cx='122' cy='100' rx='58' ry='5' fill='url(%23f)'/%3E%3Cg stroke='%23d9d4c7' stroke-opacity='.7' stroke-width='1.3' stroke-linecap='round'%3E%3Cline x1='120' y1='70' x2='100' y2='101'/%3E%3Cline x1='122' y1='70' x2='145' y2='101'/%3E%3Cline x1='121' y1='70' x2='122' y2='103'/%3E%3C/g%3E%3Ccircle cx='112' cy='30' r='12' fill='%230b0b0b'/%3E%3Ccircle cx='113.1' cy='36.1' r='2.4' fill='%23050505'/%3E%3Ccircle cx='106.1' cy='27.9' r='2.4' fill='%23050505'/%3E%3Ccircle cx='116.8' cy='26.0' r='2.4' fill='%23050505'/%3E%3Cg stroke='%23d9d4c7' stroke-opacity='.75' stroke-width='.8'%3E%3Ccircle cx='112' cy='30' r='12' fill='none'/%3E%3Ccircle cx='112' cy='30' r='2.4' fill='none'/%3E%3Cline x1='114.5' y1='30.9' x2='121.0' y2='33.3'/%3E%3Cline x1='110.0' y1='31.7' x2='104.6' y2='36.2'/%3E%3Cline x1='111.5' y1='27.4' x2='110.3' y2='20.5'/%3E%3C/g%3E%3Ccircle cx='134' cy='32' r='10' fill='%230b0b0b'/%3E%3Ccircle cx='134.9' cy='37.1' r='2.0' fill='%23050505'/%3E%3Ccircle cx='129.1' cy='30.2' r='2.0' fill='%23050505'/%3E%3Ccircle cx='138.0' cy='28.7' r='2.0' fill='%23050505'/%3E%3Cg stroke='%23d9d4c7' stroke-opacity='.75' stroke-width='.8'%3E%3Ccircle cx='134' cy='32' r='10' fill='none'/%3E%3Ccircle cx='134' cy='32' r='2.0' fill='none'/%3E%3Cline x1='136.1' y1='32.8' x2='141.5' y2='34.7'/%3E%3Cline x1='132.3' y1='33.4' x2='127.9' y2='37.1'/%3E%3Cline x1='133.6' y1='29.8' x2='132.6' y2='24.1'/%3E%3C/g%3E%3Cpath d='M110,39 L114,47 M134,41 L130,47' stroke='%23d9d4c7' stroke-opacity='.6' stroke-width='.8'/%3E%3Crect x='103' y='46' width='40' height='24' rx='1.5' fill='%230b0b0b' stroke='%23d9d4c7' stroke-opacity='.85' stroke-width='.9'/%3E%3Crect x='107' y='50' width='14' height='9' fill='none' stroke='%23d9d4c7' stroke-opacity='.4' stroke-width='.6'/%3E%3Cpath d='M143,52 L149,50 L149,66 L143,64 Z' fill='%230b0b0b' stroke='%23d9d4c7' stroke-opacity='.85' stroke-width='.9'/%3E%3Crect x='149' y='53' width='6' height='10' rx='1' fill='%230b0b0b' stroke='%23d9d4c7' stroke-opacity='.85' stroke-width='.9'/%3E%3Ccircle cx='155.5' cy='58' r='1.6' fill='%23d9d4c7' fill-opacity='.9'/%3E%3Cg stroke='%23d9d4c7' stroke-width='1' stroke-linecap='round' stroke-opacity='.85'%3E%3Cline x1='103' y1='60' x2='96' y2='62'/%3E%3Cline x1='96' y1='62' x2='96' y2='68'/%3E%3C/g%3E%3Ccircle cx='103' cy='60' r='1.6' fill='%23d9d4c7'/%3E%3Ccircle cx='96' cy='68.5' r='1.3' fill='%23d9d4c7'/%3E%3C/svg%3E") center bottom / 100% auto no-repeat;
+}
+body.theme-silentfilm .nx-sidebar-footer { order: 2; margin-right: 9px; }
+body.theme-silentfilm .nx-sidebar.collapsed::after { display: none; }
+
+/* The dark corners of a projected picture. */
+body.theme-silentfilm::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 902;
+  pointer-events: none;
+  background: radial-gradient(ellipse 78% 74% at 50% 48%, transparent 58%, rgba(0, 0, 0, .58) 100%);
+}
+
+/* The iris: each page opens from a small circle, as between scenes. */
+@property --sf-iris { syntax: '<length>'; inherits: false; initial-value: 0px; }
+body.theme-silentfilm .nx-page-cut {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  pointer-events: none;
+  background: #000;
+  -webkit-mask-image: radial-gradient(circle var(--sf-iris) at 50% 46%, transparent 96%, #000 100%);
+  mask-image: radial-gradient(circle var(--sf-iris) at 50% 46%, transparent 96%, #000 100%);
+  animation: nx-sf-iris .8s cubic-bezier(.5, .05, .4, 1) both;
+}
+@keyframes nx-sf-iris {
+  0% { --sf-iris: 0px; opacity: 1; }
+  85% { opacity: 1; }
+  100% { --sf-iris: 110vmax; opacity: 0; visibility: hidden; }
+}
+
+/* The theme picker shows Silent Film as a title card, in any theme. */
+.nx-theme-option[data-theme-id="silentfilm"] .nx-theme-swatch {
+  border-color: #55524b;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90' viewBox='0 0 90 90'%3E%3Crect x='.8' y='.8' width='88.4' height='88.4' fill='none' stroke='%23d9d4c7' stroke-width='1.6'/%3E%3Cpath d='M18,5 L72,5 A13,13 0 0 0 85,18 L85,72 A13,13 0 0 0 72,85 L18,85 A13,13 0 0 0 5,72 L5,18 A13,13 0 0 0 18,5 Z' fill='none' stroke='%23d9d4c7' stroke-width='1'/%3E%3Cpath d='M18,8 L72,8 A10,10 0 0 0 82,18 L82,72 A10,10 0 0 0 72,82 L18,82 A10,10 0 0 0 8,72 L8,18 A10,10 0 0 0 18,8 Z' fill='none' stroke='%23d9d4c7' stroke-opacity='.45' stroke-width='.6'/%3E%3Cpath d='M9.6,6.3999999999999995 L12.8,9.6 L9.6,12.8 L6.3999999999999995,9.6 Z' fill='%23d9d4c7'/%3E%3Cpath d='M80.4,6.3999999999999995 L83.60000000000001,9.6 L80.4,12.8 L77.2,9.6 Z' fill='%23d9d4c7'/%3E%3Cpath d='M80.4,77.2 L83.60000000000001,80.4 L80.4,83.60000000000001 L77.2,80.4 Z' fill='%23d9d4c7'/%3E%3Cpath d='M9.6,77.2 L12.8,80.4 L9.6,83.60000000000001 L6.3999999999999995,80.4 Z' fill='%23d9d4c7'/%3E%3C/svg%3E") center / 100% 100% no-repeat, radial-gradient(circle at 50% 45%, #2a2926, #0a0a0a 75%);
+}
+.nx-theme-option[data-theme-id="silentfilm"] .nx-theme-swatch i { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  body.theme-silentfilm .nx-page-cut { display: none; }
+}
+
+/* --------------------------------------------------------------------
+   The VHS Rewind skin: a rental tape on a 90s TV. Everything here is
+   scoped to body.theme-vhs.
+   * The five sections take the five colors of the classic rainbow tape
+     label; actions are the VCR's blue.
+   * Section labels are the VCR's on-screen display (VT323, white with a
+     hard shadow and color fringing): "PLAY ►" and a running tape counter
+     (CSS only, from registered integer properties).
+   * Page titles are hand-written in marker (Permanent Marker, bundled in
+     src/fonts, Apache 2.0) on a label sticker with rainbow stripes.
+   * A fast-forward glitch with "►►" on every page change (.nx-page-cut);
+     no background animation (JB, October 28). Dialogs look like the VCR's
+     blue menu screen.
+   * The top bar clock is a glowing display with a rainbow edge; at the
+     foot of the sidebar, a VCR with a tape in it, its clock blinking 12:00.
+   Layers: the page change is fixed at z-index 950 (over the sidebar's
+   900). Reduced motion: no glitch, steady 12:00.
+   -------------------------------------------------------------------- */
+body.theme-vhs {
+  color-scheme: dark;
+  --bg-color: #101119;
+  --card-bg: #181a24;
+  --raised-bg: #20222e;
+  --input-bg: #13141c;
+  --header-bg: #181a24;
+  --hover-bg: #252836;
+  --border-color: #2e3140;
+  --text-color: #eef0f6;
+  --text-secondary: #a3a8b8;
+  --text-muted: #80869a;
+  --shadow: rgba(0, 0, 0, 0.45);
+  --button-bg: #2a4fe0;
+  --button-hover: #2140c4;
+  --button-secondary-bg: #252836;
+  --button-text: #ffffff;
+  --accent-color: #7096ff;
+  --success-color: #4cc764;
+  --warning-color: #f6c92a;
+  --error-color: #ef4b45;
+  --success-soft: rgba(76, 199, 100, 0.12);
+  --warning-soft: rgba(246, 201, 42, 0.12);
+  --error-soft: rgba(239, 75, 69, 0.12);
+  --neutral-soft: rgba(163, 168, 184, 0.09);
+  --header-icon-color: #eef0f6;
+  --sb-deep: #0b0c12;
+  --sb-surface: #12131b;
+  --sb-text: #e6e8f0;
+  --sb-text-2: #9ea3b3;
+  --sb-text-3: #7a8094;
+  --sb-border: #262936;
+  --sb-border-strong: #343849;
+  --sb-hover: #1f2230;
+  --sb-action: #2a4fe0;
+  --sb-active: rgba(42, 79, 224, 0.24);
+  --nx-sec-library: #4f7cff; --nx-sec-schedules: #4cc764; --nx-sec-nexup: #f6c92a;
+  --nx-sec-connect: #f08a24; --nx-sec-community: #ef4b45; --nx-sec-settings: #4f7cff;
+  --nx-sec-schedules-btn: #2a8a3d; --nx-sec-nexup-btn: #8f7008; --nx-sec-connect-btn: #b85d0f;
+  --nx-sec-community-btn: #d23a35;
+  --success-btn: #2a8a3d; --warning-btn: #8f7008; --error-btn: #d23a35;
+
+  --vhs-osd: "VT323", Consolas, monospace;
+  --vhs-marker: "Permanent Marker", "Segoe Print", "Bradley Hand", cursive;
+  --vhs-stripes: linear-gradient(180deg, #e8413c 0 20%, #f08a24 20% 40%, #f6c92a 40% 60%, #3fb34f 60% 80%, #2f7fd8 80% 100%);
+  background: #0b0c12 radial-gradient(ellipse 90% 70% at 50% 35%, #1a1c2a, #0b0c12 72%) fixed;
+}
+html:has(> body.theme-vhs) { scrollbar-color: #343849 #0b0c12; }
+body.theme-vhs :is(.nx-sidebar, .nx-content, .nx-content *) { scrollbar-color: #343849 transparent; }
+body.theme-vhs .nx-shell,
+body.theme-vhs .nx-content { background: transparent; }
+body.theme-vhs ::selection { background: #2a4fe0; color: #ffffff; }
+
+/* The on-screen display: PLAY ► and the tape counter. */
+@property --vhs-s { syntax: '<integer>'; inherits: false; initial-value: 0; }
+@property --vhs-m { syntax: '<integer>'; inherits: false; initial-value: 0; }
+@property --vhs-h { syntax: '<integer>'; inherits: false; initial-value: 0; }
+body.theme-vhs .nx-page-header-eyebrow,
+body.theme-vhs .nx-dash-eyebrow {
+  color: #ffffff !important;
+  font-family: var(--vhs-osd) !important;
+  font-size: 22px !important;
+  font-weight: 400 !important;
+  letter-spacing: .06em !important;
+  line-height: 1 !important;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 #000, -1px 0 rgba(255, 50, 90, .55), 1px 0 rgba(50, 220, 255, .55);
+}
+body.theme-vhs .nx-page-header-eyebrow::before,
+body.theme-vhs .nx-dash-eyebrow::before { content: "PLAY \25BA\00a0\00a0"; }
+body.theme-vhs .nx-page-header-eyebrow::after,
+body.theme-vhs .nx-dash-eyebrow::after {
+  margin-left: 1.2em;
+  opacity: .8;
+  counter-reset: vhs-h var(--vhs-h) vhs-m var(--vhs-m) vhs-s var(--vhs-s);
+  content: "SP " counter(vhs-h) ":" counter(vhs-m, decimal-leading-zero) ":" counter(vhs-s, decimal-leading-zero);
+  animation: nx-vhs-s 60s steps(60, end) infinite, nx-vhs-m 3600s steps(60, end) infinite, nx-vhs-h 36000s steps(10, end) infinite;
+}
+@keyframes nx-vhs-s { to { --vhs-s: 60; } }
+@keyframes nx-vhs-m { to { --vhs-m: 60; } }
+@keyframes nx-vhs-h { to { --vhs-h: 10; } }
+
+/* Titles in marker on a label sticker. */
+body.theme-vhs .nx-page-header-title,
+body.theme-vhs .nx-dash-greeting {
+  display: inline-flex !important;
+  width: max-content;
+  max-width: 100%;
+  margin: 10px 0 8px 2px !important;
+  padding: 17px 22px 6px !important;
+  border-radius: 2px;
+  color: #1d1e27 !important;
+  background:
+    var(--vhs-stripes) top / 100% 10px no-repeat,
+    linear-gradient(180deg, #f6f3ea, #e9e4d6);
+  box-shadow: 0 8px 18px -8px rgba(0, 0, 0, .75), inset 0 0 0 1px rgba(0, 0, 0, .05);
+  font-family: var(--vhs-marker) !important;
+  font-size: 28px !important;
+  font-weight: 400 !important;
+  letter-spacing: .01em !important;
+  line-height: 1.2 !important;
+  text-shadow: none;
+  transform: rotate(-1.2deg);
+  transform-origin: left center;
+}
+body.theme-vhs .nx-page-header-title .header-icon { display: none !important; }
+@media (max-width: 600px) {
+  body.theme-vhs .nx-page-header-title,
+  body.theme-vhs .nx-dash-greeting { font-size: 23px !important; padding: 15px 16px 5px !important; }
+}
+
+/* Worn-tape color fringing on headings. */
+body.theme-vhs .nx-content :is(h2, h3) { text-shadow: -.7px 0 rgba(255, 50, 90, .35), .7px 0 rgba(50, 220, 255, .35); }
+
+/* Top bar: the clock is a glowing display, a rainbow edge underneath. */
+body.theme-vhs .nx-content .nx-topbar { background: rgba(11, 12, 18, .9); border-bottom-color: transparent; }
+body.theme-vhs .nx-content .nx-topbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 5px;
+  pointer-events: none;
+  background: var(--vhs-stripes);
+  opacity: .85;
+}
+body.theme-vhs .nx-global-clock strong {
+  color: #72f5e2;
+  font-family: var(--vhs-osd);
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: .06em;
+  text-shadow: 0 0 6px rgba(114, 245, 226, .75);
+}
+
+/* Buttons. */
+body.theme-vhs .nx-content .button:not(.button-secondary) { text-transform: uppercase; letter-spacing: .04em; }
+body.theme-vhs .nx-content .button:not(.button-secondary):not(:disabled):hover { box-shadow: 0 0 0 1px rgba(255, 255, 255, .25), 0 0 18px -4px var(--button-bg); }
+
+/* The VCR blue is too dark for text; inline text in it uses the accent. */
+body.theme-vhs :is([style^="color: var(--button-bg)"], [style*="; color: var(--button-bg)"]) { color: var(--accent-color) !important; }
+
+/* Colors the app hardcodes. The storage bar takes the label's stripes. */
+body.theme-vhs .nx-hybrid-library { --hybrid-violet: #2a4fe0; --hybrid-soft: rgba(42, 79, 224, .18); }
+body.theme-vhs .nx-content-dashboard .nx-storage-seg-0 { background: #2f7fd8; }
+body.theme-vhs .nx-content-dashboard .nx-storage-seg-1 { background: #f6c92a; }
+body.theme-vhs .nx-content-dashboard .nx-storage-seg-2 { background: #3fb34f; }
+body.theme-vhs .nx-content-dashboard .nx-storage-seg-3 { background: #e8413c; }
+
+/* Dialogs: the VCR's blue menu screen. */
+body.theme-vhs .nx-modal-header { background: #1c3bd0 !important; border-bottom-color: #2a4fe0; }
+body.theme-vhs .nx-modal-header,
+body.theme-vhs .nx-modal-header * { color: #ffffff !important; }
+body.theme-vhs .nx-modal-title {
+  font-family: var(--vhs-osd) !important;
+  font-size: 28px !important;
+  font-weight: 400 !important;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 #000;
+}
+
+/* Sidebar: the active item in VCR blue with a rainbow edge, and the deck. */
+body.theme-vhs .nx-sidebar-parent.active,
+body.theme-vhs .nx-sidebar-section:first-child .nx-sidebar-parent.active {
+  color: #ffffff;
+  background: #2a4fe0 !important;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .5);
+}
+body.theme-vhs .nx-sidebar-parent.active::before {
+  width: 5px;
+  border-radius: 0;
+  background: linear-gradient(90deg, #e8413c 0 1px, #f08a24 1px 2px, #f6c92a 2px 3px, #3fb34f 3px 4px, #2f7fd8 4px 5px);
+}
+body.theme-vhs .nx-sidebar-child.active { color: #ffffff; background: rgba(42, 79, 224, .3); }
+body.theme-vhs :is(.nx-sidebar-parent, .nx-sidebar-child).active .nx-sidebar-icon { color: #ffffff; }
+body.theme-vhs .nx-sidebar::after {
+  content: "";
+  order: 1;
+  flex: 0 1 calc(var(--nx-sidebar-w) * .4333);
+  min-height: 0;
+  pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23262833'/%3E%3Cstop offset='.12' stop-color='%23191a22'/%3E%3Cstop offset='1' stop-color='%23101117'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-30%25' y='-60%25' width='160%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='1.1'/%3E%3C/filter%3E%3CradialGradient id='t' cx='.5' cy='1' r='.7'%3E%3Cstop offset='0' stop-color='%233a5bff' stop-opacity='.16'/%3E%3Cstop offset='1' stop-color='%233a5bff' stop-opacity='0'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect x='0' y='0' width='240' height='104' fill='url(%23t)'/%3E%3Crect x='60' y='52' width='70' height='14' rx='1.5' fill='%230d0d11' stroke='%233a3c48' stroke-width='.6'/%3E%3Crect x='68' y='54.6' width='54' height='9' rx='.8' fill='%23f2efe6'/%3E%3Crect x='70' y='56.6' width='50' height='.9' fill='%23e8413c'/%3E%3Crect x='70' y='57.5' width='50' height='.9' fill='%23f08a24'/%3E%3Crect x='70' y='58.4' width='50' height='.9' fill='%23f6c92a'/%3E%3Crect x='70' y='59.3' width='50' height='.9' fill='%233fb34f'/%3E%3Crect x='70' y='60.2' width='50' height='.9' fill='%232f7fd8'/%3E%3Cpath d='M74,62 q3,-2.6 6,0 t6,0 q2,-2 4,0 t5,-.5 q3,-2 6,.3 t5,-.6' fill='none' stroke='%2322232c' stroke-width='.9' stroke-linecap='round'/%3E%3Crect x='22' y='64' width='196' height='32' rx='3' fill='url(%23b)' stroke='%2330323e' stroke-width='.8'/%3E%3Cline x1='25' y1='65.2' x2='215' y2='65.2' stroke='%234a4d5c' stroke-width='.6'/%3E%3Crect x='54' y='66' width='82' height='6' rx='1.2' fill='%23050508'/%3E%3Crect x='34' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='46' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='58' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='70' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='86' y='82' width='14' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='104' y='82' width='14' height='4' rx='1' fill='%232b2d38'/%3E%3Ccircle cx='30' cy='70' r='1.4' fill='%23ff3b3b'/%3E%3Ccircle cx='30' cy='70' r='2.6' fill='%23ff3b3b' opacity='.35' filter='url(%23g)'/%3E%3Crect x='148' y='67' width='58' height='18' rx='2' fill='%23030507' stroke='%23262a33' stroke-width='.6'/%3E%3Cg%3E%3Canimate attributeName='opacity' values='1;1;0;0' keyTimes='0;.5;.5;1' dur='1.1s' repeatCount='indefinite'/%3E%3Cg filter='url(%23g)' opacity='.8'%3E%3Crect x='158.99' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='158.99' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='166.79' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='74.34' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='161.80' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='169.91' y='72.62' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='169.91' y='76.83' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='172.72' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='172.72' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3C/g%3E%3Crect x='158.99' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='158.99' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='166.79' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='74.34' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='161.80' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='169.91' y='72.62' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='169.91' y='76.83' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='172.72' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='172.72' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3C/g%3E%3Crect x='30' y='95' width='14' height='3' rx='1' fill='%230a0a0e'/%3E%3Crect x='196' y='95' width='14' height='3' rx='1' fill='%230a0a0e'/%3E%3C/svg%3E") center bottom / 100% auto no-repeat;
+}
+body.theme-vhs .nx-sidebar-footer { order: 2; }
+body.theme-vhs .nx-sidebar.collapsed::after { display: none; }
+
+/* A page change fast-forwards: a burst of tape noise and ►► in the bottom
+   corner, where a VCR shows its mode. */
+body.theme-vhs .nx-page-cut {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  pointer-events: none;
+  animation: nx-vhs-cut-end .9s steps(1) both;
+}
+body.theme-vhs .nx-page-cut::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 3px, rgba(255, 255, 255, .1) 3px 4px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: screen;
+  animation: nx-vhs-cut .42s steps(5) both;
+}
+body.theme-vhs .nx-page-cut::after {
+  content: "\25BA\25BA";
+  position: absolute;
+  right: 34px;
+  bottom: 26px;
+  color: #ffffff;
+  font: 34px/1 var(--vhs-osd);
+  letter-spacing: -.05em;
+  text-shadow: 2px 2px 0 #000;
+  animation: nx-vhs-ff .9s steps(1) both;
+}
+@keyframes nx-vhs-cut {
+  0% { opacity: .45; transform: translate3d(-10px, 0, 0) skewX(-5deg); }
+  50% { opacity: .3; transform: translate3d(8px, 0, 0) skewX(4deg); }
+  100% { opacity: 0; transform: none; }
+}
+@keyframes nx-vhs-ff { 0%, 30%, 60% { opacity: 1; } 15%, 45% { opacity: .55; } 90%, 100% { opacity: 0; } }
+@keyframes nx-vhs-cut-end { to { visibility: hidden; } }
+
+/* The theme picker shows VHS Rewind as a labelled cassette, in any theme. */
+.nx-theme-option[data-theme-id="vhs"] .nx-theme-swatch {
+  border-color: #343849;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' fill='%23121218'/%3E%3Crect x='3' y='4' width='20' height='15' rx='1' fill='%23f2efe6'/%3E%3Crect x='3' y='6.0' width='20' height='2.2' fill='%23e8413c'/%3E%3Crect x='3' y='8.2' width='20' height='2.2' fill='%23f08a24'/%3E%3Crect x='3' y='10.4' width='20' height='2.2' fill='%23f6c92a'/%3E%3Crect x='3' y='12.600000000000001' width='20' height='2.2' fill='%233fb34f'/%3E%3Crect x='3' y='14.8' width='20' height='2.2' fill='%232f7fd8'/%3E%3Ccircle cx='9' cy='21.5' r='2' fill='%232a2c36'/%3E%3Ccircle cx='17' cy='21.5' r='2' fill='%232a2c36'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+}
+.nx-theme-option[data-theme-id="vhs"] .nx-theme-swatch i { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  body.theme-vhs .nx-page-cut { display: none; }
+  body.theme-vhs .nx-sidebar::after { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23262833'/%3E%3Cstop offset='.12' stop-color='%23191a22'/%3E%3Cstop offset='1' stop-color='%23101117'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-30%25' y='-60%25' width='160%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='1.1'/%3E%3C/filter%3E%3CradialGradient id='t' cx='.5' cy='1' r='.7'%3E%3Cstop offset='0' stop-color='%233a5bff' stop-opacity='.16'/%3E%3Cstop offset='1' stop-color='%233a5bff' stop-opacity='0'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect x='0' y='0' width='240' height='104' fill='url(%23t)'/%3E%3Crect x='60' y='52' width='70' height='14' rx='1.5' fill='%230d0d11' stroke='%233a3c48' stroke-width='.6'/%3E%3Crect x='68' y='54.6' width='54' height='9' rx='.8' fill='%23f2efe6'/%3E%3Crect x='70' y='56.6' width='50' height='.9' fill='%23e8413c'/%3E%3Crect x='70' y='57.5' width='50' height='.9' fill='%23f08a24'/%3E%3Crect x='70' y='58.4' width='50' height='.9' fill='%23f6c92a'/%3E%3Crect x='70' y='59.3' width='50' height='.9' fill='%233fb34f'/%3E%3Crect x='70' y='60.2' width='50' height='.9' fill='%232f7fd8'/%3E%3Cpath d='M74,62 q3,-2.6 6,0 t6,0 q2,-2 4,0 t5,-.5 q3,-2 6,.3 t5,-.6' fill='none' stroke='%2322232c' stroke-width='.9' stroke-linecap='round'/%3E%3Crect x='22' y='64' width='196' height='32' rx='3' fill='url(%23b)' stroke='%2330323e' stroke-width='.8'/%3E%3Cline x1='25' y1='65.2' x2='215' y2='65.2' stroke='%234a4d5c' stroke-width='.6'/%3E%3Crect x='54' y='66' width='82' height='6' rx='1.2' fill='%23050508'/%3E%3Crect x='34' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='46' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='58' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='70' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='86' y='82' width='14' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='104' y='82' width='14' height='4' rx='1' fill='%232b2d38'/%3E%3Ccircle cx='30' cy='70' r='1.4' fill='%23ff3b3b'/%3E%3Ccircle cx='30' cy='70' r='2.6' fill='%23ff3b3b' opacity='.35' filter='url(%23g)'/%3E%3Crect x='148' y='67' width='58' height='18' rx='2' fill='%23030507' stroke='%23262a33' stroke-width='.6'/%3E%3Cg%3E%3Cg filter='url(%23g)' opacity='.8'%3E%3Crect x='158.99' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='158.99' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='166.79' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='74.34' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='161.80' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='169.91' y='72.62' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='169.91' y='76.83' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='172.72' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='172.72' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3C/g%3E%3Crect x='158.99' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='158.99' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='166.79' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='74.34' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='161.80' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='169.91' y='72.62' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='169.91' y='76.83' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='172.72' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='172.72' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3C/g%3E%3Crect x='30' y='95' width='14' height='3' rx='1' fill='%230a0a0e'/%3E%3Crect x='196' y='95' width='14' height='3' rx='1' fill='%230a0a0e'/%3E%3C/svg%3E"); }
 }

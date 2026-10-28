@@ -284,6 +284,8 @@ const THEMES = {
   terminal:  { label: 'Terminal',  base: 'dark',  blurb: 'Green phosphor on black: monospace text, DOS prompts and scanlines.', swatch: ['#000000', '#1d9140', '#3cff6e'] },
   neon:      { label: 'Neon',      base: 'dark',  blurb: 'Synthwave violet-black, magenta and electric cyan.', swatch: ['#0b0714', '#ff2e97', '#00e5ff'] },
   carbon:    { label: 'Carbon',    base: 'dark',  blurb: 'True black for OLED panels, with an amber accent.', swatch: ['#000000', '#f0a020', '#3ecf6d'] },
+  silentfilm: { label: 'Silent Film', base: 'dark', blurb: 'Black and white: title cards, a strip of film and an iris between pages.', swatch: ['#0a0a0a', '#ece9e2', '#85827a'] },
+  vhs:       { label: 'VHS Rewind', base: 'dark',  blurb: 'A rental tape: on-screen display, marker labels and rainbow stripes.', swatch: ['#101119', '#f08a24', '#2a4fe0'] },
   // Secret: listed only once unlocked (the Konami code, or searching "drive-in").
   drivein:   { label: 'Drive-In',  base: 'dark',  blurb: 'A drive-in at dusk: stars, a projector beam and neon signs.', swatch: ['#140f24', '#ff8a3d', '#4dff9a'], secret: true },
 };
@@ -37749,6 +37751,11 @@ const DashboardTiles = {
           </div>
         </div>
       </div>
+
+      {/* A scene change between pages. Keyed by the tab, so every page change
+          mounts a fresh element and its CSS animation plays once (Silent Film
+          irises in, VHS fast-forwards). Hidden in the other themes. */}
+      <div key={activeTab} className="nx-page-cut" aria-hidden="true" />
 
       {/* v2: update availability is surfaced by the sidebar footer pill (see Sidebar),
           so the old top-of-content update banner has been removed. */}
