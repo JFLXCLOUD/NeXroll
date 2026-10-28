@@ -7709,8 +7709,31 @@ body.theme-parchment .nx-section-community { --nx-section-accent: #a8551a; --nx-
   font-display: swap;
   src: url('./fonts/permanent-marker-latin-400-normal.woff2') format('woff2');
 }
-/* The scene change App.js mounts on every page change; only Silent Film
-   and VHS Rewind show it. */
+/* Courier Prime, the Screenplay theme's typewriter face (skin at the end of
+   this file). */
+@font-face {
+  font-family: 'Courier Prime';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/courier-prime-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Courier Prime';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/courier-prime-latin-400-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Courier Prime';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/courier-prime-latin-700-normal.woff2') format('woff2');
+}
+/* The scene change App.js mounts on every page change; only Silent Film,
+   VHS Rewind and Screenplay show it. */
 .nx-page-cut { display: none; }
 body.theme-terminal {
   color-scheme: dark;
@@ -14173,4 +14196,289 @@ body.theme-vhs .nx-page-cut::after {
 @media (prefers-reduced-motion: reduce) {
   body.theme-vhs .nx-page-cut { display: none; }
   body.theme-vhs .nx-sidebar::after { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23262833'/%3E%3Cstop offset='.12' stop-color='%23191a22'/%3E%3Cstop offset='1' stop-color='%23101117'/%3E%3C/linearGradient%3E%3Cfilter id='g' x='-30%25' y='-60%25' width='160%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='1.1'/%3E%3C/filter%3E%3CradialGradient id='t' cx='.5' cy='1' r='.7'%3E%3Cstop offset='0' stop-color='%233a5bff' stop-opacity='.16'/%3E%3Cstop offset='1' stop-color='%233a5bff' stop-opacity='0'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect x='0' y='0' width='240' height='104' fill='url(%23t)'/%3E%3Crect x='60' y='52' width='70' height='14' rx='1.5' fill='%230d0d11' stroke='%233a3c48' stroke-width='.6'/%3E%3Crect x='68' y='54.6' width='54' height='9' rx='.8' fill='%23f2efe6'/%3E%3Crect x='70' y='56.6' width='50' height='.9' fill='%23e8413c'/%3E%3Crect x='70' y='57.5' width='50' height='.9' fill='%23f08a24'/%3E%3Crect x='70' y='58.4' width='50' height='.9' fill='%23f6c92a'/%3E%3Crect x='70' y='59.3' width='50' height='.9' fill='%233fb34f'/%3E%3Crect x='70' y='60.2' width='50' height='.9' fill='%232f7fd8'/%3E%3Cpath d='M74,62 q3,-2.6 6,0 t6,0 q2,-2 4,0 t5,-.5 q3,-2 6,.3 t5,-.6' fill='none' stroke='%2322232c' stroke-width='.9' stroke-linecap='round'/%3E%3Crect x='22' y='64' width='196' height='32' rx='3' fill='url(%23b)' stroke='%2330323e' stroke-width='.8'/%3E%3Cline x1='25' y1='65.2' x2='215' y2='65.2' stroke='%234a4d5c' stroke-width='.6'/%3E%3Crect x='54' y='66' width='82' height='6' rx='1.2' fill='%23050508'/%3E%3Crect x='34' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='46' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='58' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='70' y='82' width='9' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='86' y='82' width='14' height='4' rx='1' fill='%232b2d38'/%3E%3Crect x='104' y='82' width='14' height='4' rx='1' fill='%232b2d38'/%3E%3Ccircle cx='30' cy='70' r='1.4' fill='%23ff3b3b'/%3E%3Ccircle cx='30' cy='70' r='2.6' fill='%23ff3b3b' opacity='.35' filter='url(%23g)'/%3E%3Crect x='148' y='67' width='58' height='18' rx='2' fill='%23030507' stroke='%23262a33' stroke-width='.6'/%3E%3Cg%3E%3Cg filter='url(%23g)' opacity='.8'%3E%3Crect x='158.99' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='158.99' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='166.79' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='74.34' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='161.80' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='169.91' y='72.62' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='169.91' y='76.83' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='172.72' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='172.72' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3C/g%3E%3Crect x='158.99' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='158.99' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='166.79' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='74.34' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='161.80' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='162.58' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='169.91' y='72.62' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='169.91' y='76.83' width='1.25' height='1.25' fill='%2372f5e2'/%3E%3Crect x='172.72' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='176.93' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='172.72' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='171.94' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='69.50' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='184.73' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='180.52' y='79.17' width='4.68' height='1.25' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='75.27' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3Crect x='179.74' y='70.28' width='1.25' height='4.37' rx='.3' fill='%2372f5e2'/%3E%3C/g%3E%3Crect x='30' y='95' width='14' height='3' rx='1' fill='%230a0a0e'/%3E%3Crect x='196' y='95' width='14' height='3' rx='1' fill='%230a0a0e'/%3E%3C/svg%3E"); }
+}
+
+/* --------------------------------------------------------------------
+   The Screenplay skin: a shooting script. Everything here is scoped to
+   body.theme-screenplay.
+   * Courier Prime (bundled in src/fonts, OFL), the screenwriters' Courier,
+     in black on white paper.
+   * Each section is printed on its revision color, the colored pages a
+     script gets as it is rewritten: Library blue, Schedules pink, NeX-Up
+     yellow, Connect green, Community goldenrod, Settings buff; the
+     dashboard is the white first draft. A revision line in the corner of
+     the page header names it ("Blue Rev. (10/28/26)").
+   * Page headers open with a scene heading ("2A  INT. LIBRARY - DAY"); App.js
+     supplies data-scene and data-slug on the eyebrow, data-rev-date on the
+     header. The dashboard starts with FADE IN: and its greeting is
+     dialogue, cued NEXROLL (V.O.).
+   * Three punched holes down the binding edge, brass fasteners in the top
+     and bottom ones. The active sidebar item is marked with a highlighter
+     in its section's color; selected text is highlighted yellow.
+   * "CUT TO:" shows in the corner on a page change (.nx-page-cut).
+   No background animation. Left alone: the generator's preview stage and
+   theme thumbnails, and font samples, which keep their own type. Reduced
+   motion: no CUT TO.
+   -------------------------------------------------------------------- */
+body.theme-screenplay {
+  color-scheme: light;
+  --bg-color: #f7f6f2;
+  --card-bg: #ffffff;
+  --raised-bg: #f3f2ed;
+  --input-bg: #ffffff;
+  --header-bg: #ffffff;
+  --hover-bg: #efeee8;
+  --border-color: #d6d4cc;
+  --text-color: #1c1c1a;
+  --text-secondary: #4d4b45;
+  --text-muted: #6c6961;
+  --shadow: rgba(40, 36, 28, 0.08);
+  --button-bg: #1c1c1a;
+  --button-hover: #000000;
+  --button-secondary-bg: #efeee8;
+  --button-text: #ffffff;
+  --accent-color: #2f5d9e;
+  --success-color: #2f7a3b;
+  --warning-color: #8f6206;
+  --error-color: #bf3326;
+  --success-soft: rgba(47, 122, 59, 0.1);
+  --warning-soft: rgba(143, 98, 6, 0.11);
+  --error-soft: rgba(191, 51, 38, 0.09);
+  --neutral-soft: rgba(28, 28, 26, 0.05);
+  --header-icon-color: #1c1c1a;
+  --sb-surface: #ffffff;
+  --sb-border: #d6d4cc;
+  --nx-sec-library: #2f5d9e; --nx-sec-schedules: #a8365f; --nx-sec-nexup: #866500;
+  --nx-sec-connect: #33733a; --nx-sec-community: #9c5f08; --nx-sec-settings: #7a5a3a;
+  --nx-sec-schedules-btn: #a8365f; --nx-sec-nexup-btn: #866500; --nx-sec-connect-btn: #33733a;
+  --nx-sec-community-btn: #9c5f08;
+  --success-btn: #2f7a3b; --warning-btn: #866500; --error-btn: #bf3326;
+
+  --sp-type: "Courier Prime", "Courier New", Courier, monospace;
+  /* Highlighter for the active sidebar item; each section sets its own. */
+  --sp-hl: #fbec6c;
+}
+/* The revision pages. */
+body.theme-screenplay .nx-content-dashboard { --bg-color: #fbfaf7; --sp-rev: "Shooting Script"; }
+body.theme-screenplay .nx-content-library { --bg-color: #e2ecf8; --sp-rev: "Blue Rev."; }
+body.theme-screenplay .nx-content-schedules { --bg-color: #f8e3eb; --sp-rev: "Pink Rev."; }
+body.theme-screenplay .nx-content-nexup { --bg-color: #f8efc6; --sp-rev: "Yellow Rev."; }
+body.theme-screenplay .nx-content-connect { --bg-color: #e1efd9; --sp-rev: "Green Rev."; }
+body.theme-screenplay .nx-content-community { --bg-color: #f6e5ba; --sp-rev: "Goldenrod Rev."; }
+body.theme-screenplay .nx-content-settings { --bg-color: #f1e8d6; --sp-rev: "Buff Rev."; }
+body.theme-screenplay ::selection { background: #fbec6c; color: #1c1c1a; }
+
+body.theme-screenplay,
+body.theme-screenplay :where(*:not(:is(.nx-gen-stage, .nx-gen-theme-grid, .nx-intermission) *, .nx-intermission, [style*="font-family"])) {
+  font-family: var(--sp-type) !important;
+  letter-spacing: 0 !important;
+}
+/* Paper is cut square; corners go through #root to outrank the component
+   rules that pin a radius with !important. Pills stay round. */
+body.theme-screenplay #root :where(.card, .button, button, input, select, textarea, .nx-modal, .nx-hybrid-command, .nx-hybrid-list-view, .nx-command-toolbar, .nx-command-rows, .nx-connect-card, .nx-tile, .nx-dash-action) {
+  border-radius: 2px !important;
+}
+
+/* Scene heading: the scene number in the margin, then INT./EXT., the place
+   and DAY or NIGHT. */
+body.theme-screenplay .nx-page-header-copy,
+body.theme-screenplay .nx-dash-header-text {
+  position: relative;
+  padding-left: 52px;
+}
+body.theme-screenplay .nx-page-header-eyebrow,
+body.theme-screenplay .nx-dash-eyebrow {
+  margin: 0 0 8px !important;
+  font-size: 0 !important;
+  line-height: 1 !important;
+}
+body.theme-screenplay .nx-page-header-eyebrow::before,
+body.theme-screenplay .nx-dash-eyebrow::before {
+  content: attr(data-scene);
+  position: absolute;
+  left: 0;
+  color: var(--text-color);
+  font: 700 14px/1.4 var(--sp-type);
+}
+body.theme-screenplay .nx-page-header-eyebrow::after,
+body.theme-screenplay .nx-dash-eyebrow::after {
+  content: attr(data-slug);
+  color: var(--text-color);
+  font: 700 14px/1.4 var(--sp-type);
+}
+body.theme-screenplay .nx-page-header-title,
+body.theme-screenplay .nx-dash-greeting {
+  margin: 0 0 6px !important;
+  color: var(--text-color);
+  font-size: 26px !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+}
+body.theme-screenplay .nx-page-header-title .header-icon { display: none !important; }
+body.theme-screenplay .nx-page-header-desc { margin: 0 !important; color: var(--text-secondary); }
+/* The revision line, top right. */
+body.theme-screenplay :is(.nx-page-header, .nx-dash-header) { position: relative; }
+body.theme-screenplay :is(.nx-page-header, .nx-dash-header)::after {
+  content: var(--sp-rev) " (" attr(data-rev-date) ")";
+  position: absolute;
+  top: 6px;
+  right: 28px;
+  color: var(--text-secondary);
+  font: 13px/1 var(--sp-type);
+  pointer-events: none;
+}
+
+/* The dashboard: FADE IN:, then the greeting as dialogue. */
+body.theme-screenplay .nx-dash-header-text::before {
+  content: "FADE IN:";
+  display: block;
+  margin: 0 0 14px -52px;
+  color: var(--text-color);
+  font: 700 14px/1.4 var(--sp-type);
+}
+body.theme-screenplay .nx-dash-greeting { flex-wrap: wrap; padding-left: 10ch; font-size: 24px !important; }
+body.theme-screenplay .nx-dash-greeting::before {
+  content: "NEXROLL (V.O.)";
+  flex-basis: 100%;
+  display: block;
+  margin: 4px 0 4px 6ch;
+  font: 700 14px/1.4 var(--sp-type);
+}
+
+/* Buttons: black ribbon ink. */
+body.theme-screenplay :is(.button:not(.button-secondary):not(.danger), .nx-gen-btn.primary) {
+  border: 1px solid #1c1c1a !important;
+  background: #1c1c1a !important;
+  color: #ffffff !important;
+}
+body.theme-screenplay :is(.button:not(.button-secondary):not(.danger), .nx-gen-btn.primary):not(:disabled):hover { background: #000000 !important; }
+body.theme-screenplay .button-secondary { background: #ffffff !important; border-color: #b9b6ac !important; color: #1c1c1a !important; }
+body.theme-screenplay .button-secondary:not(:disabled):hover { border-color: #1c1c1a !important; }
+
+/* Sidebar: paper, with a highlighter on the active item. */
+body.theme-screenplay .nx-sidebar-section:has(> [style*="--nx-sec-library"]),
+body.theme-screenplay [style*="--nx-sec-library"] { --sp-hl: #bcd6f4; }
+body.theme-screenplay .nx-sidebar-section:has(> [style*="--nx-sec-schedules"]),
+body.theme-screenplay [style*="--nx-sec-schedules"] { --sp-hl: #f6bfd3; }
+body.theme-screenplay .nx-sidebar-section:has(> [style*="--nx-sec-nexup"]),
+body.theme-screenplay [style*="--nx-sec-nexup"] { --sp-hl: #fbe46a; }
+body.theme-screenplay .nx-sidebar-section:has(> [style*="--nx-sec-connect"]),
+body.theme-screenplay [style*="--nx-sec-connect"] { --sp-hl: #c3e6b3; }
+body.theme-screenplay .nx-sidebar-section:has(> [style*="--nx-sec-community"]),
+body.theme-screenplay [style*="--nx-sec-community"] { --sp-hl: #f7cf82; }
+body.theme-screenplay .nx-sidebar-section:has(> [style*="--nx-sec-settings"]),
+body.theme-screenplay [style*="--nx-sec-settings"] { --sp-hl: #e8d6b4; }
+body.theme-screenplay :is(.nx-sidebar-parent, .nx-sidebar-child).active,
+body.theme-screenplay .nx-sidebar-section:first-child .nx-sidebar-parent.active {
+  color: #1c1c1a !important;
+  background: linear-gradient(179deg, transparent 14%, var(--sp-hl) 16%, var(--sp-hl) 84%, transparent 86%) !important;
+  box-shadow: none !important;
+}
+/* One highlighted line: a section whose page is open in its list keeps
+   only bold type. */
+body.theme-screenplay .nx-sidebar-section:has(.nx-sidebar-child.active) > .nx-sidebar-parent.active { background: none !important; font-weight: 700; }
+body.theme-screenplay .nx-sidebar-parent.active::before { display: none; }
+body.theme-screenplay :is(.nx-sidebar-parent, .nx-sidebar-child).active .nx-sidebar-icon { color: #1c1c1a !important; }
+/* Courier is wide: a little tighter so "Community Prerolls" fits. */
+body.theme-screenplay .nx-sidebar-label { font-size: 13px; letter-spacing: -.03em !important; }
+body.theme-screenplay .nx-sidebar-search-box input { font-size: 12.5px; }
+/* A coffee ring and a pencil at the foot of the sidebar; a flex spacer
+   like the Drive-In lot. */
+body.theme-screenplay .nx-sidebar::after {
+  content: "";
+  order: 1;
+  flex: 0 1 calc(var(--nx-sidebar-w) * .4333);
+  min-height: 0;
+  pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 104'%3E%3Cpath d='M153.6,27.3 A24.0,24.0 0 1 1 156.2,56.1' fill='none' stroke='%238a5a2a5e' stroke-width='1.3' stroke-linecap='round'/%3E%3Cpath d='M197.6,44.2 A24.0,24.0 0 0 1 159.2,58.9' fill='none' stroke='%237a4c2247' stroke-width='3.0' stroke-linecap='round'/%3E%3Cpath d='M163.3,21.2 A22.6,22.6 0 0 1 194.2,29.5' fill='none' stroke='%238a5a2a26' stroke-width='1.0' stroke-linecap='round'/%3E%3Cpath d='M152.7,52.3 A24.6,24.6 0 0 1 150.4,33.2' fill='none' stroke='%238a5a2a33' stroke-width='0.9' stroke-linecap='round'/%3E%3Ccircle cx='206' cy='19' r='2' fill='%238a5a2a38'/%3E%3Ccircle cx='211' cy='25' r='1.1' fill='%238a5a2a2e'/%3E%3Cg transform='translate(26,90) rotate(-7)'%3E%3Cellipse cx='68' cy='7.5' rx='66' ry='3' fill='%2300000014'/%3E%3Crect x='0' y='-4.6' width='11' height='9.2' rx='2.4' fill='%23e8838b'/%3E%3Crect x='10' y='-4.8' width='11' height='9.6' fill='%23c8c4ba'/%3E%3Cpath d='M12.5,-4.8 V4.8 M15.5,-4.8 V4.8 M18.5,-4.8 V4.8' stroke='%239d998f' stroke-width='.8'/%3E%3Crect x='21' y='-4.6' width='88' height='9.2' fill='%23f0bf2c'/%3E%3Crect x='21' y='-4.6' width='88' height='3' fill='%23f7d65e'/%3E%3Crect x='21' y='1.6' width='88' height='3' fill='%23d6a21c'/%3E%3Cpath d='M109,-4.6 L125,-1.3 L125,1.3 L109,4.6 Z' fill='%23e9c595'/%3E%3Cpath d='M109,-4.6 L113,-3.8 L113,3.8 L109,4.6 Z' fill='%23f0bf2c'/%3E%3Cpath d='M125,-1.3 L131,0 L125,1.3 Z' fill='%233b3a37'/%3E%3C/g%3E%3C/svg%3E") center bottom / contain no-repeat;
+}
+body.theme-screenplay .nx-sidebar-footer { order: 2; }
+body.theme-screenplay .nx-sidebar.collapsed::after { display: none; }
+
+/* Colors the app hardcodes. */
+body.theme-screenplay .nx-hybrid-library { --hybrid-violet: var(--nx-sec-library); --hybrid-soft: rgba(47, 93, 158, .1); }
+/* Schedule rows: the app's default violet and green markers (a schedule's
+   own color is kept). */
+body.theme-screenplay .nx-command-row-accent[style*="118, 103, 255"] { background: var(--nx-sec-schedules) !important; }
+body.theme-screenplay .nx-command-row-accent[style*="53, 208, 111"] { background: var(--success-color) !important; }
+body.theme-screenplay .nx-comm-ai-badge { border: 1px dashed currentColor; background: transparent; color: var(--text-secondary); }
+body.theme-screenplay .nx-content-dashboard .nx-storage-seg-0 { background: #7fa7dc; }
+body.theme-screenplay .nx-content-dashboard .nx-storage-seg-1 { background: #ecc93f; }
+body.theme-screenplay .nx-content-dashboard .nx-storage-seg-2 { background: #86c174; }
+body.theme-screenplay .nx-content-dashboard .nx-storage-seg-3 { background: #e893b4; }
+
+/* Courier runs wider than the proportional face these were sized for. */
+@media (min-width: 801px) {
+  body.theme-screenplay .nx-content-schedules .nx-command-toolbar { grid-template-columns: minmax(180px, 1fr) 132px 142px 84px 88px; }
+}
+
+/* Three punched holes down the binding edge, brass fasteners in the top
+   and bottom ones. Fixed to the window, in the gutter left of the page. */
+body.theme-screenplay .nx-content::before {
+  content: "";
+  position: fixed;
+  top: 48px;
+  bottom: 0;
+  z-index: 801;
+  width: 20px;
+  margin-left: 4px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 40% 36%, #fbefc4 0 1.5px, #e2c06a 4px, #b48c36 7px, #7a5c22 9px, rgba(60, 44, 14, .35) 9.6px, transparent 10.4px) 0 10% / 20px 20px no-repeat,
+    radial-gradient(circle at 50% 46%, #c4bfb2 0 4.6px, #9e9888 6.2px, rgba(255, 255, 255, .9) 6.8px, transparent 7.6px) 0 50% / 20px 20px no-repeat,
+    radial-gradient(circle at 40% 36%, #fbefc4 0 1.5px, #e2c06a 4px, #b48c36 7px, #7a5c22 9px, rgba(60, 44, 14, .35) 9.6px, transparent 10.4px) 0 90% / 20px 20px no-repeat;
+}
+@media (max-width: 900px) {
+  body.theme-screenplay .nx-content::before { display: none; }
+  /* The closed drawer's shadow showed as a gray band down the left edge. */
+  body.theme-screenplay .nx-sidebar:not(.mobile-open) { box-shadow: none; }
+}
+
+/* CUT TO: in the corner on a page change. */
+body.theme-screenplay .nx-page-cut {
+  display: block;
+  position: fixed;
+  right: 34px;
+  bottom: 26px;
+  z-index: 950;
+  pointer-events: none;
+  padding: 6px 10px;
+  border: 1px solid #1c1c1a;
+  background: #ffffff;
+  color: #1c1c1a;
+  font: 700 15px/1 var(--sp-type);
+  animation: nx-sp-cut 1.2s ease both;
+}
+body.theme-screenplay .nx-page-cut::after { content: "CUT TO:"; }
+@keyframes nx-sp-cut {
+  0% { opacity: 0; }
+  12%, 70% { opacity: 1; }
+  100% { opacity: 0; visibility: hidden; }
+}
+
+/* Dialogs: the title is a character cue, centered in capitals (the left
+   padding matches the close button, so it centers on the dialog). */
+body.theme-screenplay .nx-modal-heading { flex: 1 1 auto; min-width: 0; padding-left: 40px; text-align: center; }
+body.theme-screenplay .nx-modal-title { justify-content: center; text-transform: uppercase; }
+
+/* The theme picker shows Screenplay as a script page, in any theme. */
+.nx-theme-option[data-theme-id="screenplay"] .nx-theme-swatch {
+  border-color: #c9c6bd;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' fill='%23ffffff'/%3E%3Ccircle cx='3.6' cy='6' r='1.6' fill='%23c9a24a'/%3E%3Ccircle cx='3.6' cy='13' r='1.2' fill='%23b9b3a4'/%3E%3Ccircle cx='3.6' cy='20' r='1.6' fill='%23c9a24a'/%3E%3Crect x='7.5' y='4.6' width='12' height='2' fill='%231c1c1a'/%3E%3Crect x='7.5' y='9' width='15' height='1.3' fill='%239a978f'/%3E%3Crect x='7.5' y='11.8' width='11' height='1.3' fill='%239a978f'/%3E%3Crect x='9.5' y='15' width='11.5' height='2.6' fill='%23fbec6c'/%3E%3Crect x='10' y='15.65' width='10' height='1.3' fill='%236c6961'/%3E%3Crect x='7.5' y='20.2' width='14' height='1.3' fill='%239a978f'/%3E%3C/svg%3E") center / cover no-repeat;
+}
+.nx-theme-option[data-theme-id="screenplay"] .nx-theme-swatch i { display: none; }
+
+/* Phones: a narrower scene-number margin and a closer dialogue indent. */
+@media (max-width: 600px) {
+  body.theme-screenplay .nx-page-header-copy,
+  body.theme-screenplay .nx-dash-header-text { padding-left: 34px; }
+  body.theme-screenplay .nx-dash-header-text::before { margin-left: -34px; }
+  body.theme-screenplay .nx-dash-greeting { padding-left: 2ch; font-size: 22px !important; }
+  body.theme-screenplay .nx-dash-greeting::before { margin-left: 3ch; }
+  body.theme-screenplay :is(.nx-page-header, .nx-dash-header)::after { right: 16px; font-size: 11px; }
+  body.theme-screenplay .nx-modal-heading { padding-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.theme-screenplay .nx-page-cut { display: none; }
 }

@@ -286,6 +286,7 @@ const THEMES = {
   carbon:    { label: 'Carbon',    base: 'dark',  blurb: 'True black for OLED panels, with an amber accent.', swatch: ['#000000', '#f0a020', '#3ecf6d'] },
   silentfilm: { label: 'Silent Film', base: 'dark', blurb: 'Black and white: title cards, a strip of film and an iris between pages.', swatch: ['#0a0a0a', '#ece9e2', '#85827a'] },
   vhs:       { label: 'VHS Rewind', base: 'dark',  blurb: 'A rental tape: on-screen display, marker labels and rainbow stripes.', swatch: ['#101119', '#f08a24', '#2a4fe0'] },
+  screenplay: { label: 'Screenplay', base: 'light', blurb: 'A shooting script: Courier on white, scene headings and colored revision pages.', swatch: ['#ffffff', '#1c1c1a', '#2f5d9e'] },
   // Secret: listed only once unlocked (the Konami code, or searching "drive-in").
   drivein:   { label: 'Drive-In',  base: 'dark',  blurb: 'A drive-in at dusk: stars, a projector beam and neon signs.', swatch: ['#140f24', '#ff8a3d', '#4dff9a'], secret: true },
 };
@@ -8611,6 +8612,25 @@ const DashboardTiles = {
     'settings/backup':  { icon: Download,        section: 'Settings', title: 'Backup & Restore', desc: 'Export, restore, rescan, and repair NeXroll data.' },
     'settings/system':  { icon: Info,            section: 'Settings', title: 'System', desc: 'Version, dependencies, updates, diagnostics, and recovery.' },
   };
+  // The Screenplay theme writes the eyebrow as a scene heading
+  // ("2A  INT. LIBRARY - DAY"): sections are numbered in sidebar order and
+  // their sub-pages are inserted scenes (2A, 2B...); Community is outside, on
+  // the internet. The date goes in the revision line in the corner.
+  const screenplayHeading = (tab) => {
+    const page = tab === 'community-prerolls/browse' ? 'community-prerolls' : tab;
+    const section = page.split('/')[0];
+    const keys = Object.keys(PAGE_HEADERS).filter(key => key !== 'community-prerolls/browse');
+    const sections = [...new Set(keys.map(key => key.split('/')[0]))];
+    const insert = keys.filter(key => key.startsWith(`${section}/`)).indexOf(page);
+    const place = (PAGE_HEADERS[section]?.section || 'Dashboard').split(' / ')[0].toUpperCase();
+    const hour = dashboardNow.getHours();
+    const time = hour >= 5 && hour < 7 ? 'DAWN' : hour >= 7 && hour < 18 ? 'DAY' : hour >= 18 && hour < 20 ? 'DUSK' : 'NIGHT';
+    return {
+      'data-scene': `${sections.indexOf(section) + 1}${insert >= 0 ? String.fromCharCode(65 + insert) : ''}`,
+      'data-slug': `${section === 'community-prerolls' ? 'EXT.' : 'INT.'} ${place} - ${time}`,
+    };
+  };
+  const screenplayRevDate = dashboardNow.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', year: '2-digit' });
   const renderPageHeader = () => {
     if (activeTab === 'dashboard') return null;
     const cfg = activeTab === 'schedules/create' && editingSchedule
@@ -8621,10 +8641,10 @@ const DashboardTiles = {
     // The Terminal theme turns the eyebrow into a DOS prompt (C:\NEXROLL\LIBRARY\TRASH>).
     const dosPath = activeTab.replace(/^community-prerolls/, 'community').split('/').join('\\');
     return (
-      <div className="nx-page-header">
+      <div className="nx-page-header" data-rev-date={screenplayRevDate}>
         <div className="nx-page-header-inner">
           <div className="nx-page-header-copy">
-            <div className="nx-page-header-eyebrow" data-dos-path={dosPath}>{cfg.section || activeTab.split('/')[0]}</div>
+            <div className="nx-page-header-eyebrow" data-dos-path={dosPath} {...screenplayHeading(activeTab)}>{cfg.section || activeTab.split('/')[0]}</div>
             <h1 className="nx-page-header-title">
               <Icon size={24} className="header-icon" aria-hidden="true" /> {cfg.title}
             </h1>
@@ -9989,9 +10009,9 @@ const DashboardTiles = {
 
     return (
       <>
-        <div className="nx-dash-header">
+        <div className="nx-dash-header" data-rev-date={screenplayRevDate}>
           <div className="nx-dash-header-text">
-            <div className="nx-dash-eyebrow">Dashboard overview</div>
+            <div className="nx-dash-eyebrow" {...screenplayHeading('dashboard')}>Dashboard overview</div>
             {showGreeting && (
               <h1 className="nx-dash-greeting">
                 Good {partOfDay}{appDisplayName ? `, ${appDisplayName}` : ''}
@@ -37754,7 +37774,8 @@ const DashboardTiles = {
 
       {/* A scene change between pages. Keyed by the tab, so every page change
           mounts a fresh element and its CSS animation plays once (Silent Film
-          irises in, VHS fast-forwards). Hidden in the other themes. */}
+          irises in, VHS fast-forwards, Screenplay shows CUT TO:). Hidden in
+          the other themes. */}
       <div key={activeTab} className="nx-page-cut" aria-hidden="true" />
 
       {/* v2: update availability is surfaced by the sidebar footer pill (see Sidebar),
