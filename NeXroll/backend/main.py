@@ -71,6 +71,8 @@ from backend.scheduler import (
 )
 from backend.sequence_conditions import block_to_play, describe_condition
 from backend import trailer_language
+from backend import radarr_servers
+from backend import sonarr_servers
 from backend import secure_store
 from backend import app_log
 from backend import plugin_url_repair
@@ -7317,6 +7319,8 @@ def collect_sensitive_values(db) -> set:
                 if val and str(val).strip():
                     vals.add(str(val).strip())
                     vals.add(str(val).strip().rstrip("/"))
+        vals |= radarr_servers.sensitive_values(db)
+        vals |= sonarr_servers.sensitive_values(db)
     except Exception:
         pass
     for getter in (
@@ -17113,6 +17117,17 @@ def backup_database(request: Request = None, db: Session = Depends(get_db)):
                 for f in db.query(models.NavigationFavorite).filter(models.NavigationFavorite.scope == "local")
                 .order_by(models.NavigationFavorite.created_at, models.NavigationFavorite.page).all()
             ],
+            # Radarrs and Sonarrs read alongside the main ones, with their keys
+            # like the main ones' in "settings". Ids are kept: they are part of
+            # the movie and show keys on trailer rows.
+            "radarr_servers": [
+                {"id": r.id, "name": r.name, "url": r.url, "api_key": r.api_key}
+                for r in db.query(models.RadarrServer).order_by(models.RadarrServer.id).all()
+            ],
+            "sonarr_servers": [
+                {"id": r.id, "name": r.name, "url": r.url, "api_key": r.api_key}
+                for r in db.query(models.SonarrServer).order_by(models.SonarrServer.id).all()
+            ],
             "credentials": _export_credentials() if _backup_may_include_credentials(request) else {},
             "exported_at": utcnow().isoformat(),
             "exported_by_version": app_version,
@@ -17689,6 +17704,20 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
             except Exception as fav_err:
                 db.rollback()
                 print(f"RESTORE: favorites restore failed (non-fatal): {fav_err}")
+
+        for backup_key, server_model in (("radarr_servers", models.RadarrServer), ("sonarr_servers", models.SonarrServer)):
+            if backup_key not in backup_data:
+                continue
+            try:
+                db.query(server_model).delete(synchronize_session=False)
+                for row in backup_data.get(backup_key) or []:
+                    if isinstance(row, dict) and row.get("url") and row.get("api_key"):
+                        db.add(server_model(id=row.get("id"), name=row.get("name"),
+                                            url=row["url"], api_key=row["api_key"]))
+                db.commit()
+            except Exception as server_err:
+                db.rollback()
+                print(f"RESTORE: {backup_key} restore failed (non-fatal): {server_err}")
 
         restored_credentials = _restore_credentials(backup_data.get("credentials"))
 
@@ -20239,6 +20268,93 @@ def disconnect_radarr(db: Session = Depends(get_db)):
     log_event('INFO', 'nexup', 'Radarr disconnected', source='disconnect_radarr')
     return {"success": True, "message": "Radarr disconnected"}
 
+
+# Servers read alongside the main Radarr or Sonarr, such as a 4K one
+# (radarr_servers.py / sonarr_servers.py).
+_ARR_SERVER_KINDS = {"radarr": radarr_servers, "sonarr": sonarr_servers}
+
+
+def _arr_kind(kind: str):
+    module = _ARR_SERVER_KINDS.get(kind)
+    if module is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return module
+
+
+def _arr_server_out(module, row) -> dict:
+    return {"id": row.id, "name": module.server_name(row), "url": row.url}
+
+
+def _arr_server_row(module, server_id: int, db):
+    row = db.query(module.MODEL).filter(module.MODEL.id == server_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"{module.MAIN_NAME} server not found")
+    return row
+
+
+@app.get("/nexup/{kind}/servers")
+def list_arr_servers(kind: str, db: Session = Depends(get_db)):
+    """The Radarrs or Sonarrs read alongside the main one (never their API keys)."""
+    module = _arr_kind(kind)
+    rows = db.query(module.MODEL).order_by(module.MODEL.id).all()
+    return {"servers": [_arr_server_out(module, r) for r in rows]}
+
+
+@app.post("/nexup/{kind}/servers")
+async def add_arr_server(kind: str, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Add another Radarr or Sonarr, such as a 4K one, after testing the connection."""
+    module = _arr_kind(kind)
+    label = module.MAIN_NAME
+    setting = db.query(models.Setting).first()
+    connected = module.servers(db, setting)
+    if not connected:
+        raise HTTPException(status_code=400, detail=f"Connect your main {label} first.")
+    url = module.normalize_url(payload.get("url"))
+    api_key = str(payload.get("api_key") or "").strip()
+    name = str(payload.get("name") or "").strip()[:60]
+    if not url or not api_key:
+        raise HTTPException(status_code=400, detail=f"Enter the {label} URL and API key.")
+    if any(module.normalize_url(s["url"]).lower() == url.lower() for s in connected):
+        raise HTTPException(status_code=400, detail=f"That {label} is already connected.")
+    result = await module.connector({"url": url, "api_key": api_key}).test_connection()
+    if not result.get("success"):
+        return {"success": False, "message": result.get("message", "Connection failed")}
+    if not name:
+        instance = str(result.get("instanceName") or "").strip()
+        name = instance if instance and instance.lower() != label.lower() else f"{label} {db.query(module.MODEL).count() + 2}"
+    row = module.MODEL(name=name, url=url, api_key=api_key)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    _file_log(f"{label} server added: {name} ({result.get('appName')} v{result.get('version')})")
+    log_event('INFO', 'nexup', f'{label} server added: {name}', source='add_arr_server', db=db)
+    return {"success": True, "message": f"Connected to {name} (v{result.get('version', 'Unknown')})",
+            "server": _arr_server_out(module, row)}
+
+
+@app.post("/nexup/{kind}/servers/{server_id}/test")
+async def test_arr_server(kind: str, server_id: int, db: Session = Depends(get_db)):
+    module = _arr_kind(kind)
+    row = _arr_server_row(module, server_id, db)
+    result = await module.connector({"url": row.url, "api_key": row.api_key}).test_connection()
+    if result.get("success"):
+        return {"success": True, "message": f"Connected (v{result.get('version', 'Unknown')})"}
+    return {"success": False, "message": result.get("message", "Connection failed")}
+
+
+@app.delete("/nexup/{kind}/servers/{server_id}")
+def remove_arr_server(kind: str, server_id: int, db: Session = Depends(get_db)):
+    """Stop reading a server. Trailers already downloaded stay; a movie or
+    show that is also on another server moves over to it at the next sync."""
+    module = _arr_kind(kind)
+    row = _arr_server_row(module, server_id, db)
+    name = module.server_name(row)
+    db.delete(row)
+    db.commit()
+    _file_log(f"{module.MAIN_NAME} server removed: {name}")
+    log_event('INFO', 'nexup', f'{module.MAIN_NAME} server removed: {name}', source='remove_arr_server', db=db)
+    return {"success": True, "message": f"{name} removed"}
+
 @app.get("/nexup/radarr/upcoming")
 async def get_upcoming_movies(db: Session = Depends(get_db)):
     """Get list of upcoming movies from Radarr"""
@@ -20246,15 +20362,18 @@ async def get_upcoming_movies(db: Session = Depends(get_db)):
     if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
         raise HTTPException(status_code=400, detail="Radarr not connected")
     
-    from backend.radarr_connector import RadarrConnector
-    
-    connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
     include_unmonitored = getattr(setting, 'nexup_include_unmonitored_movies', False)
     release_date_preference = getattr(setting, 'nexup_release_date_preference', 'digital_first')
-    
-    movies = await connector.get_upcoming_movies(days_ahead, include_unmonitored=include_unmonitored, release_date_preference=release_date_preference)
-    
+
+    # Every connected Radarr, one entry per movie. Trailer rows follow a movie
+    # that gained or lost a copy before they're matched against the list.
+    library = await radarr_servers.fetch_library(db, setting)
+    if radarr_servers.rehome(db, models.ComingSoonTrailer, library):
+        db.commit()
+    movies = library.parser().upcoming_from_raw(
+        library.movies, days_ahead, include_unmonitored, release_date_preference) if library.movies else []
+
     # Get existing trailers to mark which are already downloaded and excluded
     existing_trailers = db.query(models.ComingSoonTrailer).all()
     existing_map = {t.radarr_movie_id: t for t in existing_trailers}
@@ -20297,7 +20416,8 @@ async def get_upcoming_movies(db: Session = Depends(get_db)):
         "movies": filtered_movies,
         "total": len(filtered_movies),
         "days_ahead": days_ahead,
-        "include_unmonitored": include_unmonitored
+        "include_unmonitored": include_unmonitored,
+        "failed_servers": library.failed_names(),
     }
 
 @app.get("/nexup/radarr/debug/{radarr_id}")
@@ -20306,11 +20426,8 @@ async def debug_radarr_movie(radarr_id: int, db: Session = Depends(get_db)):
     setting = db.query(models.Setting).first()
     if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
         raise HTTPException(status_code=400, detail="Radarr not connected")
-    
-    from backend.radarr_connector import RadarrConnector
-    
-    connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
-    movie = await connector.get_movie_by_id(radarr_id)
+
+    movie = await radarr_servers.get_movie(db, radarr_id, setting)
     
     if not movie:
         raise HTTPException(status_code=404, detail="Movie not found in Radarr")
@@ -20418,9 +20535,8 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Sonarr not connected")
     
     from backend.sonarr_connector import SonarrConnector
-    
+
     _file_log(f"Sonarr: Fetching upcoming shows from {setting.nexup_sonarr_url}")
-    connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
     include_unmonitored = getattr(setting, 'nexup_include_unmonitored_shows', False)
 
@@ -20429,7 +20545,13 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
 
     # Use the calendar-based premiere detection for accurate dates. Downloaded
     # premieres inside the Available Now window are listed too, as movies are.
-    shows = await connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored, recent_days=available_days)
+    # Every connected Sonarr, one entry per show and season; trailer rows
+    # follow a show that gained or lost a copy before they're matched.
+    library = await sonarr_servers.fetch_library(
+        db, setting, with_series=False, calendar=SonarrConnector.calendar_window(days_ahead, available_days))
+    if sonarr_servers.rehome(db, library):
+        db.commit()
+    shows = library.premieres(include_unmonitored, available_days)
     _file_log(f"Sonarr: Found {len(shows)} upcoming shows within {days_ahead} days")
 
     # Get existing TV trailers to mark which are already downloaded and excluded
@@ -20469,7 +20591,8 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
         "shows": filtered_shows,
         "total": len(filtered_shows),
         "days_ahead": days_ahead,
-        "include_unmonitored": include_unmonitored
+        "include_unmonitored": include_unmonitored,
+        "failed_servers": library.failed_names(),
     }
 
 @app.get("/nexup/sonarr/trailers")
@@ -20529,12 +20652,9 @@ async def search_tv_trailers(sonarr_series_id: int, season_number: int = 1, db: 
     setting = db.query(models.Setting).first()
     if not setting or not getattr(setting, 'nexup_sonarr_url', None):
         raise HTTPException(status_code=400, detail="Sonarr not connected")
-    from backend.sonarr_connector import SonarrConnector
     from backend.radarr_connector import search_youtube_trailers
     try:
-        connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
-        all_series = await connector.get_all_series()
-        show = next((s for s in all_series if s.get('id') == sonarr_series_id), None)
+        show = (await sonarr_servers.fetch_library(db, setting)).find(sonarr_series_id)
         if not show:
             raise HTTPException(status_code=404, detail="Show not found in Sonarr")
         title = show.get('title', '') or ''
@@ -20593,22 +20713,18 @@ async def download_tv_trailer(
     ).delete(synchronize_session=False)
     db.commit()
     
-    from backend.sonarr_connector import SonarrConnector, TVTrailerFetcher
+    from backend.sonarr_connector import TVTrailerFetcher
     from backend.radarr_connector import TrailerDownloader
-    
-    # Get show info from Sonarr
-    connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
-    all_series = await connector.get_all_series()
+
+    # Get show info from the Sonarrs (one entry per show)
+    library = await sonarr_servers.fetch_library(db, setting)
+    sonarr_servers.rehome(db, library)
     from backend.trailer_filters import refresh_trailer_ratings
-    refresh_trailer_ratings(db, models.ComingSoonTVTrailer, all_series, "sonarr_series_id", "id")
+    refresh_trailer_ratings(db, models.ComingSoonTVTrailer, library.series, "sonarr_series_id", "id")
     db.commit()
-    
-    show_info = None
-    for series in all_series:
-        if series.get('id') == sonarr_series_id:
-            show_info = series
-            break
-    
+
+    show_info = library.find(sonarr_series_id)
+
     if not show_info:
         _file_log(f"Sonarr: Show not found in Sonarr for series_id={sonarr_series_id}")
         raise HTTPException(status_code=404, detail="Show not found in Sonarr")
@@ -20916,9 +21032,6 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         if not server_name or not server_name.strip():
             server_name = setting.plex_server_name or getattr(setting, 'jellyfin_server_name', None) or "Your Server"
         
-        from backend.radarr_connector import RadarrConnector
-        from backend.sonarr_connector import SonarrConnector
-        
         # Fetch items from Radarr/Sonarr APIs (all upcoming content)
         items = []
         days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
@@ -20929,9 +21042,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         if source in ["movies", "both"]:
             if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
                 try:
-                    radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
                     release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
-                    movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
+                    movies, failed_radarrs = await radarr_servers.upcoming_movies(db, setting, days_ahead, release_date_preference=release_date_pref)
                     for movie in movies:
                         is_available = movie.get('has_file', False)
                         # Apply "Available Now!" grace period — skip items past the cutoff
@@ -20950,6 +21062,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                             'available_now': is_available
                         })
                     _file_log(f"Coming Soon List auto-regen: Found {len(movies)} upcoming movies from Radarr")
+                    if failed_radarrs:
+                        _file_log(f"Coming Soon List auto-regen: Could not read {', '.join(failed_radarrs)}; their movies are left out", level="WARNING")
                 except Exception as e:
                     _file_log(f"Coming Soon List auto-regen: Error fetching from Radarr: {e}")
         
@@ -20957,9 +21071,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         if source in ["shows", "both"]:
             if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
                 try:
-                    sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
                     include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                    shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
+                    shows, failed_sonarrs = await sonarr_servers.upcoming_premieres(db, setting, days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
                     for show in shows:
                         is_available = show.get('has_file', False)
                         # Apply "Available Now!" grace period — skip items past the cutoff
@@ -20982,6 +21095,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                             'available_now': is_available
                         })
                     _file_log(f"Coming Soon List auto-regen: Found {len(shows)} upcoming shows from Sonarr")
+                    if failed_sonarrs:
+                        _file_log(f"Coming Soon List auto-regen: Could not read {', '.join(failed_sonarrs)}; their shows are left out", level="WARNING")
                 except Exception as e:
                     _file_log(f"Coming Soon List auto-regen: Error fetching from Sonarr: {e}")
         
@@ -21189,8 +21304,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     
     from backend.sonarr_connector import SonarrConnector, TVTrailerFetcher
     from backend.radarr_connector import TrailerDownloader
-    
-    connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
     max_trailers = getattr(setting, 'nexup_max_trailers', 10)
     if max_trailers is None:
@@ -21213,8 +21327,14 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     # ========================================
     _nexup_sync_progress["status"] = "Checking for expired TV trailers..."
     
-    # Get all series from Sonarr to check download status
-    all_series = await connector.get_all_series()
+    # Get all series from every Sonarr to check download status (a season
+    # counts as downloaded once any of them has episodes), and their calendars
+    library = await sonarr_servers.fetch_library(db, setting, calendar=SonarrConnector.calendar_window(days_ahead))
+    for failed in library.failed:
+        _file_log(f"Sonarr Sync: Could not read {failed['name']}: {failed['error']}", level="WARNING")
+        results["errors"].append(f"Could not read {failed['name']}; its shows were skipped this time")
+    all_series = library.series
+    sonarr_servers.rehome(db, library)
     from backend.trailer_filters import refresh_trailer_ratings
     refresh_trailer_ratings(db, models.ComingSoonTVTrailer, all_series, "sonarr_series_id", "id")
     db.commit()
@@ -21301,7 +21421,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     # ========================================
     _nexup_sync_progress["status"] = "Fetching upcoming shows from Sonarr..."
     include_unmonitored = getattr(setting, 'nexup_include_unmonitored_shows', False)
-    upcoming = await connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored)
+    upcoming = library.premieres(include_unmonitored)
     _file_log(f"Sonarr Sync: Found {len(upcoming)} upcoming shows")
     results["checked"] = len(upcoming)
     _nexup_sync_progress["total"] = len(upcoming)
@@ -22379,12 +22499,7 @@ def _backfill_trailer_posters(db: Session) -> int:
 
     if missing_movies and setting and setting.nexup_radarr_url and setting.nexup_radarr_api_key:
         try:
-            response = requests.get(
-                f"{str(setting.nexup_radarr_url).rstrip('/')}/api/v3/movie",
-                headers={"X-Api-Key": setting.nexup_radarr_api_key}, timeout=25,
-            )
-            response.raise_for_status()
-            by_id = {m.get("id"): m for m in response.json()}
+            by_id = radarr_servers.movies_by_key_sync(db, setting)
             for trailer in missing_movies:
                 poster = poster_from(by_id.get(trailer.radarr_movie_id, {}))
                 if poster:
@@ -22395,12 +22510,7 @@ def _backfill_trailer_posters(db: Session) -> int:
 
     if missing_shows and setting and setting.nexup_sonarr_url and setting.nexup_sonarr_api_key:
         try:
-            response = requests.get(
-                f"{str(setting.nexup_sonarr_url).rstrip('/')}/api/v3/series",
-                headers={"X-Api-Key": setting.nexup_sonarr_api_key}, timeout=25,
-            )
-            response.raise_for_status()
-            by_id = {s.get("id"): s for s in response.json()}
+            by_id = sonarr_servers.series_by_key_sync(db, setting)
             for trailer in missing_shows:
                 poster = poster_from(by_id.get(trailer.sonarr_series_id, {}))
                 if poster:
@@ -22614,23 +22724,33 @@ def _library_radarr(db):
     return setting
 
 
+async def _library_movies(db):
+    """Every Radarr's movies for the Library Trailers pages. Showing only the
+    servers that answered would quietly leave movies out, so any failure is
+    reported instead."""
+    from backend import library_trailers
+    library = await library_trailers.fetch_library(db)
+    if library.failed:
+        names = ", ".join(library.failed_names())
+        raise HTTPException(status_code=502, detail=f"Could not read your library from {names}: {library.failed[0]['error']}")
+    return library
+
+
 @app.post("/nexup/library/preview")
 async def preview_library_trailer_selection(config: dict = Body(default={}), db: Session = Depends(get_db)):
     """Which library movies a set of Library Trailers choices would include,
     and what the library offers to filter on - without saving or downloading."""
     from backend import library_trailers
     setting = _library_radarr(db)
-    try:
-        movies = await library_trailers.fetch_movies(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not read your library from Radarr: {e}")
+    library = await _library_movies(db)
+    movies = library.movies
     merged = library_trailers.load_config(setting)
     merged.update(config or {})
-    merged = library_trailers.normalize_config(merged)
+    merged = library_trailers.canonical_config(library_trailers.normalize_config(merged), library)
     matching = library_trailers.order_candidates(
         [m for m in movies if library_trailers.movie_matches(m, merged)], merged)
     facets = library_trailers.facets(movies)
-    facets["tags"] = await library_trailers.fetch_tags(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+    facets["tags"] = library.tags
     by_id = {m.get("id"): m for m in movies}
     return {
         "in_library": sum(1 for m in movies if m.get("hasFile")),
@@ -22655,12 +22775,13 @@ async def browse_library_movies(query: dict = Body(default={}), db: Session = De
     Each movie says whether it already has a library trailer.
     """
     from backend import library_trailers
-    setting = _library_radarr(db)
-    movies = await library_trailers.fetch_movies(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+    _library_radarr(db)
+    library = await _library_movies(db)
+    movies = library.movies
     q = str(query.get("q") or "").strip().lower()
     genre = str(query.get("genre") or "").strip().lower()
     show = query.get("show") or "all"
-    picked = set(library_trailers._ids(query.get("picked") or []))
+    picked = {library.canonical(i) for i in library_trailers._ids(query.get("picked") or [])}
     try:
         offset = max(int(query.get("offset") or 0), 0)
         limit = min(max(int(query.get("limit") or 60), 1), 200)
@@ -22701,8 +22822,8 @@ async def browse_library_movies(query: dict = Body(default={}), db: Session = De
 async def search_library_movies(q: str = Query("", description="Title to search for"), db: Session = Depends(get_db)):
     """Movies in the library whose title matches, for Always/Never include."""
     from backend import library_trailers
-    setting = _library_radarr(db)
-    movies = await library_trailers.fetch_movies(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+    _library_radarr(db)
+    movies = (await _library_movies(db)).movies
     needle = q.strip().lower()
     if len(needle) < 2:
         return {"movies": []}
@@ -22843,10 +22964,9 @@ async def search_movie_trailers(radarr_movie_id: int, db: Session = Depends(get_
     setting = db.query(models.Setting).first()
     if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
         raise HTTPException(status_code=400, detail="Radarr not connected")
-    from backend.radarr_connector import RadarrConnector, TMDBTrailerFetcher, search_youtube_trailers
+    from backend.radarr_connector import TMDBTrailerFetcher, search_youtube_trailers
     try:
-        connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
-        movie = await connector.get_movie_by_id(radarr_movie_id)
+        movie = await radarr_servers.get_movie(db, radarr_movie_id, setting)
         if not movie:
             raise HTTPException(status_code=404, detail="Movie not found in Radarr")
         title = movie.get('title', '') or ''
@@ -22931,12 +23051,11 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
     if existing:
         return {"success": False, "message": "Trailer already downloaded", "trailer_id": existing.id}
     
-    from backend.radarr_connector import RadarrConnector, TrailerDownloader
-    
+    from backend.radarr_connector import TrailerDownloader
+
     try:
-        # Get movie details from Radarr
-        connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
-        movie = await connector.get_movie_by_id(radarr_movie_id)
+        # Get movie details from the Radarr that holds it
+        movie = await radarr_servers.get_movie(db, radarr_movie_id, setting)
         
         if not movie:
             raise HTTPException(status_code=404, detail="Movie not found in Radarr")
@@ -23435,9 +23554,8 @@ async def sync_nexup(db: Session = Depends(get_db)):
         "errors": 0
     }
     
-    from backend.radarr_connector import RadarrConnector, TrailerDownloader
-    
-    connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+    from backend.radarr_connector import TrailerDownloader
+
     max_duration = getattr(setting, 'nexup_max_trailer_duration', 180) or 0
     
     # Debug: Log storage path and cookie file status
@@ -23467,12 +23585,21 @@ async def sync_nexup(db: Session = Depends(get_db)):
         _nexup_sync_progress["status"] = "Fetching movies from Radarr..."
         _file_log(f"NeX-Up sync: Fetching movies from Radarr...")
         
-        # This single call gets all movie info including hasFile status
-        all_radarr_movies = await connector.get_all_movies_raw()
+        # One request per Radarr gets every movie with its hasFile status;
+        # a movie on several servers is one entry (see radarr_servers).
+        library = await radarr_servers.fetch_library(db, setting)
+        all_radarr_movies = library.movies
+        connector = library.parser()
+        if library.failed:
+            for failed in library.failed:
+                _file_log(f"NeX-Up sync: Could not read {failed['name']}: {failed['error']}", level="WARNING")
+                results["errors"].append(f"Could not read {failed['name']}; its movies were skipped this time")
+        radarr_servers.rehome(db, models.ComingSoonTrailer, library)
         from backend.trailer_filters import refresh_trailer_ratings
         refresh_trailer_ratings(db, models.ComingSoonTrailer, all_radarr_movies, "radarr_movie_id", "id")
         db.commit()
-        _file_log(f"NeX-Up sync: Got {len(all_radarr_movies)} total movies from Radarr")
+        _file_log(f"NeX-Up sync: Got {len(all_radarr_movies)} total movies from Radarr"
+                  + (f" ({len(library.servers)} servers)" if len(library.servers) > 1 else ""))
         
         # Build a map of radarr_id -> hasFile for quick lookups
         downloaded_movies = {m['id'] for m in all_radarr_movies if m.get('hasFile', False)}
@@ -24951,9 +25078,6 @@ async def generate_coming_soon_list(
         accent_color: Accent color (hex)
         server_name: Optional custom server name to display
     """
-    from backend.radarr_connector import RadarrConnector
-    from backend.sonarr_connector import SonarrConnector
-    
     render = resolve_render_settings(resolution, frame_rate, quality)
     _file_log(
         f"[COMING-SOON-LIST] Request params: layout={layout}, source={source}, "
@@ -24993,9 +25117,8 @@ async def generate_coming_soon_list(
     if source in ["movies", "both"]:
         if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
             try:
-                radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
                 release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
-                movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
+                movies, failed_radarrs = await radarr_servers.upcoming_movies(db, setting, days_ahead, release_date_preference=release_date_pref)
                 for movie in movies:
                     is_available = movie.get('has_file', False)
                     # Apply "Available Now!" grace period — skip items past the cutoff
@@ -25014,6 +25137,8 @@ async def generate_coming_soon_list(
                         'available_now': is_available
                     })
                 _file_log(f"[COMING-SOON-LIST] Found {len(movies)} upcoming movies from Radarr API")
+                if failed_radarrs:
+                    _file_log(f"[COMING-SOON-LIST] Could not read {', '.join(failed_radarrs)}; their movies are left out", level="WARNING")
             except Exception as e:
                 _file_log(f"[COMING-SOON-LIST] Error fetching from Radarr: {e}")
         else:
@@ -25023,9 +25148,8 @@ async def generate_coming_soon_list(
     if source in ["shows", "both"]:
         if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
             try:
-                sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
                 include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
+                shows, failed_sonarrs = await sonarr_servers.upcoming_premieres(db, setting, days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
                 for show in shows:
                     is_available = show.get('has_file', False)
                     # Apply "Available Now!" grace period — skip items past the cutoff
@@ -25048,6 +25172,8 @@ async def generate_coming_soon_list(
                         'available_now': is_available
                     })
                 _file_log(f"[COMING-SOON-LIST] Found {len(shows)} upcoming shows from Sonarr API")
+                if failed_sonarrs:
+                    _file_log(f"[COMING-SOON-LIST] Could not read {', '.join(failed_sonarrs)}; their shows are left out", level="WARNING")
             except Exception as e:
                 _file_log(f"[COMING-SOON-LIST] Error fetching from Sonarr: {e}")
         else:
@@ -25289,9 +25415,6 @@ async def preview_coming_soon_list(
     Preview what items would appear in a Coming Soon List video.
     Sources items from Radarr/Sonarr APIs (all upcoming content).
     """
-    from backend.radarr_connector import RadarrConnector
-    from backend.sonarr_connector import SonarrConnector
-    
     setting = db.query(models.Setting).first()
     if not setting:
         return {"items": [], "error": "Settings not configured"}
@@ -25314,9 +25437,8 @@ async def preview_coming_soon_list(
     if source in ["movies", "both"]:
         if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
             try:
-                radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
                 release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
-                movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
+                movies, failed_radarrs = await radarr_servers.upcoming_movies(db, setting, days_ahead, release_date_preference=release_date_pref)
                 for movie in movies:
                     days_until = calc_days_until(movie.get('release_date'))
                     # Same "Available Now!" window as the rendered list
@@ -25330,6 +25452,8 @@ async def preview_coming_soon_list(
                         'days_until_release': days_until,
                         'available_now': movie.get('has_file', False)
                     })
+                if failed_radarrs:
+                    _file_log(f"[COMING-SOON-PREVIEW] Could not read {', '.join(failed_radarrs)}; their movies are left out", level="WARNING")
             except Exception as e:
                 _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Radarr: {e}")
     
@@ -25337,9 +25461,8 @@ async def preview_coming_soon_list(
     if source in ["shows", "both"]:
         if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
             try:
-                sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
                 include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
+                shows, failed_sonarrs = await sonarr_servers.upcoming_premieres(db, setting, days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
                 for show in shows:
                     title = show.get('title', '')
                     season_number = show.get('season_number', 1)
@@ -25353,6 +25476,8 @@ async def preview_coming_soon_list(
                         'days_until_release': calc_days_until(show.get('release_date')),
                         'available_now': show.get('has_file', False)
                     })
+                if failed_sonarrs:
+                    _file_log(f"[COMING-SOON-PREVIEW] Could not read {', '.join(failed_sonarrs)}; their shows are left out", level="WARNING")
             except Exception as e:
                 _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Sonarr: {e}")
     

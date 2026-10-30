@@ -9245,6 +9245,32 @@ body.light .nx-lt-chip.off, body.light .nx-lt-pin.never { color: color-mix(in sr
 .nx-ap-connect-form > p { margin: 0 0 3px; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
 .nx-ap-connect-form label span { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 700; }
 .nx-ap-connect-form input { width: 100%; min-height: 35px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--input-bg); color: var(--text-color); font-size: 9px; }
+/* More Radarr / Sonarr servers, at the foot of the connected service cards. */
+.nx-ap-more-servers { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.nx-ap-more-servers > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.nx-ap-more-servers > header strong,
+.nx-ap-more-servers > header span { display: block; }
+.nx-ap-more-servers > header strong { font-size: 12px; }
+.nx-ap-more-servers > header span { margin-top: 3px; color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+.nx-ap-more-servers ul { margin: 8px 0 0; padding: 0; list-style: none; }
+.nx-ap-more-servers li { min-height: 44px; display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 7px; border-bottom: 1px solid var(--border-color); }
+.nx-ap-more-servers li:last-child { border-bottom: 0; }
+.nx-ap-more-servers li > div { min-width: 0; }
+.nx-ap-more-servers li strong,
+.nx-ap-more-servers li span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-ap-more-servers li strong { font-size: 12px; }
+.nx-ap-more-servers li span { margin-top: 2px; color: var(--text-muted); font-size: 12px; }
+.nx-ap-more-servers-form { display: grid; gap: 8px; margin-top: 9px; }
+.nx-ap-more-servers-form label span { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 700; }
+.nx-ap-more-servers-form input { width: 100%; min-height: 35px; padding: 0 9px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--input-bg); color: var(--text-color); font-size: 9px; }
+.nx-ap-more-servers-form > div { display: flex; justify-content: flex-end; gap: 7px; }
+.nx-ap-more-servers-note { margin: 8px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+.nx-ap-more-servers-note.danger { color: color-mix(in srgb, var(--error-color) 86%, var(--text-color)); }
+.nx-ap-more-servers-note.live { color: color-mix(in srgb, var(--success-color) 74%, var(--text-color)); }
+@media (max-width: 768px) {
+  /* 16px keeps iOS from zooming in on focus. */
+  .nx-ap-more-servers-form input { font-size: 16px; }
+}
 
 .nx-ap-week-strip { display: grid; grid-template-columns: repeat(7,1fr); gap: 6px; margin-bottom: 10px; }
 .nx-ap-week-strip > button { position: relative; min-height: 54px; padding: 0; display: grid; place-items: center; align-content: center; gap: 4px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--raised-bg); color: var(--text-muted); cursor: pointer; }

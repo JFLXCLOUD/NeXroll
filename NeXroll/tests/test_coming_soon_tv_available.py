@@ -143,6 +143,11 @@ def test_bad_window_values_mean_no_window():
 
 # --- Who passes the window -------------------------------------------------
 
+# Premieres are read through sonarr_servers (every connected Sonarr) since
+# multi-Sonarr support: each call and where it takes recent_days positionally.
+PREMIERE_CALLS = {"get_upcoming_premieres": 2, "upcoming_premieres": 4, "premieres": 1}
+
+
 def _premiere_calls():
     tree = ast.parse((Path(__file__).parents[1] / "backend/main.py").read_text(encoding="utf-8"))
     found = {}
@@ -151,8 +156,10 @@ def _premiere_calls():
             continue
         for node in ast.walk(fn):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "get_upcoming_premieres"):
-                window = next((k.value for k in node.keywords if k.arg == "recent_days"), None)
+                    and node.func.attr in PREMIERE_CALLS):
+                index = PREMIERE_CALLS[node.func.attr]
+                window = next((k.value for k in node.keywords if k.arg == "recent_days"),
+                              node.args[index] if len(node.args) > index else None)
                 found.setdefault(fn.name, []).append(ast.unparse(window) if window is not None else None)
     return found
 

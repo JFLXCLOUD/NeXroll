@@ -32,6 +32,9 @@ class FakeRadarrConnector:
     async def get_all_movies_raw(self):
         return [{"id": 41, "hasFile": False}]
 
+    async def fetch_all_movies(self):
+        return [{"id": 41, "hasFile": False}]
+
     def parse_upcoming_from_raw(self, all_movies, days_ahead):
         return [{
             "radarr_id": 41,
@@ -57,7 +60,13 @@ class FakeSonarrConnector:
     async def get_all_series(self):
         return []
 
+    async def fetch_all_series(self):
+        return []
+
     async def get_upcoming_shows(self, days_ahead=90):
+        return self.upcoming_shows_from_series([], days_ahead)
+
+    def upcoming_shows_from_series(self, all_series, days_ahead=90):
         return [{
             "sonarr_id": 7,
             "tvdb_id": 121361,

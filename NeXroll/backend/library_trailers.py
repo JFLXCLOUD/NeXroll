@@ -461,9 +461,11 @@ async def sync_library_trailers(db, movies: list, storage: str, config: dict, do
             if index % 50 == 0:
                 progress["scanned"] = index
                 await asyncio.sleep(0)  # let status requests through on a big library
-            path = find_local_trailer(map_radarr_path(movie.get("path"), config["path_mappings"]))
-            if path:
-                local_for[movie["id"]] = path
+            for folder in movie_folders(movie):
+                path = find_local_trailer(map_radarr_path(folder, config["path_mappings"]))
+                if path:
+                    local_for[movie["id"]] = path
+                    break
         progress["scanned"] = len(candidates)
 
     # 2. Drop only what can no longer play: movies that left the library,
@@ -800,31 +802,40 @@ sync_progress = {"running": False, "status": "", "stage": None, "result": None, 
 # Radarr's movie list, briefly cached: the filter preview asks on every change
 # and a large library is a big response.
 MOVIE_CACHE_SECONDS = 120
-_movie_cache = {"key": None, "at": 0.0, "movies": None}
+_movie_cache = {"key": None, "at": 0.0, "library": None}
 
 
-async def fetch_movies(url: str, key: str, fresh: bool = False) -> list:
+async def fetch_library(db, fresh: bool = False):
+    """Every connected Radarr's movies and tags as one library (see
+    radarr_servers). Only a complete read is cached."""
     import time
-    from backend.radarr_connector import RadarrConnector
-    cache_key = (url, key)
-    if (not fresh and _movie_cache["key"] == cache_key and _movie_cache["movies"] is not None
+    from backend import radarr_servers
+    cache_key = tuple((s["id"], s["url"], s["api_key"]) for s in radarr_servers.servers(db))
+    if (not fresh and _movie_cache["key"] == cache_key and _movie_cache["library"] is not None
             and time.monotonic() - _movie_cache["at"] < MOVIE_CACHE_SECONDS):
-        return _movie_cache["movies"]
-    movies = await RadarrConnector(url, key).get_all_movies_raw() or []
-    _movie_cache.update(key=cache_key, at=time.monotonic(), movies=movies)
-    return movies
+        return _movie_cache["library"]
+    library = await radarr_servers.fetch_library(db, with_tags=True)
+    if not library.failed:
+        _movie_cache.update(key=cache_key, at=time.monotonic(), library=library)
+    return library
 
 
-async def fetch_tags(url: str, key: str) -> list:
-    """Radarr's tags as [{"id", "label"}]; empty if they can't be read."""
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            r = await client.get(f"{url.rstrip('/')}/api/v3/tag", headers={"X-Api-Key": key})
-            r.raise_for_status()
-            return [{"id": t.get("id"), "label": t.get("label")} for t in r.json() if t.get("id") is not None]
-    except Exception:
-        return []
+def canonical_config(config: dict, library) -> dict:
+    """The settings with picked/always/never movies keyed as the library
+    keys them now, for a movie that has since gained a copy on another Radarr."""
+    out = dict(config)
+    for key in ("picked", "always_include", "never_include"):
+        out[key] = _ids([library.canonical(i) for i in config.get(key) or []])
+    return out
+
+
+def movie_folders(movie: dict) -> list:
+    """The movie's folder, then those of its copies on other Radarrs."""
+    folders = []
+    for path in [movie.get("path")] + [c.get("path") for c in movie.get("nexrollCopies") or []]:
+        if path and path not in folders:
+            folders.append(path)
+    return folders
 
 
 async def run_sync(db) -> dict:
@@ -848,7 +859,18 @@ async def run_sync(db) -> dict:
                          log=[], counts=None, current=None, to_download=0, download_done=0, scanned=0, candidates=0)
     try:
         from backend.radarr_connector import TrailerDownloader
-        movies = await fetch_movies(url, key, fresh=True)
+        from backend import radarr_servers
+        library = await fetch_library(db, fresh=True)
+        if library.failed:
+            # A Radarr that can't be read would look like every one of its
+            # movies had left the library, and their trailers would go.
+            names = ", ".join(library.failed_names())
+            raise LibraryTrailerError(f"Could not read your library from {names}. Nothing was changed; "
+                                      "check the connection under NeX-Up > Connections and sync again.")
+        movies = library.movies
+        if radarr_servers.rehome(db, models.LibraryTrailer, library):
+            db.commit()
+        config = canonical_config(config, library)
         sync_progress["candidates"] = sum(1 for m in movies if movie_matches(m, config))
         downloader = None
         if config["download"]:

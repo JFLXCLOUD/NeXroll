@@ -334,123 +334,137 @@ class RadarrConnector:
         - 'theatrical': Theatrical > Digital > Physical (for theater fans)
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-                response = await client.get(
-                    f"{self.base_url}/api/v3/movie",
-                    headers=self.headers
-                )
-                response.raise_for_status()
-                all_movies = response.json()
-                
-            upcoming = []
-            today = datetime.now().date()
-            cutoff_date = today + timedelta(days=days_ahead)
-            # Allow movies up to 7 days past their release date (recently released, not downloaded yet)
-            past_cutoff = today - timedelta(days=7)
-            
-            for movie in all_movies:
-                # Skip unmonitored movies (unless include_unmonitored is True)
-                if not include_unmonitored and not movie.get('monitored', False):
-                    continue
-                
-                # Check status - we want movies that are monitored but not available
-                status = movie.get('status', '').lower()
-                if status not in ['announced', 'incinemas', 'released']:
-                    continue
-                
-                has_file = movie.get('hasFile', False)
-                
-                # Filter out quality upgrades / re-releases of old movies
-                # If the movie year is more than 2 years before current year, it's likely
-                # a re-release (e.g., 4K upgrade) not genuinely new content
-                movie_year = movie.get('year', 0) or 0
-                current_year = today.year
-                if movie_year and movie_year < current_year - 1:
-                    continue
-                
-                # Get all release dates
-                digital_release = movie.get('digitalRelease')
-                physical_release = movie.get('physicalRelease')
-                in_cinemas = movie.get('inCinemas')
-                
-                # Determine the release date based on preference
-                release_date = None
-                release_type = None
-                
-                release_date, release_type = self._select_release_date(
-                    digital_release, physical_release, in_cinemas, release_date_preference
-                )
-                
-                # Skip if no release date
-                if not release_date:
-                    continue
-                    
-                # Skip if too far in the future
-                if release_date > cutoff_date:
-                    continue
-                    
-                # Skip if too far in the past (more than 7 days ago)
-                # For downloaded movies (hasFile), still include them so they can show "Available Now!"
-                if release_date < past_cutoff and not has_file:
-                    continue
-                
-                # For downloaded movies, only include if released within 30 days (generous window for "Available Now!" display)
-                if has_file and release_date < today - timedelta(days=30):
-                    continue
-                
-                # Get trailer info from YouTube
-                trailer_url = None
-                if movie.get('youTubeTrailerId'):
-                    trailer_url = f"https://www.youtube.com/watch?v={movie['youTubeTrailerId']}"
-                
-                upcoming.append({
-                    'radarr_id': movie.get('id'),
-                    'tmdb_id': movie.get('tmdbId'),
-                    'imdb_id': movie.get('imdbId'),
-                    'title': movie.get('title', 'Unknown'),
-                    'year': movie.get('year'),
-                    'certification': movie.get('certification'),
-                    'overview': movie.get('overview', ''),
-                    'status': status,
-                    'release_date': release_date.isoformat() if release_date else None,
-                    'release_type': release_type,
-                    'days_until_release': (release_date - today).days if release_date else None,
-                    'trailer_url': trailer_url,
-                    'poster_url': self._get_poster_url(movie),
-                    'fanart_url': self._get_fanart_url(movie),
-                    'runtime': movie.get('runtime', 0),
-                    'genres': movie.get('genres', []),
-                    'ratings': movie.get('ratings', {}),
-                    'has_file': movie.get('hasFile', False),
-                    'monitored': movie.get('monitored', False)
-                })
-            
-            # Sort by release date (soonest first)
-            upcoming.sort(key=lambda x: x['release_date'] or '9999-99-99')
-            
-            return upcoming
-            
+            all_movies = await self.fetch_all_movies()
         except Exception as e:
             logger.error(f"Error fetching upcoming movies from Radarr: {e}")
             return []
+        return self.upcoming_from_raw(all_movies, days_ahead, include_unmonitored, release_date_preference)
+
+    def upcoming_from_raw(self, all_movies: List[Dict[str, Any]], days_ahead: int = 90, include_unmonitored: bool = False, release_date_preference: str = 'digital_first') -> List[Dict[str, Any]]:
+        """get_upcoming_movies on an already-fetched movie list. Unlike
+        parse_upcoming_from_raw it keeps downloaded movies, for "Available Now!"."""
+        upcoming = []
+        today = datetime.now().date()
+        cutoff_date = today + timedelta(days=days_ahead)
+        # Allow movies up to 7 days past their release date (recently released, not downloaded yet)
+        past_cutoff = today - timedelta(days=7)
+
+        for movie in all_movies:
+            # Skip unmonitored movies (unless include_unmonitored is True)
+            if not include_unmonitored and not movie.get('monitored', False):
+                continue
+            
+            # Check status - we want movies that are monitored but not available
+            status = movie.get('status', '').lower()
+            if status not in ['announced', 'incinemas', 'released']:
+                continue
+            
+            has_file = movie.get('hasFile', False)
+            
+            # Filter out quality upgrades / re-releases of old movies
+            # If the movie year is more than 2 years before current year, it's likely
+            # a re-release (e.g., 4K upgrade) not genuinely new content
+            movie_year = movie.get('year', 0) or 0
+            current_year = today.year
+            if movie_year and movie_year < current_year - 1:
+                continue
+            
+            # Get all release dates
+            digital_release = movie.get('digitalRelease')
+            physical_release = movie.get('physicalRelease')
+            in_cinemas = movie.get('inCinemas')
+            
+            # Determine the release date based on preference
+            release_date = None
+            release_type = None
+            
+            release_date, release_type = self._select_release_date(
+                digital_release, physical_release, in_cinemas, release_date_preference
+            )
+            
+            # Skip if no release date
+            if not release_date:
+                continue
+                
+            # Skip if too far in the future
+            if release_date > cutoff_date:
+                continue
+                
+            # Skip if too far in the past (more than 7 days ago)
+            # For downloaded movies (hasFile), still include them so they can show "Available Now!"
+            if release_date < past_cutoff and not has_file:
+                continue
+            
+            # For downloaded movies, only include if released within 30 days (generous window for "Available Now!" display)
+            if has_file and release_date < today - timedelta(days=30):
+                continue
+            
+            # Get trailer info from YouTube
+            trailer_url = None
+            if movie.get('youTubeTrailerId'):
+                trailer_url = f"https://www.youtube.com/watch?v={movie['youTubeTrailerId']}"
+            
+            upcoming.append({
+                'radarr_id': movie.get('id'),
+                'tmdb_id': movie.get('tmdbId'),
+                'imdb_id': movie.get('imdbId'),
+                'title': movie.get('title', 'Unknown'),
+                'year': movie.get('year'),
+                'certification': movie.get('certification'),
+                'overview': movie.get('overview', ''),
+                'status': status,
+                'release_date': release_date.isoformat() if release_date else None,
+                'release_type': release_type,
+                'days_until_release': (release_date - today).days if release_date else None,
+                'trailer_url': trailer_url,
+                'poster_url': self._get_poster_url(movie),
+                'fanart_url': self._get_fanart_url(movie),
+                'runtime': movie.get('runtime', 0),
+                'genres': movie.get('genres', []),
+                'ratings': movie.get('ratings', {}),
+                'has_file': movie.get('hasFile', False),
+                'monitored': movie.get('monitored', False),
+                'radarr_server': movie.get('nexrollServer'),  # set when read through radarr_servers
+            })
+        
+        # Sort by release date (soonest first)
+        upcoming.sort(key=lambda x: x['release_date'] or '9999-99-99')
+        
+        return upcoming
     
     async def get_all_movies_raw(self) -> List[Dict[str, Any]]:
         """
         Fetch ALL movies from Radarr in a single API call.
         Returns raw movie data including hasFile status.
         Used for batch checking download status without multiple API calls.
+        An unreachable Radarr gives an empty list; use fetch_all_movies to
+        tell the two apart.
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-                response = await client.get(
-                    f"{self.base_url}/api/v3/movie",
-                    headers=self.headers
-                )
-                response.raise_for_status()
-                return response.json()
+            return await self.fetch_all_movies()
         except Exception as e:
             logger.error(f"Error fetching all movies from Radarr: {e}")
             return []
+
+    async def fetch_all_movies(self) -> List[Dict[str, Any]]:
+        """Every movie in Radarr, raising when Radarr can't be read."""
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v3/movie",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            movies = response.json()
+        if not isinstance(movies, list):
+            raise ValueError("Radarr returned an unexpected movie list")
+        return movies
+
+    async def fetch_tags(self) -> List[Dict[str, Any]]:
+        """Radarr's tags as [{"id", "label"}], raising when they can't be read."""
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            response = await client.get(f"{self.base_url}/api/v3/tag", headers=self.headers)
+            response.raise_for_status()
+            return [{"id": t.get("id"), "label": t.get("label")} for t in response.json() if t.get("id") is not None]
     
     def parse_upcoming_from_raw(self, all_movies: List[Dict[str, Any]], days_ahead: int = 90, include_unmonitored: bool = False, release_date_preference: str = 'digital_first') -> List[Dict[str, Any]]:
         """
@@ -532,7 +546,8 @@ class RadarrConnector:
                 'genres': movie.get('genres', []),
                 'ratings': movie.get('ratings', {}),
                 'has_file': movie.get('hasFile', False),
-                'monitored': movie.get('monitored', False)
+                'monitored': movie.get('monitored', False),
+                'radarr_server': movie.get('nexrollServer'),  # set when read through radarr_servers
             })
         
         upcoming.sort(key=lambda x: x['release_date'] or '9999-99-99')

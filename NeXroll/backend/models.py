@@ -573,6 +573,35 @@ class NavigationFavorite(Base):
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
 
+class RadarrServer(Base):
+    """NeX-Up: a Radarr read alongside the main one (Setting.nexup_radarr_url),
+    such as a 4K instance. See radarr_servers.py.
+
+    AUTOINCREMENT so a removed server's id is never handed to a new one: the
+    id is part of the movie keys stored on trailer rows."""
+    __tablename__ = "radarr_servers"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=True)
+    url = Column(String, nullable=False)
+    api_key = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class SonarrServer(Base):
+    """NeX-Up: a Sonarr read alongside the main one (Setting.nexup_sonarr_url).
+    See sonarr_servers.py; AUTOINCREMENT for the same reason as RadarrServer."""
+    __tablename__ = "sonarr_servers"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=True)
+    url = Column(String, nullable=False)
+    api_key = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+
 class Session(Base):
     """User sessions for web UI authentication"""
     __tablename__ = "sessions"

@@ -833,8 +833,14 @@ PUT /nexup/settings                    # Update NeX-Up settings
 ```http
 POST /nexup/radarr/connect             # Connect to Radarr
 DELETE /nexup/radarr/disconnect         # Disconnect Radarr
-GET /nexup/radarr/upcoming             # Get upcoming movies
+GET /nexup/radarr/upcoming             # Get upcoming movies (every Radarr)
+GET /nexup/radarr/servers              # More Radarr servers (no API keys)
+POST /nexup/radarr/servers             # Add one: {"url", "api_key", "name"?}
+POST /nexup/radarr/servers/{id}/test   # Test a saved server
+DELETE /nexup/radarr/servers/{id}      # Stop reading a server
 ```
+
+With more than one Radarr, `radarr_id` / `radarr_movie_id` is a NeXroll movie key: the main Radarr's movies keep their Radarr id, and another server's movie is `server id x 1000000000 + its Radarr id`. Upcoming movies carry `radarr_server` (the server's name), and `GET /nexup/radarr/upcoming` lists unreachable servers in `failed_servers`. The Sonarr side works the same way: `/nexup/sonarr/servers` takes the same requests, `sonarr_id` / `sonarr_series_id` are show keys built the same way, upcoming shows carry `sonarr_server`, and `GET /nexup/sonarr/upcoming` returns `failed_servers`.
 
 ### Sonarr
 

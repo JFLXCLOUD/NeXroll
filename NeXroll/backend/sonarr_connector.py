@@ -62,19 +62,27 @@ class SonarrConnector:
             return {'success': False, 'message': str(e)}
     
     async def get_all_series(self) -> List[Dict[str, Any]]:
-        """Fetch all series from Sonarr"""
+        """Fetch all series from Sonarr; an empty list when Sonarr can't be read
+        (fetch_all_series tells the two apart)."""
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-                response = await client.get(
-                    f"{self.base_url}/api/v3/series",
-                    headers=self.headers
-                )
-                response.raise_for_status()
-                return response.json()
+            return await self.fetch_all_series()
         except Exception as e:
             logger.error(f"Error fetching series from Sonarr: {e}")
             return []
-    
+
+    async def fetch_all_series(self) -> List[Dict[str, Any]]:
+        """Every series in Sonarr, raising when Sonarr can't be read."""
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v3/series",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            series = response.json()
+        if not isinstance(series, list):
+            raise ValueError("Sonarr returned an unexpected series list")
+        return series
+
     async def get_upcoming_shows(self, days_ahead: int = 90) -> List[Dict[str, Any]]:
         """
         Fetch upcoming new shows and new seasons from Sonarr.
@@ -84,54 +92,113 @@ class SonarrConnector:
         - Are within the look-ahead window
         """
         try:
-            all_series = await self.get_all_series()
+            return self.upcoming_shows_from_series(await self.get_all_series(), days_ahead)
+        except Exception as e:
+            logger.error(f"Error fetching upcoming shows from Sonarr: {e}")
+            return []
+
+    def upcoming_shows_from_series(self, all_series: List[Dict[str, Any]], days_ahead: int = 90) -> List[Dict[str, Any]]:
+        """get_upcoming_shows on an already-fetched series list."""
+        upcoming = []
+        today = datetime.now().date()
+        cutoff_date = today + timedelta(days=days_ahead)
+        # Allow shows up to 7 days past their premiere date
+        past_cutoff = today - timedelta(days=7)
+        
+        for series in all_series:
+            # Skip if not monitored
+            if not series.get('monitored', False):
+                continue
             
-            upcoming = []
-            today = datetime.now().date()
-            cutoff_date = today + timedelta(days=days_ahead)
-            # Allow shows up to 7 days past their premiere date
-            past_cutoff = today - timedelta(days=7)
+            tvdb_id = series.get('tvdbId')
+            title = series.get('title', 'Unknown')
+            year = series.get('year')
             
-            for series in all_series:
-                # Skip if not monitored
-                if not series.get('monitored', False):
+            # Get series images
+            poster_url = None
+            fanart_url = None
+            for image in series.get('images', []):
+                if image.get('coverType') == 'poster':
+                    poster_url = image.get('remoteUrl') or image.get('url')
+                elif image.get('coverType') == 'fanart':
+                    fanart_url = image.get('remoteUrl') or image.get('url')
+            
+            # Check for upcoming seasons
+            seasons = series.get('seasons', [])
+            statistics = series.get('statistics', {})
+            
+            # Check if this is a new show (no episodes downloaded yet)
+            total_episode_count = statistics.get('totalEpisodeCount', 0)
+            episode_file_count = statistics.get('episodeFileCount', 0)
+            is_new_show = episode_file_count == 0 and total_episode_count > 0
+            
+            # Get first air date for the series
+            first_aired = series.get('firstAired')
+            if first_aired:
+                try:
+                    first_aired_date = datetime.fromisoformat(first_aired.replace('Z', '+00:00')).date()
+                except:
+                    first_aired_date = None
+            else:
+                first_aired_date = None
+            
+            # New show that hasn't aired yet
+            if is_new_show and first_aired_date:
+                if past_cutoff <= first_aired_date <= cutoff_date:
+                    upcoming.append({
+                        'sonarr_id': series.get('id'),
+                        'tvdb_id': tvdb_id,
+                        'imdb_id': series.get('imdbId'),
+                        'title': title,
+                        'year': year,
+                        'certification': series.get('certification'),
+                        'overview': series.get('overview', ''),
+                        'status': series.get('status', ''),
+                        'network': series.get('network', ''),
+                        'release_date': first_aired_date.isoformat(),
+                        'release_type': 'new_show',
+                        'season_number': 1,
+                        'days_until_release': (first_aired_date - today).days,
+                        'poster_url': poster_url,
+                        'fanart_url': fanart_url,
+                        'runtime': series.get('runtime', 0),
+                        'genres': series.get('genres', []),
+                        'ratings': series.get('ratings', {}),
+                        'monitored': series.get('monitored', False)
+                    })
+                    continue  # Don't also add as new season
+            
+            # Check each season for upcoming new seasons
+            for season in seasons:
+                if not season.get('monitored', False):
                     continue
                 
-                tvdb_id = series.get('tvdbId')
-                title = series.get('title', 'Unknown')
-                year = series.get('year')
+                season_number = season.get('seasonNumber', 0)
+                if season_number == 0:  # Skip specials
+                    continue
                 
-                # Get series images
-                poster_url = None
-                fanart_url = None
-                for image in series.get('images', []):
-                    if image.get('coverType') == 'poster':
-                        poster_url = image.get('remoteUrl') or image.get('url')
-                    elif image.get('coverType') == 'fanart':
-                        fanart_url = image.get('remoteUrl') or image.get('url')
+                season_stats = season.get('statistics', {})
+                season_episode_count = season_stats.get('totalEpisodeCount', 0)
+                season_file_count = season_stats.get('episodeFileCount', 0)
                 
-                # Check for upcoming seasons
-                seasons = series.get('seasons', [])
-                statistics = series.get('statistics', {})
-                
-                # Check if this is a new show (no episodes downloaded yet)
-                total_episode_count = statistics.get('totalEpisodeCount', 0)
-                episode_file_count = statistics.get('episodeFileCount', 0)
-                is_new_show = episode_file_count == 0 and total_episode_count > 0
-                
-                # Get first air date for the series
-                first_aired = series.get('firstAired')
-                if first_aired:
-                    try:
-                        first_aired_date = datetime.fromisoformat(first_aired.replace('Z', '+00:00')).date()
-                    except:
-                        first_aired_date = None
-                else:
-                    first_aired_date = None
-                
-                # New show that hasn't aired yet
-                if is_new_show and first_aired_date:
-                    if past_cutoff <= first_aired_date <= cutoff_date:
+                # This is a new season if it has episodes but none downloaded
+                # and we need to check if it's about to premiere
+                if season_episode_count > 0 and season_file_count == 0:
+                    # We need to get more detailed info about this season
+                    # For now, we'll add it and let the user decide
+                    # A better approach would be to check episode air dates
+                    
+                    # Check if any previous seasons have episodes
+                    has_previous_content = False
+                    for prev_season in seasons:
+                        if prev_season.get('seasonNumber', 0) < season_number:
+                            prev_stats = prev_season.get('statistics', {})
+                            if prev_stats.get('episodeFileCount', 0) > 0:
+                                has_previous_content = True
+                                break
+                    
+                    # Only add as "new season" if there's previous content (otherwise it's a new show)
+                    if has_previous_content:
                         upcoming.append({
                             'sonarr_id': series.get('id'),
                             'tvdb_id': tvdb_id,
@@ -142,10 +209,10 @@ class SonarrConnector:
                             'overview': series.get('overview', ''),
                             'status': series.get('status', ''),
                             'network': series.get('network', ''),
-                            'release_date': first_aired_date.isoformat(),
-                            'release_type': 'new_show',
-                            'season_number': 1,
-                            'days_until_release': (first_aired_date - today).days,
+                            'release_date': first_aired_date.isoformat() if first_aired_date else None,
+                            'release_type': 'new_season',
+                            'season_number': season_number,
+                            'days_until_release': None,  # Would need episode data
                             'poster_url': poster_url,
                             'fanart_url': fanart_url,
                             'runtime': series.get('runtime', 0),
@@ -153,98 +220,56 @@ class SonarrConnector:
                             'ratings': series.get('ratings', {}),
                             'monitored': series.get('monitored', False)
                         })
-                        continue  # Don't also add as new season
-                
-                # Check each season for upcoming new seasons
-                for season in seasons:
-                    if not season.get('monitored', False):
-                        continue
-                    
-                    season_number = season.get('seasonNumber', 0)
-                    if season_number == 0:  # Skip specials
-                        continue
-                    
-                    season_stats = season.get('statistics', {})
-                    season_episode_count = season_stats.get('totalEpisodeCount', 0)
-                    season_file_count = season_stats.get('episodeFileCount', 0)
-                    
-                    # This is a new season if it has episodes but none downloaded
-                    # and we need to check if it's about to premiere
-                    if season_episode_count > 0 and season_file_count == 0:
-                        # We need to get more detailed info about this season
-                        # For now, we'll add it and let the user decide
-                        # A better approach would be to check episode air dates
-                        
-                        # Check if any previous seasons have episodes
-                        has_previous_content = False
-                        for prev_season in seasons:
-                            if prev_season.get('seasonNumber', 0) < season_number:
-                                prev_stats = prev_season.get('statistics', {})
-                                if prev_stats.get('episodeFileCount', 0) > 0:
-                                    has_previous_content = True
-                                    break
-                        
-                        # Only add as "new season" if there's previous content (otherwise it's a new show)
-                        if has_previous_content:
-                            upcoming.append({
-                                'sonarr_id': series.get('id'),
-                                'tvdb_id': tvdb_id,
-                                'imdb_id': series.get('imdbId'),
-                                'title': title,
-                                'year': year,
-                                'certification': series.get('certification'),
-                                'overview': series.get('overview', ''),
-                                'status': series.get('status', ''),
-                                'network': series.get('network', ''),
-                                'release_date': first_aired_date.isoformat() if first_aired_date else None,
-                                'release_type': 'new_season',
-                                'season_number': season_number,
-                                'days_until_release': None,  # Would need episode data
-                                'poster_url': poster_url,
-                                'fanart_url': fanart_url,
-                                'runtime': series.get('runtime', 0),
-                                'genres': series.get('genres', []),
-                                'ratings': series.get('ratings', {}),
-                                'monitored': series.get('monitored', False)
-                            })
-            
-            # Sort by release date (soonest first, None at end)
-            upcoming.sort(key=lambda x: x['release_date'] or '9999-99-99')
-            
-            return upcoming
-            
-        except Exception as e:
-            logger.error(f"Error fetching upcoming shows from Sonarr: {e}")
-            return []
+        
+        # Sort by release date (soonest first, None at end)
+        upcoming.sort(key=lambda x: x['release_date'] or '9999-99-99')
+        
+        return upcoming
     
     async def get_calendar(self, start_date: datetime = None, end_date: datetime = None) -> List[Dict[str, Any]]:
         """
         Get upcoming episodes from Sonarr calendar.
         This gives us more accurate premiere dates for new seasons.
+        An empty list when Sonarr can't be read (fetch_calendar raises).
         """
         try:
-            if not start_date:
-                start_date = datetime.now()
-            if not end_date:
-                end_date = start_date + timedelta(days=90)
-            
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-                response = await client.get(
-                    f"{self.base_url}/api/v3/calendar",
-                    headers=self.headers,
-                    params={
-                        'start': start_date.strftime('%Y-%m-%d'),
-                        'end': end_date.strftime('%Y-%m-%d'),
-                        'includeSeries': 'true',
-                        'includeEpisodeFile': 'false',
-                        'includeEpisodeImages': 'false'
-                    }
-                )
-                response.raise_for_status()
-                return response.json()
+            return await self.fetch_calendar(start_date, end_date)
         except Exception as e:
             logger.error(f"Error fetching Sonarr calendar: {e}")
             return []
+
+    async def fetch_calendar(self, start_date: datetime = None, end_date: datetime = None) -> List[Dict[str, Any]]:
+        """Sonarr's calendar, raising when Sonarr can't be read."""
+        if not start_date:
+            start_date = datetime.now()
+        if not end_date:
+            end_date = start_date + timedelta(days=90)
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v3/calendar",
+                headers=self.headers,
+                params={
+                    'start': start_date.strftime('%Y-%m-%d'),
+                    'end': end_date.strftime('%Y-%m-%d'),
+                    'includeSeries': 'true',
+                    'includeEpisodeFile': 'false',
+                    'includeEpisodeImages': 'false'
+                }
+            )
+            response.raise_for_status()
+            episodes = response.json()
+        if not isinstance(episodes, list):
+            raise ValueError("Sonarr returned an unexpected calendar")
+        return episodes
+
+    @staticmethod
+    def calendar_window(days_ahead: int = 90, recent_days: int = 0) -> tuple:
+        """The calendar dates get_upcoming_premieres asks for."""
+        now = datetime.now()
+        recent_days = max(0, int(recent_days or 0))
+        # One extra day back: Sonarr filters the calendar on UTC air times.
+        return (now - timedelta(days=recent_days + 1) if recent_days else now,
+                now + timedelta(days=days_ahead))
     
     async def get_upcoming_premieres(self, days_ahead: int = 90, include_unmonitored: bool = False, recent_days: int = 0) -> List[Dict[str, Any]]:
         """
@@ -256,97 +281,95 @@ class SonarrConnector:
         Optionally includes unmonitored shows.
         """
         try:
-            now = datetime.now()
-            recent_days = max(0, int(recent_days or 0))
-            calendar = await self.get_calendar(
-                # One extra day back: Sonarr filters the calendar on UTC air times.
-                start_date=now - timedelta(days=recent_days + 1) if recent_days else now,
-                end_date=now + timedelta(days=days_ahead)
-            )
-            
-            premieres = {}  # Use dict to deduplicate by series+season
-            today = datetime.now().date()
-            
-            for episode in calendar:
-                # Only interested in premiere episodes (episode 1 of a season)
-                if episode.get('episodeNumber', 0) != 1:
-                    continue
-                
-                series = episode.get('series', {})
-                
-                # Skip unmonitored series (unless include_unmonitored is True)
-                if not include_unmonitored and not series.get('monitored', False):
-                    continue
-                
-                season_number = episode.get('seasonNumber', 0)
-                if season_number == 0:  # Skip specials
-                    continue
-                
-                sonarr_id = series.get('id')
-                key = f"{sonarr_id}_S{season_number}"
-                
-                if key in premieres:
-                    continue  # Already have this premiere
-                
-                # Get air date
-                air_date_str = episode.get('airDateUtc') or episode.get('airDate')
-                if not air_date_str:
-                    continue
-                
-                try:
-                    air_date = datetime.fromisoformat(air_date_str.replace('Z', '+00:00')).date()
-                except:
-                    continue
-                
-                # Get series images
-                poster_url = None
-                fanart_url = None
-                for image in series.get('images', []):
-                    if image.get('coverType') == 'poster':
-                        poster_url = image.get('remoteUrl') or image.get('url')
-                    elif image.get('coverType') == 'fanart':
-                        fanart_url = image.get('remoteUrl') or image.get('url')
-                
-                # Determine if this is a new show or new season
-                is_new_show = season_number == 1
-                release_type = 'new_show' if is_new_show else 'new_season'
-                
-                premieres[key] = {
-                    'sonarr_id': sonarr_id,
-                    'tvdb_id': series.get('tvdbId'),
-                    'imdb_id': series.get('imdbId'),
-                    'title': series.get('title', 'Unknown'),
-                    'year': series.get('year'),
-                    'certification': series.get('certification'),
-                    'overview': series.get('overview', ''),
-                    'status': series.get('status', ''),
-                    'network': series.get('network', ''),
-                    'release_date': air_date.isoformat(),
-                    'release_type': release_type,
-                    'season_number': season_number,
-                    'days_until_release': (air_date - today).days,
-                    'episode_title': episode.get('title', ''),
-                    'poster_url': poster_url,
-                    'fanart_url': fanart_url,
-                    'runtime': series.get('runtime', 0),
-                    'genres': series.get('genres', []),
-                    'has_file': episode.get('hasFile', False),
-                    'monitored': series.get('monitored', False)
-                }
-            
-            # Keep future premieres, plus downloaded ones inside the recent window
-            result = [
-                p for p in premieres.values()
-                if p['days_until_release'] >= 0
-                or (p['has_file'] and -p['days_until_release'] <= recent_days)
-            ]
-            result.sort(key=lambda x: x['release_date'] or '9999-99-99')
-            
-            return result
-            
+            start_date, end_date = self.calendar_window(days_ahead, recent_days)
+            calendar = await self.get_calendar(start_date=start_date, end_date=end_date)
+            return self.premieres_from_calendar(calendar, include_unmonitored, recent_days)
         except Exception as e:
             logger.error(f"Error fetching Sonarr premieres: {e}")
             return []
+
+    def premieres_from_calendar(self, calendar: List[Dict[str, Any]], include_unmonitored: bool = False, recent_days: int = 0) -> List[Dict[str, Any]]:
+        """get_upcoming_premieres on an already-fetched calendar."""
+        recent_days = max(0, int(recent_days or 0))
+        premieres = {}  # Use dict to deduplicate by series+season
+        today = datetime.now().date()
+        
+        for episode in calendar:
+            # Only interested in premiere episodes (episode 1 of a season)
+            if episode.get('episodeNumber', 0) != 1:
+                continue
+            
+            series = episode.get('series', {})
+            
+            # Skip unmonitored series (unless include_unmonitored is True)
+            if not include_unmonitored and not series.get('monitored', False):
+                continue
+            
+            season_number = episode.get('seasonNumber', 0)
+            if season_number == 0:  # Skip specials
+                continue
+            
+            sonarr_id = series.get('id')
+            key = f"{sonarr_id}_S{season_number}"
+            
+            if key in premieres:
+                continue  # Already have this premiere
+            
+            # Get air date
+            air_date_str = episode.get('airDateUtc') or episode.get('airDate')
+            if not air_date_str:
+                continue
+            
+            try:
+                air_date = datetime.fromisoformat(air_date_str.replace('Z', '+00:00')).date()
+            except:
+                continue
+            
+            # Get series images
+            poster_url = None
+            fanart_url = None
+            for image in series.get('images', []):
+                if image.get('coverType') == 'poster':
+                    poster_url = image.get('remoteUrl') or image.get('url')
+                elif image.get('coverType') == 'fanart':
+                    fanart_url = image.get('remoteUrl') or image.get('url')
+            
+            # Determine if this is a new show or new season
+            is_new_show = season_number == 1
+            release_type = 'new_show' if is_new_show else 'new_season'
+            
+            premieres[key] = {
+                'sonarr_id': sonarr_id,
+                'tvdb_id': series.get('tvdbId'),
+                'imdb_id': series.get('imdbId'),
+                'title': series.get('title', 'Unknown'),
+                'year': series.get('year'),
+                'certification': series.get('certification'),
+                'overview': series.get('overview', ''),
+                'status': series.get('status', ''),
+                'network': series.get('network', ''),
+                'release_date': air_date.isoformat(),
+                'release_type': release_type,
+                'season_number': season_number,
+                'days_until_release': (air_date - today).days,
+                'episode_title': episode.get('title', ''),
+                'poster_url': poster_url,
+                'fanart_url': fanart_url,
+                'runtime': series.get('runtime', 0),
+                'genres': series.get('genres', []),
+                'has_file': episode.get('hasFile', False),
+                'monitored': series.get('monitored', False)
+            }
+        
+        # Keep future premieres, plus downloaded ones inside the recent window
+        result = [
+            p for p in premieres.values()
+            if p['days_until_release'] >= 0
+            or (p['has_file'] and -p['days_until_release'] <= recent_days)
+        ]
+        result.sort(key=lambda x: x['release_date'] or '9999-99-99')
+        
+        return result
 
 
 class TVTrailerFetcher:

@@ -31,12 +31,35 @@ Click **NeX-Up** in the main navigation menu. You'll see four tabs:
 3. Click **Connect**
 4. If successful, you'll see a green checkmark
 
+#### More than one Radarr
+
+If you run a second Radarr, for example one for 4K, add it under **More Radarr servers** at the bottom of the connected Radarr card: click **Add**, enter its URL and API key (the name is optional; NeXroll uses the Radarr's instance name), and click **Connect**. NeXroll tests the connection before saving it. **Test** checks a saved server again and the bin icon removes it.
+
+NeX-Up then reads all of them together:
+
+- Upcoming, the Coming Soon list, trailer syncs and Library Trailers include the movies of every Radarr.
+- A movie that is in more than one Radarr (matched by its TMDB id) shows once and gets one trailer.
+- A movie counts as downloaded, for **Available Now!** and for removing its Coming Soon trailer, as soon as any of your Radarrs has the file.
+- Library Trailers also looks for trailer files next to every copy of a movie, and tags with the same name in different Radarrs count as one tag.
+- If a Radarr can't be reached, Upcoming, the Coming Soon list and the trailer sync carry on with the others and say which one failed. A Library Trailers sync stops without changing anything, so the trailers of that Radarr's movies aren't removed.
+
+The extra servers are only read while the main Radarr is connected. Removing one keeps the trailers you already downloaded; a movie that is also in another Radarr moves over to it at the next sync.
+
 ### Step 3: Connect Sonarr (Optional)
 
 1. In the Sonarr section, enter:
    - **Sonarr URL**: Your Sonarr server address (e.g., `http://localhost:8989`)
    - **API Key**: Found in Sonarr → Settings → General → API Key
 2. Click **Connect**
+
+#### More than one Sonarr
+
+A second Sonarr (4K, anime, ...) is added the same way, under **More Sonarr servers** at the bottom of the connected Sonarr card. NeX-Up then reads them together, like [more than one Radarr](#more-than-one-radarr):
+
+- Upcoming, the Coming Soon list and the TV trailer sync include the shows of every Sonarr.
+- A show that is in more than one Sonarr (matched by its TVDB id) shows once per season and gets one trailer per season.
+- A season counts as downloaded, for **Available Now!** and for removing its trailer, as soon as any of your Sonarrs has episodes of it.
+- If a Sonarr can't be reached, the others are still read and NeX-Up says which one failed.
 
 ### Step 4: Configure Settings
 
@@ -184,7 +207,7 @@ Each chip shows how many movies in your library it covers. Below the filters, a 
 
 Either can be switched off. With downloads off, only trailer files you already have are used.
 
-**Folder mapping:** Radarr reports each movie's folder as Radarr sees it. If NeXroll sees the same folders under a different path, for example in Docker or over a network share, add a folder mapping such as `/movies` to `D:\Movies`, so NeXroll can find the trailer files.
+**Folder mapping:** Radarr reports each movie's folder as Radarr sees it. If NeXroll sees the same folders under a different path, for example in Docker or over a network share, add a folder mapping such as `/movies` to `D:\Movies`, so NeXroll can find the trailer files. With [more than one Radarr](#more-than-one-radarr), add a mapping for each Radarr's root folder (for example `/movies4k` as well).
 
 To **play** those trailers, Plex needs to open them too, which may take a second mapping (NeXroll to Plex) under **Settings > Path Mappings**. **Find it for me** there finds your movie folder on the Plex side and adds it. See [Library Trailers beside your movies](Path-Mappings#library-trailers-beside-your-movies). Jellyfin and Emby need neither mapping for playback.
 

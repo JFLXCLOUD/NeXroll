@@ -93,6 +93,114 @@ function EmptyState({ icon: Icon, title, copy, action, actionLabel }) {
   );
 }
 
+// Radarrs or Sonarrs read alongside the main one, such as a 4K instance
+// holding movies or shows the main one doesn't (backend/radarr_servers.py,
+// sonarr_servers.py). A movie or show on more than one appears once.
+const MORE_SERVERS = {
+  Radarr: { path: 'radarr', port: '7879', item: 'movie', items: 'movies', tone: 'amber' },
+  Sonarr: { path: 'sonarr', port: '8990', item: 'show', items: 'shows', tone: 'blue' },
+};
+
+export function MoreServers({ kind = 'Radarr', onChanged }) {
+  const { path, port, item, items, tone } = MORE_SERVERS[kind];
+  const blank = { name: '', url: '', api_key: '' };
+  const [servers, setServers] = useState([]);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState(blank);
+  const [busy, setBusy] = useState(null);
+  const [note, setNote] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      setServers((await libraryJson(`/nexup/${path}/servers`)).servers || []);
+    } catch (e) {
+      setNote({ tone: 'danger', text: e.message });
+    }
+  }, [path]);
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    setBusy('add');
+    setNote(null);
+    try {
+      const body = await libraryJson(`/nexup/${path}/servers`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
+      });
+      if (!body.success) {
+        setNote({ tone: 'danger', text: body.message || 'Connection failed' });
+        return;
+      }
+      setForm(blank);
+      setAdding(false);
+      setNote({ tone: 'live', text: `${body.message}. Its ${items} are included from now on.` });
+      await load();
+      if (onChanged) onChanged();
+    } catch (e) {
+      setNote({ tone: 'danger', text: e.message });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const test = async server => {
+    setBusy(`test-${server.id}`);
+    try {
+      const body = await libraryJson(`/nexup/${path}/servers/${server.id}/test`, { method: 'POST' });
+      setNote({ tone: body.success ? 'live' : 'danger', text: `${server.name}: ${body.message}` });
+    } catch (e) {
+      setNote({ tone: 'danger', text: e.message });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const remove = async server => {
+    if (!window.confirm(`Stop reading ${server.name}? Trailers already downloaded are kept.`)) return;
+    setBusy(`remove-${server.id}`);
+    try {
+      const body = await libraryJson(`/nexup/${path}/servers/${server.id}`, { method: 'DELETE' });
+      setNote({ tone: '', text: body.message });
+      await load();
+      if (onChanged) onChanged();
+    } catch (e) {
+      setNote({ tone: 'danger', text: e.message });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const field = key => event => setForm(previous => ({ ...previous, [key]: event.target.value }));
+
+  return (
+    <section className="nx-ap-more-servers" aria-label={`More ${kind} servers`}>
+      <header>
+        <div><strong>More {kind} servers</strong><span>Read together with this one, such as a 4K {kind}. A {item} in both appears once.</span></div>
+        {!adding && <button type="button" className="nx-ap-btn" onClick={() => { setAdding(true); setNote(null); }}><Plus size={11} /> Add</button>}
+      </header>
+      {servers.length > 0 && (
+        <ul>
+          {servers.map(server => (
+            <li key={server.id}>
+              <div><strong>{server.name}</strong><span>{server.url}</span></div>
+              <button type="button" className="nx-ap-btn" disabled={Boolean(busy)} onClick={() => test(server)}>{busy === `test-${server.id}` ? <Loader2 size={11} className="spin" /> : null} Test</button>
+              <button type="button" className="nx-ap-btn danger square" disabled={Boolean(busy)} onClick={() => remove(server)} title={`Remove ${server.name}`} aria-label={`Remove ${server.name}`}><Trash2 size={12} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {adding && (
+        <div className="nx-ap-more-servers-form">
+          <label><span>Name</span><input value={form.name} onChange={field('name')} placeholder={`${kind} 4K (optional)`} /></label>
+          <label><span>{kind} URL</span><input value={form.url} onChange={field('url')} placeholder={`http://localhost:${port}`} /></label>
+          <label><span>API key</span><input type="password" value={form.api_key} onChange={field('api_key')} placeholder={`Enter this ${kind}'s API key`} /></label>
+          <div>
+            <button type="button" className="nx-ap-btn" disabled={busy === 'add'} onClick={() => { setAdding(false); setForm(blank); setNote(null); }}>Cancel</button>
+            <button type="button" className={`nx-ap-btn ${tone}`} disabled={Boolean(busy) || !form.url.trim() || !form.api_key.trim()} onClick={add}>{busy === 'add' ? <Loader2 size={11} className="spin" /> : null} Connect</button>
+          </div>
+        </div>
+      )}
+      {note && <p className={`nx-ap-more-servers-note${note.tone ? ` ${note.tone}` : ''}`} role="status">{note.text}</p>}
+    </section>
+  );
+}
+
 function ConnectionsPage(props) {
   const {
     settings, storage, upcomingMovies, upcomingShows, movieTrailers, tvTrailers,
@@ -110,7 +218,7 @@ function ConnectionsPage(props) {
     const date = value ? new Date(value) : null;
     return date && !Number.isNaN(date.getTime()) && date.toDateString() === todayKey;
   }).length;
-  const connectionCard = ({ kind, connected, url, value, setValue, keyValue, setKeyValue, connect, disconnect, refresh, sync, enabledKey }) => {
+  const connectionCard = ({ kind, connected, url, value, setValue, keyValue, setKeyValue, connect, disconnect, refresh, sync, enabledKey, extra }) => {
     const isSonarr = kind === 'Sonarr';
     return (
       <article className={`nx-ap-service-card${isSonarr ? ' sonarr' : ''}`}>
@@ -132,6 +240,7 @@ function ConnectionsPage(props) {
               <Switch checked={Boolean(settings[enabledKey])} onChange={checked => onUpdateSettings({ [enabledKey]: checked })} label={`${kind} automatic trailer downloads`} />
             </div>
             <footer><button type="button" className="nx-ap-btn" onClick={refresh}>Refresh {isSonarr ? 'shows' : 'movies'}</button><button type="button" className={`nx-ap-btn ${isSonarr ? 'blue' : 'amber'}`} onClick={sync}>Auto-download</button><button type="button" className="nx-ap-btn danger" onClick={disconnect}>Disconnect</button></footer>
+            {extra}
           </div>
         ) : (
           <div className="nx-ap-service-body nx-ap-connect-form">
@@ -160,8 +269,8 @@ function ConnectionsPage(props) {
         </section>
       )}
       <div className="nx-ap-service-grid">
-        {connectionCard({ kind: 'Radarr', connected: settings.radarr_connected, url: settings.radarr_url, value: radarrUrl, setValue: setRadarrUrl, keyValue: radarrKey, setKeyValue: setRadarrKey, connect: onConnectRadarr, disconnect: onDisconnectRadarr, refresh: onRefreshMovies, sync: onSyncMovies, enabledKey: 'enabled' })}
-        {connectionCard({ kind: 'Sonarr', connected: settings.sonarr_connected, url: settings.sonarr_url, value: sonarrUrl, setValue: setSonarrUrl, keyValue: sonarrKey, setKeyValue: setSonarrKey, connect: onConnectSonarr, disconnect: onDisconnectSonarr, refresh: onRefreshShows, sync: onSyncShows, enabledKey: 'sonarr_enabled' })}
+        {connectionCard({ kind: 'Radarr', connected: settings.radarr_connected, url: settings.radarr_url, value: radarrUrl, setValue: setRadarrUrl, keyValue: radarrKey, setKeyValue: setRadarrKey, connect: onConnectRadarr, disconnect: onDisconnectRadarr, refresh: onRefreshMovies, sync: onSyncMovies, enabledKey: 'enabled', extra: <MoreServers kind="Radarr" onChanged={onRefreshMovies} /> })}
+        {connectionCard({ kind: 'Sonarr', connected: settings.sonarr_connected, url: settings.sonarr_url, value: sonarrUrl, setValue: setSonarrUrl, keyValue: sonarrKey, setKeyValue: setSonarrKey, connect: onConnectSonarr, disconnect: onDisconnectSonarr, refresh: onRefreshShows, sync: onSyncShows, enabledKey: 'sonarr_enabled', extra: <MoreServers kind="Sonarr" onChanged={onRefreshShows} /> })}
       </div>
       <div className="nx-ap-notice"><i>i</i><div><strong>Sync behavior</strong><span>NeX-Up refreshes monitored media, downloads eligible missing trailers, and can regenerate Coming Soon lists after a successful sync. Current storage: {Number(storage?.total_size_gb || 0).toFixed(1)} GB.</span></div></div>
     </div>

@@ -1551,9 +1551,9 @@ class Scheduler:
         """Sync trailers from Radarr (called by auto-sync)"""
         import os
         from pathlib import Path
-        from backend.radarr_connector import RadarrConnector, TrailerDownloader
-        
-        connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+        from backend.radarr_connector import TrailerDownloader
+        from backend import radarr_servers
+
         storage_path = setting.nexup_storage_path
         quality = getattr(setting, 'nexup_quality', '1080') or '1080'
         max_duration = getattr(setting, 'nexup_max_trailer_duration', 180) or 0
@@ -1573,12 +1573,16 @@ class Scheduler:
             max_trailers = 10
         download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
         
-        # Get upcoming movies
-        all_movies = await connector.get_all_movies_raw()
+        # Get upcoming movies from every Radarr (one entry per movie)
+        library = await radarr_servers.fetch_library(db, setting)
+        for failed in library.failed:
+            _scheduler_log(f"NeX-Up auto-sync: Could not read {failed['name']}, its movies are skipped this time: {failed['error']}", level="WARNING")
+        all_movies = library.movies
+        radarr_servers.rehome(db, models.ComingSoonTrailer, library)
         from backend.trailer_filters import refresh_trailer_ratings
         refresh_trailer_ratings(db, models.ComingSoonTrailer, all_movies, "radarr_movie_id", "id")
         db.commit()
-        upcoming = connector.parse_upcoming_from_raw(all_movies, days_ahead)
+        upcoming = library.parser().parse_upcoming_from_raw(all_movies, days_ahead) if library.connected else []
         
         # Get existing trailer IDs
         existing_ids = {t.radarr_movie_id for t in db.query(models.ComingSoonTrailer).all()}
@@ -1684,10 +1688,9 @@ class Scheduler:
         """Sync trailers from Sonarr (called by auto-sync)"""
         import os
         from pathlib import Path
-        from backend.sonarr_connector import SonarrConnector
         from backend.radarr_connector import TrailerDownloader
-        
-        connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+        from backend import sonarr_servers
+
         storage_path = setting.nexup_storage_path
         quality = getattr(setting, 'nexup_quality', '1080') or '1080'
         max_duration = getattr(setting, 'nexup_max_trailer_duration', 180) or 0
@@ -1710,8 +1713,13 @@ class Scheduler:
         # ========================================
         _scheduler_log("NeX-Up Sonarr auto-sync: Checking for expired TV trailers...")
         
-        # Get all series from Sonarr to check download status
-        all_series = await connector.get_all_series()
+        # Get all series from every Sonarr to check download status (one entry
+        # per show; a season counts once any of them has episodes)
+        library = await sonarr_servers.fetch_library(db, setting)
+        for failed in library.failed:
+            _scheduler_log(f"NeX-Up Sonarr auto-sync: Could not read {failed['name']}, its shows are skipped this time: {failed['error']}", level="WARNING")
+        all_series = library.series
+        sonarr_servers.rehome(db, library)
         from backend.trailer_filters import refresh_trailer_ratings
         refresh_trailer_ratings(db, models.ComingSoonTVTrailer, all_series, "sonarr_series_id", "id")
         db.commit()
@@ -1787,7 +1795,7 @@ class Scheduler:
         # ========================================
         
         # Get upcoming shows
-        upcoming = await connector.get_upcoming_shows(days_ahead=days_ahead)
+        upcoming = library.parser().upcoming_shows_from_series(all_series, days_ahead) if library.connected else []
         
         # Get existing trailer IDs (re-fetch after cleanup)
         existing_ids = {t.sonarr_series_id for t in db.query(models.ComingSoonTVTrailer).all()}
