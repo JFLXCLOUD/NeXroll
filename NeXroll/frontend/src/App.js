@@ -1522,10 +1522,10 @@ function App() {
   const [communityIsBuilding, setCommunityIsBuilding] = useState(false);
   // Downloaded community preroll IDs (for marking as "Downloaded")
   const [downloadedCommunityIds, setDownloadedCommunityIds] = useState([]);
-  // Migration state
-  const [communityIsMigrating, setCommunityIsMigrating] = useState(false);
-  const [communityMigrationResult, setCommunityMigrationResult] = useState(null);
-  const [communityMigrationProgress, setCommunityMigrationProgress] = useState(null);
+  // Match Existing Prerolls / Rematch All: the server's job status
+  // (GET community-prerolls/match-existing), shown under the Community buttons.
+  const [communityMatchJob, setCommunityMatchJob] = useState(null);
+  const communityIsMigrating = Boolean(communityMatchJob?.running);
   const [communityMatchedCount, setCommunityMatchedCount] = useState(0);
   // Community server selector state
   const [communityServers, setCommunityServers] = useState([]);
@@ -3759,6 +3759,35 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }, 4000);
     return () => clearInterval(timer);
   }, [communityLengthsRunning, activeTab, communityIncludeAI]);
+
+  // Match Existing Prerolls runs on the server; follow it while it runs, and
+  // pick up a run still going when the Community page opens (after a reload).
+  const communityOnPage = activeTab.startsWith('community-prerolls');
+  React.useEffect(() => {
+    if (!communityOnPage || communityIsMigrating) return;
+    fetch(apiUrl('community-prerolls/match-existing'))
+      .then(r => (r.ok ? r.json() : null))
+      .then(job => { if (job?.running) setCommunityMatchJob(job); })
+      .catch(() => {});
+  }, [communityOnPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    if (!communityIsMigrating) return undefined;
+    let stopped = false;
+    const timer = setInterval(() => {
+      fetch(apiUrl('community-prerolls/match-existing'))
+        .then(r => (r.ok ? r.json() : null))
+        .then(job => {
+          if (!job || stopped) return;
+          setCommunityMatchJob(job);
+          if (!job.running) {
+            if (job.result) setCommunityMatchedCount(job.result.matched || 0);
+            loadDownloadedCommunityIds();
+          }
+        })
+        .catch(() => {});
+    }, 400);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [communityIsMigrating]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Browse and Search are separate Community destinations. Reset only the
   // shared result surface when moving between them so filters and queries stay
@@ -6431,7 +6460,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         } else {
           const matchInfo = data.match_type === 'exact' 
             ? '(exact match)' 
-            : `(fuzzy match - ${data.match_score * 100}% confidence)`;
+            : `(fuzzy match - ${Math.round(data.match_score * 100)}% confidence)`;
           
           alert(`Successfully matched!\n\nMatched to: ${data.matched_title}\n${matchInfo}\n\nThe preroll will now show the community match indicator.`);
           
@@ -35306,11 +35335,26 @@ const DashboardTiles = {
       }
     };
 
+    // Match Existing Prerolls and Rematch All run as one job on the server;
+    // the panel under the buttons follows it (see the polling effect).
+    const startCommunityMatch = async (rematch) => {
+      if (communityIsMigrating) return;
+      setCommunityMatchJob({ running: true, phase: 'starting', rematch, total: 0, checked: 0, matched: 0, needs_review: 0, skipped: 0 });
+      try {
+        const response = await fetch(apiUrl(`community-prerolls/match-existing?match_all=true&rematch=${rematch}`), { method: 'POST' });
+        const job = await response.json().catch(() => null);
+        if (!response.ok || !job) throw new Error(job?.detail || `HTTP ${response.status}`);
+        setCommunityMatchJob(job);
+      } catch (error) {
+        setCommunityMatchJob({ running: false, phase: 'error', rematch, error: error.message });
+      }
+    };
+
     // Handle rematching all prerolls (clears existing matches first)
     const handleRematchAll = async () => {
       if (communityIsMigrating) return;
-      
-      const confirmMessage = 
+
+      const confirmMessage =
         'This will CLEAR all existing community preroll links and rematch them with the improved matching algorithm.\n\n' +
         'Use this if:\n' +
         '• Previous matches were incorrect\n' +
@@ -35318,129 +35362,103 @@ const DashboardTiles = {
         '• You have many mismatched prerolls\n\n' +
         'WARNING: This will reset ALL community preroll connections!\n\n' +
         'Your preroll files will NOT be modified or deleted.';
-      
+
       const confirmed = await showConfirm(confirmMessage, { title: 'Rematch All Prerolls', type: 'warning', confirmText: 'Rematch All' });
       if (!confirmed) return;
-      
-      setCommunityIsMigrating(true);
-      setCommunityMigrationResult(null);
-      setCommunityMigrationProgress({ status: 'Clearing existing matches...', scanned: 0, matched: 0 });
-      
-      try {
-        // First, clear all existing matches
-        const clearResponse = await fetch(apiUrl('community-prerolls/clear-matches'), {
-          method: 'POST'
-        });
-        
-        if (!clearResponse.ok) {
-          throw new Error('Failed to clear existing matches');
-        }
-        
-        setCommunityMigrationProgress({ status: 'Rematching prerolls...', scanned: 0, matched: 0 });
-        
-        // Then rematch with match_all=true
-        const params = new URLSearchParams();
-        params.append('match_all', 'true');
-        
-        const response = await fetch(apiUrl(`community-prerolls/migrate-legacy?${params.toString()}`), {
-          method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success !== false) {
-          setCommunityMigrationResult(data);
-          setCommunityMigrationProgress({ 
-            status: 'Complete!', 
-            scanned: data.total_scanned, 
-            matched: data.matched 
-          });
-          
-          setCommunityMatchedCount(data.matched);
-          await loadDownloadedCommunityIds();
-          
-          const message = data.matched > 0
-            ? `Successfully rematched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
-              (data.failed > 0 ? `${data.failed} prerolls couldn't be matched automatically.` : 'All scanned prerolls were matched!')
-            : `No matches found.\n\nScanned ${data.total_scanned} prerolls but couldn't find matching titles in the community library.`;
-          
-          alert(message);
-          
-          setTimeout(() => setCommunityMigrationProgress(null), 5000);
-        } else {
-          alert(data.message || 'Rematch failed');
-          setCommunityMigrationProgress(null);
-        }
-      } catch (error) {
-        alert(`Failed to rematch prerolls: ${error.message}`);
-        setCommunityMigrationProgress(null);
-      } finally {
-        setCommunityIsMigrating(false);
-      }
+      startCommunityMatch(true);
     };
 
     // Handle matching existing prerolls to community library
-    const handleMatchExisting = async (matchAll = false) => {
+    const handleMatchExisting = async () => {
       if (communityIsMigrating) return;
-      
-      const confirmMessage = matchAll
-        ? 'This will attempt to match ALL your existing prerolls to the community library.\n\n' +
-          'This is useful if you manually downloaded community prerolls before using NeXroll.\n\n' +
-          'Note: Only prerolls with matching titles will be marked as downloaded.'
-        : 'This will match prerolls that were downloaded from the community library but don\'t have tracking IDs yet.\n\n' +
-          'This is a safe operation and won\'t modify your preroll files.';
-      
+
+      const confirmMessage =
+        'This will attempt to match ALL your existing prerolls to the community library.\n\n' +
+        'This is useful if you manually downloaded community prerolls before using NeXroll.\n\n' +
+        'Note: Only prerolls that are the same file, or have the same title and length, will be linked.';
+
       const confirmed = await showConfirm(confirmMessage, { title: 'Match Prerolls', type: 'info', confirmText: 'Match' });
       if (!confirmed) return;
-      
-      setCommunityIsMigrating(true);
-      setCommunityMigrationResult(null);
-      setCommunityMigrationProgress({ status: 'Starting...', scanned: 0, matched: 0 });
-      
-      try {
-        const params = new URLSearchParams();
-        if (matchAll) params.append('match_all', 'true');
-        
-        const response = await fetch(apiUrl(`community-prerolls/migrate-legacy?${params.toString()}`), {
-          method: 'POST'
-        });
-        
-        const data = await response.json();
-        
-        if (data.success !== false) {
-          setCommunityMigrationResult(data);
-          setCommunityMigrationProgress({ 
-            status: 'Complete!', 
-            scanned: data.total_scanned, 
-            matched: data.matched 
-          });
-          
-          // Update matched count for persistent display
-          setCommunityMatchedCount(data.matched);
-          
-          // Refresh downloaded IDs to update UI
-          await loadDownloadedCommunityIds();
-          
-          // Show success message
-          const message = data.matched > 0
-            ? `Successfully matched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
-              (data.failed > 0 ? `${data.failed} prerolls couldn't be matched automatically.` : 'All scanned prerolls were matched!')
-            : `No matches found.\n\nScanned ${data.total_scanned} prerolls but couldn't find matching titles in the community library.`;
-          
-          alert(message);
-          
-          // Clear progress after a delay
-          setTimeout(() => setCommunityMigrationProgress(null), 5000);
+      startCommunityMatch(false);
+    };
+
+    // Progress, then the result, of the last Match Existing / Rematch All run.
+    const renderCommunityMatchPanel = () => {
+      const job = communityMatchJob;
+      if (!job) return null;
+      const result = job.result || null;
+      const failedToStart = job.phase === 'error';
+      const notMatched = !failedToStart && result && result.success === false;
+      const total = job.total || 0;
+      const checked = Math.min(job.checked || 0, total);
+      const percent = job.running
+        ? (total ? Math.round((checked / total) * 100) : 0)
+        : 100;
+      const verb = job.rematch ? 'Rematching' : 'Matching';
+      let title;
+      let step;
+      if (job.running) {
+        title = `${verb} your prerolls`;
+        if (job.phase === 'matching' && total) {
+          step = `Checking ${Math.min(checked + 1, total)} of ${total}${job.current ? `: ${job.current}` : ''}`;
+        } else if (job.phase === 'saving') {
+          step = 'Saving links…';
+        } else if (job.phase === 'loading') {
+          step = 'Loading the Community index…';
         } else {
-          alert(data.message || 'Migration failed');
-          setCommunityMigrationProgress(null);
+          step = 'Starting…';
         }
-      } catch (error) {
-        alert(`Failed to match existing prerolls: ${error.message}`);
-        setCommunityMigrationProgress(null);
-      } finally {
-        setCommunityIsMigrating(false);
+      } else if (failedToStart || notMatched) {
+        title = `${verb} stopped`;
+        step = failedToStart ? job.error || 'Something went wrong.' : result.message;
+      } else {
+        title = `${verb} finished`;
+        const linked = result?.matched || 0;
+        const scanned = result?.total_scanned || 0;
+        const review = result?.needs_review || 0;
+        step = scanned
+          ? `Linked ${linked} of ${scanned} preroll${scanned === 1 ? '' : 's'}.` +
+            (review ? ` ${review} ${review === 1 ? 'has' : 'have'} possible matches to review: open ${review === 1 ? 'it' : 'one'} in the Library and use Auto-Match Now to pick.` : '')
+          : 'No prerolls to match.';
       }
+      const tone = job.running ? 'is-running' : (failedToStart || notMatched ? 'is-error' : 'is-done');
+      return (
+        <div className={`nx-comm-match ${tone}`} role="status" aria-live="polite">
+          <div className="nx-comm-match-head">
+            <span className="nx-comm-match-icon" aria-hidden="true">
+              {job.running ? <Loader2 size={15} className="spin" /> : (tone === 'is-error' ? <AlertTriangle size={15} /> : <CheckCircle size={15} />)}
+            </span>
+            <strong>{title}</strong>
+            {!job.running && (
+              <button type="button" className="nx-comm-match-close" onClick={() => setCommunityMatchJob(null)} aria-label="Close" title="Close">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <div
+            className="nx-comm-match-bar"
+            role="progressbar"
+            aria-label={`${verb} progress`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+          >
+            <span style={{ width: `${percent}%` }} />
+          </div>
+          <div className="nx-comm-match-step" title={step}>{step}</div>
+          {!failedToStart && (
+            <div className="nx-comm-match-counts">
+              <span><b>{job.matched || 0}</b> linked</span>
+              <span><b>{job.needs_review || 0}</b> to review</span>
+              {(job.skipped || 0) > 0 && (
+                <span title="Videos NeXroll made (NeX-Up trailers, Coming Soon lists) and prerolls excluded from matching">
+                  <b>{job.skipped}</b> skipped
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      );
     };
 
     // Clean up display text - remove URL encoding and file extensions
@@ -36169,12 +36187,12 @@ const DashboardTiles = {
         {/* Secondary actions, under the summary tiles. Refresh Index and Change
             Server are in the page header. */}
         <div className="nx-comm-actionbar">
-          <button onClick={() => handleMatchExisting(true)} disabled={communityIsMigrating} className="button button-secondary">
-            {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Matching…</> : <><Link size={14} /> Match Existing Prerolls</>}
+          <button onClick={handleMatchExisting} disabled={communityIsMigrating} className="button button-secondary">
+            {communityIsMigrating && !communityMatchJob?.rematch ? <><Loader2 size={14} className="spin" /> Matching…</> : <><Link size={14} /> Match Existing Prerolls</>}
           </button>
           {idxExists && (
             <button onClick={handleRematchAll} disabled={communityIsMigrating} className="button button-secondary">
-              {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Rematching…</> : <><RefreshCcw size={14} /> Rematch All</>}
+              {communityIsMigrating && communityMatchJob?.rematch ? <><Loader2 size={14} className="spin" /> Rematching…</> : <><RefreshCcw size={14} /> Rematch All</>}
             </button>
           )}
           <div className="nx-comm-actionbar-spacer" />
@@ -36216,6 +36234,7 @@ const DashboardTiles = {
           >
             <FileText size={14} /> Fair Use Policy
           </button>
+          {renderCommunityMatchPanel()}
         </div>
 
         {/* Server picker (toggled from the page header's "Change Server") */}
@@ -36328,7 +36347,7 @@ const DashboardTiles = {
           </div>
         )}
 
-        {(isCommunitySearchPage || communityBuildProgress || communityMigrationProgress) && (
+        {(isCommunitySearchPage || communityBuildProgress) && (
         <div className="card nx-community-search-card">
 
           {/* Retro Progress Bar */}
@@ -36342,41 +36361,6 @@ const DashboardTiles = {
             />
           )}
 
-          {/* Match Existing Progress Bar */}
-          {communityMigrationProgress && (
-            <div style={{
-              marginBottom: '1rem',
-              padding: '1rem',
-              backgroundColor: 'var(--card-bg, #f0f0f0)',
-              border: '2px solid var(--border-color, #ddd)',
-              borderRadius: '8px',
-              fontFamily: "'Courier New', monospace"
-            }}>
-              <div style={{ 
-                fontSize: '0.9rem', 
-                marginBottom: '0.5rem',
-                color: 'var(--text-color, #333)',
-                fontWeight: 'bold',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem'
-              }}>
-                <Link size={14} /> Matching Prerolls to Community Library
-              </div>
-              <div style={{
-                backgroundColor: 'var(--bg-color, #fff)',
-                border: '1px solid var(--border-color, #ddd)',
-                borderRadius: '4px',
-                padding: '0.5rem',
-                fontSize: '0.85rem',
-                color: 'var(--text-color, #333)'
-              }}>
-                <div>Status: {communityMigrationProgress.status}</div>
-                <div>Scanned: {communityMigrationProgress.scanned} prerolls</div>
-                <div>Matched: {communityMigrationProgress.matched} prerolls</div>
-              </div>
-            </div>
-          )}
 
           {/* Search toolbar */}
           {isCommunitySearchPage && (
@@ -38617,8 +38601,12 @@ const DashboardTiles = {
                                    overflow: 'hidden',
                                    textOverflow: 'ellipsis',
                                    whiteSpace: 'nowrap'
-                                 }} title={`ID: ${match.id}`}>
-                                   Confidence: {match.confidence}% • ID: {match.id}
+                                 }} title={`Confidence: ${match.confidence}% • ID: ${match.id}`}>
+                                   {/* Lengths first when known: the panel is narrow and the badge already shows the confidence. */}
+                                   {match.seconds
+                                     ? `${match.seconds.toFixed(1)}s${match.local_seconds ? ` (yours ${match.local_seconds.toFixed(1)}s)` : ''} • `
+                                     : `Confidence: ${match.confidence}% • `}
+                                   ID: {match.id}
                                  </div>
                                </div>
                                <div style={{

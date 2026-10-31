@@ -115,6 +115,7 @@ from backend.community_filter import filter_ai_prerolls, is_ai_preroll
 from backend import community_durations
 from backend.community_search import QueryMatcher
 from backend import community_catalog
+from backend import community_match
 from backend.shuffle_bag import shuffle_bag_sample
 from backend.sequence_utils import representative_category_id
 from backend.backup_utils import (
@@ -711,12 +712,13 @@ def ensure_schema() -> None:
 
 def migrate_legacy_community_prerolls() -> None:
     """
-    One-time migration to match legacy community prerolls (downloaded before ID tracking)
-    with their community library IDs by searching the community API by title.
+    Give Community downloads from before ID tracking their Community ID, using
+    the local index and the same rules as Match Existing Prerolls (it used to
+    take the first title from a remote search that merely contained the name).
+    Safe to run on every start: only confident matches are linked.
     """
+    db = SessionLocal()
     try:
-        db = SessionLocal()
-
         # Check if column exists before querying (handles old DB schemas)
         if not _sqlite_has_column("prerolls", "community_preroll_id"):
             return
@@ -726,53 +728,30 @@ def migrate_legacy_community_prerolls() -> None:
             models.Preroll.description.like("%Downloaded from Community Prerolls%"),
             models.Preroll.community_preroll_id.is_(None)
         ).all()
-
         if not legacy_prerolls:
             return
 
-        import requests
+        matcher = _community_matcher()
+        if matcher is None:
+            return
+        servers = _connected_platforms(db)
         matched_count = 0
-        
         for preroll in legacy_prerolls:
-            try:
-                # Try to find this preroll in the community library by searching its display name or filename
-                search_title = preroll.display_name or preroll.filename.replace('.mp4', '').replace('.mkv', '')
-                
-                # Search community API
-                response = requests.get(
-                    f'{DEFAULT_COMMUNITY_BASE_URL}/api/search',
-                    params={'query': search_title, 'limit': 5},
-                    headers=_community_headers(),
-                    timeout=5
-                )
-                
-                if response.ok:
-                    results = response.json().get('results', [])
-                    
-                    # Look for exact or very close title match
-                    for result in results:
-                        import re
-                        result_title = re.sub(r'^\d+\s*-\s*', '', result.get('title', '')).strip().lower()
-                        search_lower = search_title.lower().strip()
-                        
-                        # Match if titles are very similar
-                        if result_title == search_lower or search_lower in result_title or result_title in search_lower:
-                            preroll.community_preroll_id = str(result.get('id'))
-                            matched_count += 1
-                            print(f"Matched legacy preroll '{preroll.display_name}' to community ID {result.get('id')}")
-                            break
-                
-            except Exception as e:
-                print(f"Failed to match preroll {preroll.id}: {e}")
+            if getattr(preroll, 'exclude_from_matching', False) or _is_nexroll_made(preroll):
                 continue
-        
+            result = _community_match_for(matcher, preroll, servers)
+            if result["id"]:
+                preroll.community_preroll_id = result["id"]
+                matched_count += 1
+                _file_log(f"Matched legacy community preroll '{preroll.display_name or preroll.filename}' to '{result['title']}' ({result['how']})")
+
         if matched_count > 0:
             db.commit()
-            print(f"Legacy community preroll migration: matched {matched_count} prerolls")
-        
-        db.close()
+            _file_log(f"Legacy community preroll migration: matched {matched_count} prerolls")
     except Exception as e:
-        print(f"Legacy community preroll migration error: {e}")
+        _file_log(f"Legacy community preroll migration error: {e}", level="WARNING")
+    finally:
+        db.close()
 
 def ensure_settings_schema_now() -> None:
     """
@@ -1109,9 +1088,7 @@ def migrate_preroll_hashes() -> None:
         import traceback
         _file_log(f"Hash migration traceback: {traceback.format_exc()}", level="ERROR")
 
-# Run legacy community preroll migration in background (one-time, safe to call multiple times)
 import threading
-threading.Thread(target=migrate_legacy_community_prerolls, daemon=True).start()
 
 # Run hash migration in background for existing prerolls
 threading.Thread(target=migrate_preroll_hashes, daemon=True).start()
@@ -2910,6 +2887,10 @@ def startup_event():
 
     # Weekly Community index refresh; does nothing unless the user turned it on.
     threading.Thread(target=_community_auto_refresh_loop, daemon=True, name="community-auto-refresh").start()
+
+    # Community IDs for old Community downloads. Started here, not at import:
+    # it reads the local index, which is set up further down the module.
+    threading.Thread(target=migrate_legacy_community_prerolls, daemon=True, name="community-legacy-match").start()
 
 @app.on_event("startup")
 def startup_env_bootstrap():
@@ -10139,17 +10120,98 @@ def delete_preroll(preroll_id: int, delete_file: bool = False, db: Session = Dep
         log_event('ERROR', 'user', f'Preroll deletion failed: {exc}', source='delete_preroll', details={'preroll_id': preroll_id})
         raise HTTPException(status_code=500, detail=f"Error deleting preroll: {str(exc)}") from exc
 
+_community_matcher_cache = {"key": None, "matcher": None}
+
+
+def _community_matcher() -> Optional[community_match.Matcher]:
+    """The Community index ready for matching, with the lengths read so far;
+    None without an index. Kept until the index or the lengths file changes:
+    a sequence export asks once per preroll."""
+    try:
+        index_stat = PREROLLS_INDEX_PATH.stat()
+    except OSError:
+        return None
+    try:
+        lengths_mtime = (PREROLLS_INDEX_PATH.parent / "community_durations.json").stat().st_mtime_ns
+    except OSError:
+        lengths_mtime = None
+    key = (index_stat.st_mtime_ns, index_stat.st_size, lengths_mtime)
+    if _community_matcher_cache["key"] != key:
+        index_data = _load_prerolls_index()
+        if not index_data:
+            return None
+        entries = index_data.get("prerolls", [])
+        _community_matcher_cache.update(
+            key=key, matcher=community_match.Matcher(entries, _community_durations.durations(entries)))
+    return _community_matcher_cache["matcher"]
+
+
+def _local_media_seconds(path: Optional[str]) -> Optional[float]:
+    """A local video's length from ffprobe, or None."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        result = _run_subprocess(
+            [get_ffprobe_cmd(), "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=30)
+        seconds = float((result.stdout or "").strip())
+        return seconds if seconds > 0 else None
+    except Exception:
+        return None
+
+
+def _is_nexroll_made(preroll) -> bool:
+    """NeX-Up trailers, Coming Soon lists, generated prerolls and theme
+    backdrops: never in the Community library, so never matched to it."""
+    if community_match.is_nexroll_file(preroll.path, preroll.filename):
+        return True
+    categories = [getattr(preroll, "category", None)] + list(getattr(preroll, "categories", None) or [])
+    return any(c is not None and getattr(c, "is_system", False) for c in categories)
+
+
+def _connected_platforms(db) -> tuple:
+    """The media servers this install has saved, named as Community versions are."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return ()
+    servers = (("plex", setting.plex_url), ("jellyfin", setting.jellyfin_url), ("emby", getattr(setting, "emby_url", None)))
+    return tuple(name for name, url in servers if url)
+
+
+def _community_match_for(matcher: community_match.Matcher, preroll, servers: tuple = ()) -> dict:
+    """Matcher.match for a Preroll row. The size is read from the file when
+    it's there; a length that isn't stored is measured only when needed. A
+    file whose name and path name no platform takes the version for the
+    install's one server type (``servers``, from _connected_platforms)."""
+    path = preroll.path or ""
+    size = None
+    try:
+        if path and os.path.isfile(path):
+            size = os.path.getsize(path)
+    except OSError:
+        size = None
+    size = size or getattr(preroll, "file_size", None)
+    stored = getattr(preroll, "duration", None)
+    seconds = stored if stored and stored > 0 else (lambda: _local_media_seconds(path))
+    platform = community_match.local_platform(preroll.filename, preroll.display_name, path)
+    if not platform and servers and len(servers) == 1:
+        platform = servers[0]
+    return matcher.match([preroll.display_name, preroll.filename], size=size, seconds=seconds, platform=platform)
+
+
 @app.post("/prerolls/{preroll_id}/auto-match")
 def auto_match_single_preroll(preroll_id: int, db: Session = Depends(get_db)):
     """
-    Automatically match a preroll to the Community Prerolls library using fuzzy matching.
-    Returns matched community preroll or similar matches with confidence scores.
+    Match a preroll to the Community Prerolls library (see community_match).
+    It is linked when it is the same file or its title and length agree;
+    otherwise similar prerolls come back with confidence scores to pick from.
     """
     try:
         preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
         if not preroll:
             raise HTTPException(status_code=404, detail="Preroll not found")
-        
+
         # Check if preroll is excluded from auto-matching
         if getattr(preroll, 'exclude_from_matching', False):
             return {
@@ -10158,7 +10220,7 @@ def auto_match_single_preroll(preroll_id: int, db: Session = Depends(get_db)):
                 "excluded": True,
                 "message": "This preroll is excluded from community matching"
             }
-        
+
         # Check if already matched
         if getattr(preroll, 'community_preroll_id', None):
             return {
@@ -10166,155 +10228,55 @@ def auto_match_single_preroll(preroll_id: int, db: Session = Depends(get_db)):
                 "already_matched": True,
                 "community_preroll_id": preroll.community_preroll_id
             }
-        
-        # Load community index
-        if not PREROLLS_INDEX_PATH.exists():
+
+        if _is_nexroll_made(preroll):
+            return {
+                "success": False,
+                "matched": False,
+                "excluded": True,
+                "message": "NeXroll made this file (a NeX-Up trailer, Coming Soon list or generated preroll), so it isn't in the Community library."
+            }
+
+        matcher = _community_matcher()
+        if matcher is None:
             return {
                 "matched": False,
                 "message": "Community prerolls index not available. Please build the index first."
             }
-        
-        try:
-            with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
-                index_data = json.load(f)
-            # Extract prerolls array from wrapper dict
-            community_data = index_data.get("prerolls", [])
-            _file_log(f"Loaded community index: {len(community_data)} prerolls for auto-match")
-        except Exception as e:
-            _file_log(f"Failed to load community index: {e}")
-            return {"matched": False, "message": f"Failed to load community index: {str(e)}"}
-        
-        # Get preroll title for matching
+
         title = preroll.display_name or preroll.filename
-        title_clean = os.path.splitext(title)[0]
-        
-        # Normalize title for matching
-        def normalize(s):
-            s = s.lower()
-            # Replace underscores with spaces first
-            s = s.replace('_', ' ')
-            # Remove all non-alphanumeric characters except spaces
-            s = re.sub(r'[^a-z0-9\s]', '', s)
-            # Collapse multiple spaces into one
-            s = re.sub(r'\s+', ' ', s)
-            return s.strip()
-        
-        # Check if title has hash-like prefix (e.g., "1740Bdd395C04C5Ea7843Da12858C2B4.Title")
-        def has_hash_prefix(title):
-            # Match pattern: starts with 20+ alphanumeric chars followed by dot or space
-            # This catches hash prefixes like "1740Bdd395C04C5Ea7843Da12858C2B4."
-            match = re.match(r'^[a-zA-Z0-9]{20,}[\.\s]', title)
-            return match is not None
-        
-        title_norm = normalize(title_clean)
-        
-        # Try to find exact match
-        for cp in community_data:
-            cp_title_norm = normalize(cp.get('title', ''))
-            if title_norm == cp_title_norm:
-                # Exact match found
-                preroll.community_preroll_id = cp.get('id')
-                db.commit()
-                _file_log(f"Auto-matched preroll '{title}' to community preroll '{cp.get('title')}' (exact match)")
-                return {
-                    "matched": True,
-                    "community_preroll_id": cp.get('id'),
-                    "matched_title": cp.get('title'),
-                    "match_type": "exact",
-                    "match_score": 1.0
-                }
-        
-        # No exact match - find similar matches using fuzzy matching
-        similar_matches = []
-        title_words = set(title_norm.split())
-        _file_log(f"Fuzzy matching for '{title_norm}' with {len(title_words)} words: {title_words}")
-        
-        matches_checked = 0
-        for cp in community_data:
-            cp_title = cp.get('title', '')
-            
-            # Skip prerolls with hash-like prefixes (e.g., "1740Bdd395C04C5Ea7843Da12858C2B4.Title")
-            if has_hash_prefix(cp_title):
-                continue
-            
-            cp_title_norm = normalize(cp_title)
-            cp_words = set(cp_title_norm.split())
-            
-            # Calculate similarity score
-            score = 0.0
-            reason = ""
-            
-            # Check if one title is substring of another
-            if title_norm in cp_title_norm or cp_title_norm in title_norm:
-                score = 0.85
-                reason = "substring"
-            else:
-                # Word overlap scoring - ANY matching word counts
-                if title_words and cp_words:
-                    common_words = title_words & cp_words
-                    if common_words:
-                        # Score based on how many words match relative to the shorter title
-                        # This gives higher scores when ANY word matches
-                        min_words = min(len(title_words), len(cp_words))
-                        score = len(common_words) / min_words
-                        reason = f"word_match ({len(common_words)}/{min_words})"
-            
-            # Threshold at 50% to show matches where at least half the words match
-            if score >= 0.50:
-                similar_matches.append({
-                    "id": cp.get('id'),
-                    "title": cp_title,
-                    "confidence": int(score * 100),
-                    "score": score,
-                    "reason": reason,
-                    "video_url": cp.get('url')  # Include video URL for preview
-                })
-            
-            matches_checked += 1
-            # Log first few high-scoring matches for debugging
-            if score >= 0.50 and len(similar_matches) <= 5:
-                _file_log(f"  Match: '{cp_title}' (score: {int(score*100)}%, common: {common_words if score > 0 else 'none'})")
-        
-        _file_log(f"Checked {matches_checked} community prerolls, found {len(similar_matches)} matches >= 50%")
-        
-        # Sort by score descending
-        similar_matches.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Auto-link only if we have a very confident match (>= 80%)
-        # Lower confidence matches (20-79%) are shown to user for manual selection
-        if similar_matches and similar_matches[0]['score'] >= 0.8:
-            best_match = similar_matches[0]
-            preroll.community_preroll_id = best_match['id']
+        result = _community_match_for(matcher, preroll, _connected_platforms(db))
+        if result["id"]:
+            preroll.community_preroll_id = result["id"]
             db.commit()
-            _file_log(f"Auto-matched preroll '{title}' to community preroll '{best_match['title']}' (fuzzy match: {best_match['confidence']}%)")
+            _file_log(f"Auto-matched preroll '{title}' to community preroll '{result['title']}' ({result['how']}, {result['confidence']}%)")
             return {
                 "matched": True,
-                "community_preroll_id": best_match['id'],
-                "matched_title": best_match['title'],
-                "match_type": "fuzzy",
-                "match_score": best_match['score']
+                "community_preroll_id": result["id"],
+                "matched_title": result["title"],
+                "match_type": "exact" if result["confidence"] >= 100 else "fuzzy",
+                "match_how": result["how"],
+                "match_score": result["confidence"] / 100
             }
-        
-        # Return similar matches for user to choose (limit to top 10)
-        if similar_matches:
-            _file_log(f"Returning {len(similar_matches[:10])} similar matches for preroll '{title}'. Top match: {similar_matches[0]['title']} ({similar_matches[0]['confidence']}%)")
-            response = {
+
+        if result["suggestions"]:
+            top = result["suggestions"][0]
+            _file_log(f"Auto-match: {len(result['suggestions'])} possible matches for '{title}'; top '{top['title']}' ({top['confidence']}%, {top['reason']})")
+            return {
                 "matched": False,
-                "similar_matches": similar_matches[:10]
+                "similar_matches": result["suggestions"]
             }
-            _file_log(f"Response JSON: {json.dumps(response, indent=2)[:500]}...")
-            return response
-        
-        _file_log(f"No matches found for preroll '{title}' (searched {len(community_data)} community prerolls)")
+
+        _file_log(f"No matches found for preroll '{title}' (searched {len(matcher)} community prerolls)")
         return {
             "matched": False,
             "message": "No matching community prerolls found"
         }
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         _file_log(f"Auto-match error for preroll {preroll_id}: {e}")
-        import traceback
-        traceback.print_exc()
         log_event('ERROR', 'user', f'Auto-match failed for preroll {preroll_id}: {e}', source='auto_match_community')
         raise HTTPException(status_code=500, detail=f"Auto-match failed: {str(e)}")
 
@@ -13158,86 +13120,25 @@ async def confirm_bundle_import(
         log_event('ERROR', 'nexup', f'Bundle import failed: {e}', source='confirm_bundle_import')
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
-def _find_community_id_by_name(preroll_name: str) -> Optional[str]:
+def _find_community_id_for(preroll) -> Optional[str]:
     """
-    Try to find a community preroll ID by matching the preroll name against the community index.
-    This is useful when the stored community_preroll_id is mangled or missing.
-    
-    Returns the community ID if a match is found, or None otherwise.
+    The Community ID for a preroll whose stored ID is missing or mangled, when
+    community_match is confident (the same file, or title and length agree).
+    Export calls this for every preroll without a usable ID, so a loose title
+    match here would send another install the wrong preroll.
     """
-    import re
-    
-    if not preroll_name:
-        return None
-    
     try:
-        if not PREROLLS_INDEX_PATH.exists():
+        if getattr(preroll, 'exclude_from_matching', False) or _is_nexroll_made(preroll):
             return None
-        
-        with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
-            index_data = json.load(f)
-        community_prerolls = index_data.get('prerolls', [])
-        
-        if not community_prerolls:
+        matcher = _community_matcher()
+        if matcher is None:
             return None
-        
-        def normalize(s):
-            """Normalize a string for comparison"""
-            s = s.lower()
-            # Remove extension
-            s = re.sub(r'\.(mp4|mkv|mov|avi|m4v|webm)$', '', s)
-            # Replace underscores and dashes with spaces
-            s = s.replace('_', ' ').replace('-', ' ')
-            # Remove non-alphanumeric except spaces
-            s = re.sub(r'[^a-z0-9\s]', '', s)
-            # Collapse multiple spaces
-            s = re.sub(r'\s+', ' ', s).strip()
-            return s
-        
-        name_normalized = normalize(preroll_name)
-        
-        # Try exact match first
-        for cp in community_prerolls:
-            cp_title = cp.get('title', '')
-            if normalize(cp_title) == name_normalized:
-                _file_log(f"[FIND_ID_BY_NAME] Exact match: '{preroll_name}' -> '{cp.get('id')}'")
-                return cp.get('id')
-        
-        # Try substring match
-        for cp in community_prerolls:
-            cp_title = cp.get('title', '')
-            cp_norm = normalize(cp_title)
-            if name_normalized in cp_norm or cp_norm in name_normalized:
-                _file_log(f"[FIND_ID_BY_NAME] Substring match: '{preroll_name}' -> '{cp.get('id')}'")
-                return cp.get('id')
-        
-        # Try word overlap match
-        name_words = set(name_normalized.split())
-        best_match = None
-        best_score = 0
-        
-        for cp in community_prerolls:
-            cp_title = cp.get('title', '')
-            cp_norm = normalize(cp_title)
-            cp_words = set(cp_norm.split())
-            
-            if name_words and cp_words:
-                common = name_words & cp_words
-                if len(common) >= 2:
-                    score = len(common) / max(len(name_words), len(cp_words))
-                    if score > best_score:
-                        best_score = score
-                        best_match = cp.get('id')
-        
-        if best_match and best_score >= 0.5:
-            _file_log(f"[FIND_ID_BY_NAME] Word match ({int(best_score*100)}%): '{preroll_name}' -> '{best_match}'")
-            return best_match
-        
-        _file_log(f"[FIND_ID_BY_NAME] No match found for '{preroll_name}'")
-        return None
-        
+        result = _community_match_for(matcher, preroll)
+        if result["id"]:
+            _file_log(f"[FIND_ID] '{preroll.display_name or preroll.filename}' -> '{result['id']}' ({result['how']})")
+        return result["id"]
     except Exception as e:
-        _file_log(f"[FIND_ID_BY_NAME] Error: {e}")
+        _file_log(f"[FIND_ID] Error: {e}")
         return None
 
 def _unmangle_community_id(mangled_id: str) -> Optional[str]:
@@ -13531,14 +13432,13 @@ def _carry_block_condition(block_data: dict, matched_block: dict, db) -> None:
 def _export_community_id(preroll) -> Optional[str]:
     """The preroll's Community ID in a form another install can download,
     repairing IDs mangled by older releases where possible."""
-    preroll_name = preroll.display_name or preroll.filename
     stored = str(preroll.community_preroll_id) if preroll.community_preroll_id else ""
     if stored and not (stored.startswith('_') or '\\' in stored):
         return stored
     if stored:
         _file_log(f"[EXPORT] Detected mangled community_preroll_id: {stored}")
-    # Name lookup is more reliable than the heuristic unmangle, so try it first.
-    resolved = _find_community_id_by_name(preroll_name)
+    # Matching is more reliable than the heuristic unmangle, so try it first.
+    resolved = _find_community_id_for(preroll)
     if not resolved and stored:
         resolved = _unmangle_community_id(stored)
         if resolved:
@@ -28815,8 +28715,7 @@ def _load_prerolls_index() -> Optional[dict]:
         with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
 
-        # Display titles only: the file keeps the stored ones, which
-        # "Match Existing Prerolls" compares against.
+        # Display titles only: the file keeps the stored ones.
         community_catalog.tidy_titles(index_data.get("prerolls", []))
         return index_data
     except Exception as e:
@@ -30270,16 +30169,104 @@ def clear_community_matches_endpoint(db: Session = Depends(get_db)):
         log_event('ERROR', 'system', f'Failed to clear community matches: {e}', source='clear_community_matches')
         raise HTTPException(status_code=500, detail=f"Failed to clear matches: {str(e)}")
 
+def _match_existing_prerolls(db, match_all: bool, rematch: bool = False, report=None) -> dict:
+    """
+    Match Existing Prerolls: link prerolls to the Community library with the
+    rules in community_match (the same file, or title and length agree).
+
+    match_all: every preroll, not only those marked "Downloaded from Community
+    Prerolls". rematch: every link is cleared and worked out again. Every match
+    is worked out first, reading only; the links are written together at the
+    end, so a long run (ffprobe on a large library) never holds SQLite's write
+    lock, and a rematch that fails part-way leaves the old links alone. The
+    caller commits. ``report(**fields)`` hears the phase and running counts.
+    """
+    report = report or (lambda **fields: None)
+    query = db.query(models.Preroll)
+    if not rematch:
+        query = query.filter(models.Preroll.community_preroll_id.is_(None))
+    if not match_all:
+        query = query.filter(models.Preroll.description.like("%Downloaded from Community Prerolls%"))
+    found = query.all()
+    prerolls = [p for p in found if not getattr(p, 'exclude_from_matching', False) and not _is_nexroll_made(p)]
+    skipped = len(found) - len(prerolls)
+    _file_log(f"[MATCH] {'Rematch' if rematch else 'All prerolls' if match_all else 'Community downloads'}: "
+              f"{len(prerolls)} to match, {skipped} skipped (excluded from matching or made by NeXroll)")
+    report(total=len(prerolls), skipped=skipped)
+
+    if not prerolls and not rematch:
+        return {"matched": 0, "total_scanned": 0, "skipped": skipped, "message": "No prerolls found to match", "success": True}
+
+    report(phase="loading")
+    matcher = _community_matcher()
+    if matcher is None:
+        return {
+            "matched": 0,
+            "total_scanned": len(prerolls),
+            "failed": len(prerolls),
+            "failed_titles": [os.path.basename(p.path or "") or p.filename for p in prerolls][:10],
+            "skipped": skipped,
+            "message": "Community index not found. Please build the index first.",
+            "success": False
+        }
+
+    servers = _connected_platforms(db)
+    links = []
+    needs_review = 0
+    failed_titles = []
+    for checked, preroll in enumerate(prerolls):
+        name = os.path.basename(preroll.path or "") or preroll.filename
+        report(phase="matching", checked=checked, current=name)
+        try:
+            result = _community_match_for(matcher, preroll, servers)
+        except Exception as e:
+            _file_log(f"Failed to match preroll {preroll.id}: {e}")
+            failed_titles.append(name)
+            continue
+        if result["id"]:
+            links.append((preroll, result["id"]))
+            _file_log(f"[MATCH] '{name}' -> '{result['title']}' ({result['how']}, {result['confidence']}%)")
+        else:
+            if result["suggestions"]:
+                needs_review += 1
+            failed_titles.append(name)
+        report(matched=len(links), needs_review=needs_review)
+    report(phase="saving", checked=len(prerolls), current="")
+
+    cleared = 0
+    if rematch:
+        cleared = db.query(models.Preroll).filter(
+            models.Preroll.community_preroll_id.isnot(None)
+        ).update({models.Preroll.community_preroll_id: None}, synchronize_session="evaluate")
+    for preroll, community_id in links:
+        preroll.community_preroll_id = community_id
+
+    out = {
+        "matched": len(links),
+        "total_scanned": len(prerolls),
+        "failed": len(failed_titles),
+        "failed_titles": failed_titles[:10],
+        "needs_review": needs_review,
+        "skipped": skipped,
+        "message": f"Successfully matched {len(links)} out of {len(prerolls)} prerolls",
+        "success": True
+    }
+    if rematch:
+        out["cleared"] = cleared
+    return out
+
+
 @app.post("/community-prerolls/migrate-legacy")
 def migrate_legacy_community_prerolls_endpoint(
     match_all: bool = Query(False, description="If True, attempt to match ALL prerolls without IDs (not just those marked as community downloads)"),
     db: Session = Depends(get_db)
 ):
     """
-    Manually trigger migration of legacy community prerolls (those downloaded before ID tracking).
-    Attempts to match them with community library by searching by title.
-    Returns count of matched prerolls.
-    
+    Match prerolls that have no Community ID to the Community library and wait
+    for the result (see _match_existing_prerolls). The Community page uses the
+    background job at /community-prerolls/match-existing instead, which reports
+    progress.
+
     Args:
         match_all: If True, attempts to match ALL prerolls without community_preroll_id,
                    not just those with "Downloaded from Community Prerolls" in description.
@@ -30289,165 +30276,76 @@ def migrate_legacy_community_prerolls_endpoint(
         # Check if model has the attribute (handles old schemas + pre-restart state)
         if not hasattr(models.Preroll, 'community_preroll_id'):
             return {"matched": 0, "message": "Database schema too old, community_preroll_id column not present"}
-        
-        import json
-        import os
-        import re
-        
-        # Find prerolls without community_preroll_id
-        if match_all:
-            # Match ALL prerolls that don't have a community ID yet
-            legacy_prerolls = db.query(models.Preroll).filter(
-                models.Preroll.community_preroll_id.is_(None)
-            ).all()
-            _file_log(f"[MATCH DEBUG] Match ALL mode - Found {len(legacy_prerolls)} prerolls without community_preroll_id")
-        else:
-            # Only match prerolls explicitly marked as community downloads
-            legacy_prerolls = db.query(models.Preroll).filter(
-                models.Preroll.description.like("%Downloaded from Community Prerolls%"),
-                models.Preroll.community_preroll_id.is_(None)
-            ).all()
-            _file_log(f"[MATCH DEBUG] Match downloaded only - Found {len(legacy_prerolls)} prerolls")
-
-        # Log all prerolls being processed
-        for p in legacy_prerolls:
-            filename = os.path.basename(p.path)
-            _file_log(f"[MATCH DEBUG]   Will process: {filename} (id={p.id}, comm_id={p.community_preroll_id})")
-
-        if not legacy_prerolls:
-            return {"matched": 0, "total_scanned": 0, "message": "No prerolls found to match"}
-        
-        # Load the local community index
-        if not PREROLLS_INDEX_PATH.exists():
-            return {
-                "matched": 0,
-                "total_scanned": len(legacy_prerolls),
-                "failed": len(legacy_prerolls),
-                "failed_titles": [os.path.basename(p.path) for p in legacy_prerolls],
-                "message": "Community index not found. Please build the index first.",
-                "success": False
-            }
-        
-        with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
-            index_data = json.load(f)
-        
-        community_prerolls = index_data.get('prerolls', [])
-        
-        # Helper function to normalize titles for matching
-        def normalize_title(title):
-            # First, add spaces before camelCase patterns (e.g., "PolarExpressPreRoll" -> "Polar Express Pre Roll")
-            title = re.sub(r'([a-z])([A-Z])', r'\1 \2', title)
-            
-            title = title.lower()
-            
-            # Remove common variations BEFORE replacing separators
-            # Remove "plex", "pre roll", "preroll", "pre-roll" - often added/omitted inconsistently
-            title = re.sub(r'(plex|pre[\s\-_]*roll|preroll)', '', title, flags=re.IGNORECASE)
-            
-            # Remove version numbers - handle multiple formats:
-            # V01, V02, V1, V2, v01, v1, Vol1, Vol01, Volume1, etc.
-            title = re.sub(r'\b(v|vol|volume)[\s\-_]*\d+\b', '', title, flags=re.IGNORECASE)
-            # Also catch standalone patterns like "Pack V01" or "Part 2"
-            title = re.sub(r'(pack|part|episode|ep)[\s\-_]*(v|vol|volume)?[\s\-_]*\d+', '', title, flags=re.IGNORECASE)
-            
-            # Remove year numbers (2020, 2023, etc.) - often added to versions
-            title = re.sub(r'\b(19|20)\d{2}\b', '', title)
-            
-            # Remove "4k", "hd", "1080p", etc.
-            title = re.sub(r'\b(4k|hd|1080p|720p|2160p|uhd)\b', '', title, flags=re.IGNORECASE)
-            
-            # Remove common suffixes like "final", "new", "old"
-            title = re.sub(r'\b(final|new|old|updated|remastered)\b', '', title, flags=re.IGNORECASE)
-            
-            # NOW convert separators to spaces (after removing prefixes/suffixes that use them)
-            title = title.replace('_', ' ')  # Convert underscores to spaces
-            title = title.replace('-', ' ')  # Convert dashes to spaces
-            
-            title = re.sub(r'[^\w\s]', '', title)  # Remove non-alphanumeric except spaces
-            title = re.sub(r'\s+', ' ', title).strip()  # Normalize whitespace
-            return title
-        
-        matched_count = 0
-        failed_titles = []
-        
-        for preroll in legacy_prerolls:
-            try:
-                # Get filename without extension
-                filename = os.path.basename(preroll.path)
-                filename_no_ext = os.path.splitext(filename)[0]
-                normalized_filename = normalize_title(filename_no_ext)
-                
-                # Try to find match in community index
-                matched = False
-                best_match = None
-                best_score = 0
-                
-                for cp in community_prerolls:
-                    cp_title_normalized = normalize_title(cp['title'])
-                    
-                    # Exact match - highest priority
-                    if normalized_filename == cp_title_normalized:
-                        preroll.community_preroll_id = cp['id']
-                        matched_count += 1
-                        matched = True
-                        break
-                    
-                    # Partial matching - check if one contains the other with good overlap
-                    if len(normalized_filename) >= 5 and len(cp_title_normalized) >= 5:
-                        # Calculate similarity score
-                        if normalized_filename in cp_title_normalized:
-                            # Filename is contained in community title
-                            score = len(normalized_filename) / len(cp_title_normalized)
-                            if score > best_score and score >= 0.6:
-                                best_score = score
-                                best_match = cp
-                        elif cp_title_normalized in normalized_filename:
-                            # Community title is contained in filename
-                            score = len(cp_title_normalized) / len(normalized_filename)
-                            if score > best_score and score >= 0.6:
-                                best_score = score
-                                best_match = cp
-                        
-                        # Always check for significant word overlap as a fallback
-                        filename_words = set(normalized_filename.split())
-                        cp_words = set(cp_title_normalized.split())
-                        if len(filename_words) >= 2 and len(cp_words) >= 2:
-                            common_words = filename_words & cp_words
-                            if len(common_words) >= 2:
-                                score = len(common_words) / max(len(filename_words), len(cp_words))
-                                if score > best_score and score >= 0.5:
-                                    best_score = score
-                                    best_match = cp
-                
-                # Use best match if found
-                if not matched and best_match and best_score >= 0.5:
-                    preroll.community_preroll_id = best_match['id']
-                    matched_count += 1
-                    matched = True
-                
-                if not matched:
-                    failed_titles.append(filename)
-                
-            except Exception as e:
-                _file_log(f"Failed to match preroll {preroll.id}: {e}")
-                failed_titles.append(filename)
-                continue
-        
-        if matched_count > 0:
+        result = _match_existing_prerolls(db, match_all)
+        if result["matched"]:
             db.commit()
-        
-        return {
-            "matched": matched_count,
-            "total_scanned": len(legacy_prerolls),
-            "failed": len(failed_titles),
-            "failed_titles": failed_titles[:10] if failed_titles else [],
-            "message": f"Successfully matched {matched_count} out of {len(legacy_prerolls)} prerolls",
-            "success": True
-        }
-        
+        return result
     except Exception as e:
+        db.rollback()
         log_event('ERROR', 'system', f'Legacy community migration failed: {e}', source='migrate_legacy_community')
         raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
+
+
+# ===== MATCH EXISTING PREROLLS (background, with progress) =====
+# Match Existing Prerolls and Rematch All on the Community page run here, so
+# the page can show which preroll is being checked instead of a spinner until
+# the whole library is done. One run at a time; the page polls the status.
+_match_job = {"running": False, "phase": "idle", "rematch": False, "total": 0, "checked": 0, "matched": 0,
+              "needs_review": 0, "skipped": 0, "current": "", "result": None, "error": None, "finished_at": None}
+_match_job_gate = threading.Lock()
+
+
+def _match_job_update(**fields):
+    with _match_job_gate:
+        _match_job.update(fields)
+
+
+def _match_job_status() -> dict:
+    with _match_job_gate:
+        return dict(_match_job)
+
+
+def _run_match_job(match_all: bool, rematch: bool):
+    db = SessionLocal()
+    try:
+        result = _match_existing_prerolls(db, match_all, rematch=rematch, report=_match_job_update)
+        if result.get("success") is False:
+            db.rollback()
+        else:
+            db.commit()
+        _match_job_update(running=False, phase="done", current="", result=result, finished_at=time.time())
+    except Exception as e:
+        db.rollback()
+        _file_log(f"Match Existing Prerolls failed: {e}", level="ERROR")
+        log_event('ERROR', 'system', f'Match Existing Prerolls failed: {e}', source='match_existing_prerolls')
+        _match_job_update(running=False, phase="error", current="", error=str(e), finished_at=time.time())
+    finally:
+        db.close()
+
+
+@app.post("/community-prerolls/match-existing")
+def start_match_existing_prerolls(
+    match_all: bool = Query(True, description="Every preroll without a Community ID, not only Community downloads"),
+    rematch: bool = Query(False, description="Clear every Community link first and match the whole library again"),
+):
+    """Start Match Existing Prerolls (or Rematch All) in the background. Returns
+    the job status; ``started`` is false when a run is already going."""
+    if not hasattr(models.Preroll, 'community_preroll_id'):
+        raise HTTPException(status_code=400, detail="Database schema too old, community_preroll_id column not present")
+    with _match_job_gate:
+        if _match_job["running"]:
+            return dict(_match_job, started=False)
+        _match_job.update(running=True, phase="starting", rematch=bool(rematch), total=0, checked=0, matched=0,
+                          needs_review=0, skipped=0, current="", result=None, error=None, finished_at=None)
+    threading.Thread(target=_run_match_job, args=(bool(match_all or rematch), bool(rematch)),
+                     daemon=True, name="community-match").start()
+    return dict(_match_job_status(), started=True)
+
+
+@app.get("/community-prerolls/match-existing")
+def get_match_existing_status():
+    """Progress of the current or last Match Existing Prerolls run."""
+    return _match_job_status()
 
 @app.get("/community-prerolls/random")
 def get_random_community_preroll(

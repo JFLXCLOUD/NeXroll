@@ -5422,6 +5422,67 @@ body.dark .nx-comm-ai-badge { color: #c084fc; }
   flex-wrap: wrap;
 }
 .nx-comm-actionbar-spacer { flex: 1 1 auto; }
+
+/* Match Existing Prerolls / Rematch All progress: the action bar's last item,
+   on a row of its own under the buttons. */
+.nx-comm-match {
+  flex: 1 0 100%;
+  min-width: 0;
+  margin-top: 0.35rem;
+  padding: 0.7rem 0.85rem 0.75rem;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--nx-sec-community);
+  border-radius: 9px;
+  background: var(--card-bg);
+  color: var(--text-color);
+}
+.nx-comm-match.is-done { border-left-color: var(--success-color); }
+.nx-comm-match.is-error { border-left-color: var(--error-color); }
+.nx-comm-match-head { display: flex; align-items: center; gap: 0.45rem; font-size: 0.88rem; }
+.nx-comm-match-icon { display: inline-flex; color: var(--nx-sec-community); }
+.nx-comm-match.is-done .nx-comm-match-icon { color: var(--success-color); }
+.nx-comm-match.is-error .nx-comm-match-icon { color: var(--error-color); }
+.nx-comm-match-close {
+  margin-left: auto;
+  display: inline-flex;
+  padding: 0.2rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.nx-comm-match-close:hover { color: var(--text-color); background: color-mix(in srgb, var(--text-color) 8%, transparent); }
+.nx-comm-match-bar {
+  height: 6px;
+  margin: 0.55rem 0 0.45rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-color) 10%, transparent);
+}
+.nx-comm-match-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--nx-sec-community);
+  transition: width 0.3s ease;
+}
+.nx-comm-match.is-done .nx-comm-match-bar > span { background: var(--success-color); }
+.nx-comm-match.is-error .nx-comm-match-bar > span { background: var(--error-color); }
+.nx-comm-match-step {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nx-comm-match.is-done .nx-comm-match-step,
+.nx-comm-match.is-error .nx-comm-match-step { white-space: normal; }
+.nx-comm-match-counts { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; margin-top: 0.4rem; font-size: 0.78rem; color: var(--text-secondary); }
+.nx-comm-match-counts b { color: var(--text-color); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-comm-match-bar > span { transition: none; }
+}
 .nx-comm-linkbtn {
   display: inline-flex;
   align-items: center;

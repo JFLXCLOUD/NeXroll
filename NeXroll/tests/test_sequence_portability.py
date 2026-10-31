@@ -60,7 +60,7 @@ def load(prerolls_dir):
         Optional=Optional, HTTPException=HTTPException, app_version='test',
         StreamingResponse=lambda content, media_type, headers: SimpleNamespace(content=content, headers=headers),
         _file_log=lambda *a, **k: None, log_event=lambda *a, **k: None,
-        _find_community_id_by_name=lambda name: None, _unmangle_community_id=lambda cid: None,
+        _find_community_id_for=lambda preroll: None, _unmangle_community_id=lambda cid: None,
         validate_storage_component=validate_storage_component, PREROLLS_DIR=str(prerolls_dir),
         _generate_thumbnail_for_preroll=lambda *a: None,
         UploadFile=object, File=None, Query=None, Form=None, Session=object, Depends=None,

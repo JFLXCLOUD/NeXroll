@@ -4,7 +4,7 @@ Titles: the index stores a title made with ``str.title()`` after replacing
 "-" and "_" with spaces, which turns "Let_s" into "Let S", "1080p" into
 "1080P" and keeps 32-character upload ids on archive files. ``clean_title``
 rebuilds the title from the file name in the path instead. The stored titles
-are left alone because "Match Existing Prerolls" compares against them.
+in the file are left alone; community_match tidies them the same way.
 
 Duplicates: the server keeps byte-identical copies of many files in a second
 folder (mostly /Archives/). ``dedupe`` keeps one copy per file and lists the

@@ -111,6 +111,20 @@ When a preroll has Plex, Jellyfin and Emby versions, the row shows one chip per 
 
 **Running more than one media server?** A category's prerolls play on every server, so a Plex-branded and a Jellyfin-branded version in one category would both play on both. To play each version only on its own server, download each server's versions into their own category (tick one version at a time) and use a sequence with a [Media server rule](Advanced-Sequences#media-server).
 
+## Prerolls you already have
+
+Prerolls you download here are linked to their Community entry automatically. For ones you got some other way, **Match Existing Prerolls** links them, and **Auto-Match Now** in a preroll's edit dialog does it for one preroll. A linked preroll counts as downloaded here and keeps its Community link when you share a sequence.
+
+A preroll is linked only when NeXroll is confident it is the same video:
+
+- **The same file.** A file with exactly the size of a Community file is that file, even if you renamed it.
+- **The same title and length.** Titles are compared word for word, ignoring words like Plex, Jellyfin, Emby, Pre-roll, 1080p or 4K. "LightSpeed" and "Light Speed" are the same title. The lengths must agree within a second; a shorter cut you made yourself is not linked.
+- When a length isn't known yet, only an exact title that names a single Community preroll is linked.
+
+While it runs, a progress bar under the buttons shows which preroll is being checked and how many have been linked so far; it stays there with the result until you close it, and picks up again if you reload the page. **Rematch All** works out every link again and swaps them in only at the end, so if it can't finish your existing links stay as they were.
+
+Anything less certain is left unlinked. The result says how many of those have possible matches: open one in the Library and use **Auto-Match Now** to pick from them. Each suggestion shows its length next to yours. NeX-Up trailers, Coming Soon lists and other videos NeXroll made are never matched, and neither are prerolls with **Exclude from Community Matching** ticked.
+
 ## Troubleshooting
 
 | Problem | Solution |
@@ -123,6 +137,7 @@ When a preroll has Plex, Jellyfin and Emby versions, the row shows one chip per 
 | The hero says "refresh recommended" | The index is over a week old. It still works; refresh it to see newer uploads |
 | I want a version a row doesn't tick | Tick it in the download dialog, or click its chip on the row |
 | A length filter shows fewer prerolls than expected | Lengths may still be being read — check the progress line under the filters and search again when it finishes |
+| Match Existing Prerolls didn't link a preroll I downloaded | It links only the same file or the same title and length. Open the preroll, use **Auto-Match Now** and pick it from the suggestions |
 
 ## See also
 
