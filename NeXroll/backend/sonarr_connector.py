@@ -251,6 +251,9 @@ class SonarrConnector:
                 params={
                     'start': start_date.strftime('%Y-%m-%d'),
                     'end': end_date.strftime('%Y-%m-%d'),
+                    # Without this Sonarr leaves out unmonitored series and
+                    # episodes; premieres_from_calendar filters them instead.
+                    'unmonitored': 'true',
                     'includeSeries': 'true',
                     'includeEpisodeFile': 'false',
                     'includeEpisodeImages': 'false'
@@ -267,8 +270,9 @@ class SonarrConnector:
         """The calendar dates get_upcoming_premieres asks for."""
         now = datetime.now()
         recent_days = max(0, int(recent_days or 0))
-        # One extra day back: Sonarr filters the calendar on UTC air times.
-        return (now - timedelta(days=recent_days + 1) if recent_days else now,
+        # One extra day back: Sonarr filters the calendar on UTC air times, and
+        # a premiere dated today by its network can be yesterday in UTC.
+        return (now - timedelta(days=recent_days + 1),
                 now + timedelta(days=days_ahead))
     
     async def get_upcoming_premieres(self, days_ahead: int = 90, include_unmonitored: bool = False, recent_days: int = 0) -> List[Dict[str, Any]]:
@@ -301,8 +305,9 @@ class SonarrConnector:
             
             series = episode.get('series', {})
             
-            # Skip unmonitored series (unless include_unmonitored is True)
-            if not include_unmonitored and not series.get('monitored', False):
+            # Skip unmonitored series and seasons (unless include_unmonitored
+            # is True), as Sonarr's calendar does when not asked for them
+            if not include_unmonitored and not (series.get('monitored', False) and episode.get('monitored', True)):
                 continue
             
             season_number = episode.get('seasonNumber', 0)
@@ -315,8 +320,9 @@ class SonarrConnector:
             if key in premieres:
                 continue  # Already have this premiere
             
-            # Get air date
-            air_date_str = episode.get('airDateUtc') or episode.get('airDate')
+            # The network's own air date, as Sonarr and TVDB show it: an 8 PM
+            # Eastern premiere is already the next day in airDateUtc
+            air_date_str = episode.get('airDate') or episode.get('airDateUtc')
             if not air_date_str:
                 continue
             

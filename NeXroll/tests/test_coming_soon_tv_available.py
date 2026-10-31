@@ -70,7 +70,8 @@ def _titles(shows):
 def test_without_a_window_only_today_onward_is_returned():
     shows, calls = _premieres()
     assert _titles(shows) == ["Premieres Today", "Premieres Next Week"]
-    assert calls[0][0].date() == TODAY
+    # A day back even without a window: Sonarr filters on UTC air times
+    assert calls[0][0].date() == TODAY - datetime.timedelta(days=1)
 
 
 def test_downloaded_premiere_inside_the_window_is_returned_as_available():
@@ -138,7 +139,7 @@ def test_bad_window_values_mean_no_window():
     for value in (0, None, -5):
         shows, calls = _premieres(recent_days=value)
         assert _titles(shows) == ["Premieres Today", "Premieres Next Week"]
-        assert calls[0][0].date() == TODAY
+        assert calls[0][0].date() == TODAY - datetime.timedelta(days=1)
 
 
 # --- Who passes the window -------------------------------------------------
