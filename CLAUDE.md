@@ -44,11 +44,11 @@ rebuild leaves a ~1.4GB dangling image that accumulates inside the fixed-size do
 | Container Path | Host Path | Purpose |
 |---------------|-----------|---------|
 | `/data` | `/mnt/user/appdata/nexroll` | DB, logs, secrets |
-| `/prerolls` | `/mnt/user/data/media/movies/preroll` | Preroll video files |
+| `/data/prerolls` | `/mnt/user/data/media/movies/preroll` | Preroll video files |
 
 ## Environment Variables
 
-- `NEXROLL_PORT` (9393), `NEXROLL_DB_DIR` (/data), `NEXROLL_PREROLL_PATH` (/prerolls)
+- `NEXROLL_PORT` (9393), `NEXROLL_DB_DIR` (/data), `NEXROLL_PREROLL_PATH` (/data/prerolls)
 - `PLEX_URL`, `PLEX_TOKEN` — Plex connection (or use Plex.tv auth in UI)
 - `JELLYFIN_URL`, `JELLYFIN_API_KEY` — Jellyfin connection
 - `RADARR_URL`, `RADARR_API_KEY`, `SONARR_URL`, `SONARR_API_KEY` — NeX-Up trailer downloads
