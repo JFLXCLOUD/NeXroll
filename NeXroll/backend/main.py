@@ -1819,6 +1819,19 @@ def _normalize_url(url: str) -> str:
         return ""
 
 
+def _same_origin(a: str, b: str) -> bool:
+    """True when two http(s) URLs share scheme, host and port."""
+    from urllib.parse import urlparse
+    try:
+        pa, pb = urlparse(_normalize_url(a)), urlparse(_normalize_url(b))
+        if pa.scheme not in ("http", "https") or pb.scheme not in ("http", "https"):
+            return False
+        port = lambda p: p.port or (443 if p.scheme == "https" else 80)
+        return bool(pa.hostname) and (pa.scheme, pa.hostname.lower(), port(pa)) == (pb.scheme, (pb.hostname or "").lower(), port(pb))
+    except Exception:
+        return False
+
+
 def _probe_plex_url(url: str, token: str, timeout: int = 5) -> tuple[bool, int | None]:
     """
     Probe a Plex base URL, tolerant of local/private HTTPS with self-signed certs.
@@ -8282,13 +8295,14 @@ def plex_auto_connect(req: PlexAutoConnectRequest, db: Session = Depends(get_db)
 
 # Diagnostics: probe a Plex URL with optional token and TLS verify control
 @app.get("/plex/probe")
-def plex_probe(url: str, token: str | None = None, verify: bool | None = None):
+def plex_probe(url: str, token: str | None = None, verify: bool | None = None, db: Session = Depends(get_db)):
     """
     Probe a Plex base URL for reachability and token validity.
 
     Query params:
       - url: Plex base URL (http/https)
-      - token: optional X-Plex-Token; if omitted, uses secure store if present
+      - token: optional X-Plex-Token; if omitted, the saved token is used only when
+        url has the same origin as the saved Plex URL
       - verify: optional true/false to override TLS verification
 
     Returns detailed diagnostics without exposing the token value.
@@ -8313,14 +8327,17 @@ def plex_probe(url: str, token: str | None = None, verify: bool | None = None):
         return None
 
     nu = _normalize_url(url or "")
-    if not nu:
+    if not nu or _urlparse(nu).scheme not in ("http", "https") or not _urlparse(nu).hostname:
         raise HTTPException(status_code=422, detail="Missing or invalid url")
 
-    # Resolve token
+    # Resolve token. The saved token goes only to the saved Plex server: sending
+    # it to a caller-supplied URL would hand it to whoever runs that URL.
     tok = (token or "").strip() or None
     if not tok:
         try:
-            tok = secure_store.get_plex_token()
+            saved = db.query(models.Setting).first()
+            if saved and saved.plex_url and _same_origin(nu, saved.plex_url):
+                tok = secure_store.get_plex_token()
         except Exception:
             tok = None
 

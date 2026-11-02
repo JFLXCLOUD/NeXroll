@@ -55,5 +55,17 @@ class WithinDirectoryTests(unittest.TestCase):
             self.assertFalse(within(root, os.path.join(root, "link", "x")))
 
 
+class SameOriginTests(unittest.TestCase):
+    def test_origin_match(self):
+        env = lift("_normalize_url", "_same_origin")
+        same = env["_same_origin"]
+        self.assertTrue(same("192.168.1.5:32400", "http://192.168.1.5:32400/"))
+        self.assertTrue(same("https://plex.example", "https://PLEX.example:443"))
+        self.assertFalse(same("http://evil.test:32400", "http://192.168.1.5:32400"))
+        self.assertFalse(same("https://192.168.1.5:32400", "http://192.168.1.5:32400"))
+        self.assertFalse(same("http://192.168.1.5:9999", "http://192.168.1.5:32400"))
+        self.assertFalse(same("ftp://192.168.1.5:32400", "http://192.168.1.5:32400"))
+
+
 if __name__ == "__main__":
     unittest.main()
