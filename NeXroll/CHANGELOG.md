@@ -1,5 +1,44 @@
 ﻿# Changelog
 
+## [2.3.0] - 11-02-2026
+
+> A security update: with login on, a read-only API key could change anything and download the full backup, and NeXroll could be made to send your Plex token to another address. Also: more than one Radarr and Sonarr in NeX-Up, Community Prerolls on Typical Nerds' new servers, better Community matching, and upload progress in Add Prerolls.
+
+### Upgrading
+
+- **Update soon** (see Security). No plugin update is needed.
+- **Read-only API keys can no longer change anything.** A script or dashboard that makes changes with a read-only key needs a Full Access key.
+- **With login on, preroll videos and thumbnails need a login or an API key.** NeXroll's own pages and the Jellyfin and Emby plugins are not affected.
+- **Docker: `:2.2` stays on 2.2.9.** Use `:2.3`, `:2` or `latest` for this release.
+- **No settings to change.** Two tables are added on first start, for extra Radarr and Sonarr servers.
+
+### Security
+
+- **A read-only API key could make changes** while login was on, including taking the system backup with every key, password hash and login session in it. Read-only keys now only read.
+- **The Plex probe sent your saved Plex token to any address it was given.** With login off, any device on your network or a web page you visited could trigger it. The token now goes only to your saved Plex server.
+- **A crafted backup could write files into any folder NeXroll can write to** when restored. NeX-Up files from a backup now always go into NeXroll's own NeX-Up folder.
+- **Backups fetched with an API key still held the Plex token and the Jellyfin, Emby, Radarr, Sonarr and TMDB keys** in their settings. They are now left out, and restoring such a backup keeps the keys you have.
+- **With login on, preroll videos and thumbnails could be fetched without signing in.**
+- **Community downloads fetched whatever address the request named.** They now always come from the Community server in use, and files over 1 GB are refused.
+- **Linux: secrets.json could be read by every user on the machine.** It is now readable by its owner only.
+
+### Added
+
+- **More than one Radarr and Sonarr in NeX-Up,** for example a 1080p and a 4K one, under NeX-Up > Connections. Upcoming, the Coming Soon list, trailer syncs and Library Trailers read every server, and a movie or show on more than one appears once.
+
+### Changed
+
+- **Community Prerolls follows Typical Nerds' new servers** (prerolls.uk, with home.prerolls.uk as a backup). A saved USA server switches to the main server with a notice, previews and downloads come from the server in use, and the gap between downloads follows each server's setting.
+- **Matching your prerolls to Community Prerolls compares file size and length,** so renamed files are found and different prerolls with similar names are no longer linked. NeX-Up trailers and other videos NeXroll made are never matched. Match Existing Prerolls and Rematch All show their progress, and Rematch All keeps your links if it can't finish.
+- **Add Prerolls shows upload progress** for each file and the whole upload, with Cancel. Files are sent once instead of twice, ones already in the library are skipped, and the category list shows every category, scrolls and works from the keyboard.
+
+### Fixed
+
+- **Community downloads failed on an index built on the USA server,** which has gone. They no longer need a new index.
+- **Evening TV premieres in the Americas showed a day late.** They now show the network's air date.
+- **"Include Unmonitored TV Shows" never worked** for the Coming Soon list and the Upcoming page.
+- **Library Trailers removed its trailers when Radarr couldn't be reached** during a sync.
+
 ## [2.2.9] - 10-28-2026
 
 > Three new themes: Silent Film, VHS Rewind and Screenplay, a light one. Terminal and Nocturne now change the whole look, not just the colors. Also: Coming Soon lists show "Available Now!" for TV shows.
