@@ -2936,6 +2936,13 @@ def startup_env_bootstrap():
             db.add(setting)
             db.commit()
             _file_log("Created default Setting record on startup")
+
+        if not getattr(setting, "auth_enabled", False):
+            msg = ("SECURITY: Require Login is OFF, so anyone who can reach this port can change settings, "
+                   "download backups and reset NeXroll. Turn on Require Login (Settings > Users) or "
+                   "limit access to port 9393 to trusted machines.")
+            print(f"WARNING: {msg}")
+            _file_log(msg, level="WARNING")
         
         # Auto-detect timezone from TZ environment variable (Docker support).
         # Parenthesised deliberately: `a and not b or c` binds as

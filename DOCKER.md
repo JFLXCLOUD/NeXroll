@@ -97,6 +97,8 @@ services:
     restart: unless-stopped
 ```
 
+Security: Require Login is off on a fresh install, so anyone who can reach port 9393 can change settings and download backups. Turn on Require Login (Settings > Users) before exposing the port beyond your own machine, or publish it on localhost only (`"127.0.0.1:9393:9393"`) behind an authenticating reverse proxy. The bundled docker-compose.yml binds to 127.0.0.1; set `NEXROLL_BIND=0.0.0.0` to publish on all interfaces. NeXroll logs a warning at startup while login is off.
+
 On Docker Desktop, the container can usually reach the host at http://host.docker.internal. Ensure firewalls allow Plex port 32400 for the Docker/WSL networks.
 
 
@@ -168,7 +170,7 @@ It checks DNS, reachability, token validity, and suggests fixes (TLS verify, DNS
 - PLEX_URL / PLEX_TOKEN (optional bootstrap)
 - JELLYFIN_URL / JELLYFIN_API_KEY (optional bootstrap)
 - TZ (default UTC)
-- NEXROLL_RUN_AS_PUID (default false): true runs NeXroll as PUID:PGID (defaults 99:100) instead of root, after giving that user the files it created as root. PUID and PGID do nothing without it.
+- NEXROLL_RUN_AS_PUID (default false): true runs NeXroll as PUID:PGID (defaults 99:100) instead of root, after giving that user the files it created as root. PUID and PGID do nothing without it. If the switch is on and NeXroll can't be dropped to that user (non-numeric IDs, PUID 0, /data not writable by it), the container refuses to start; set NEXROLL_ALLOW_ROOT=true to run as root instead. Without the switch, NeXroll runs as root and logs a warning.
 
 Build arg:
 - APP_VERSION (labels the image)

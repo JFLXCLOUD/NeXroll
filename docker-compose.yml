@@ -7,8 +7,13 @@ services:
     container_name: nexroll
     restart: unless-stopped
     
+    # Bound to localhost by default: NeXroll's login is off until you turn on
+    # Require Login (Settings > Users), and until then anyone who can reach the
+    # port can change settings and download backups. To reach NeXroll from other
+    # machines, set NEXROLL_BIND=0.0.0.0 in .env after enabling Require Login (or
+    # put it behind an authenticating reverse proxy / firewall).
     ports:
-      - "9393:9393"
+      - "${NEXROLL_BIND:-127.0.0.1}:9393:9393"
     
     volumes:
       # Prerolls directory - mount your NAS or local prerolls folder here
