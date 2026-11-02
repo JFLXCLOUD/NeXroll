@@ -10,6 +10,21 @@ You'll find it in the sidebar under **Community Prerolls**.
 
 The top of the page works like the rest of NeXroll: **Change Server** and **Refresh Index** at the top right, then four tiles showing the server, how many prerolls are indexed, how many are in your library, and the index's age.
 
+## Servers
+
+Typical Nerds runs the community servers and publishes the list at [prerolls.uk/servers.json](https://prerolls.uk/servers.json). NeXroll reads that list, so new or renamed servers show up on their own. Since late October 2026 there are two:
+
+- **UK Server (Fast)**, `https://prerolls.uk`: the main server, and the one NeXroll uses unless you pick another.
+- **Home Server (Slow)**, `https://home.prerolls.uk`: a slower backup with the same files, for when the main server is down.
+
+The USA server (`usa.prerolls.uk`) is gone, and `uk.prerolls.uk` now points at `prerolls.uk`.
+
+**Change Server** (top right) shows the servers on the list. Click one to use it, or enter the address of your own mirror under **Custom server URL**. Picking the main server, or **Reset**, goes back to the default, so NeXroll follows the list if Typical Nerds changes its main server again. The dashboard's Community Prerolls tile shows the server NeXroll is checking.
+
+If you picked a server that is no longer on the list (for example the USA server), NeXroll uses the main server instead and the page says so. Click **OK** to forget the old choice. Your index keeps working: downloads and previews always come from the server in use, whichever server the index was built from.
+
+Downloads run one at a time, with a gap between them that Typical Nerds sets for each server on the list (so the slower home server can ask for a longer one). Without a setting, and on your own mirror, the gap is 5 seconds. The bulk download bar shows the gap in use.
+
 ## Fair Use Policy
 
 Before you can search or download, you must accept the **Fair Use Policy**. This protects the Typical Nerds community from abuse (excessive scraping, rehosting, etc.). You'll see a one-time prompt on the Community Prerolls page — accept it to unlock search, browse, and downloads.

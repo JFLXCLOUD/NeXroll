@@ -116,6 +116,7 @@ from backend import community_durations
 from backend.community_search import QueryMatcher
 from backend import community_catalog
 from backend import community_match
+from backend import community_servers
 from backend.shuffle_bag import shuffle_bag_sample
 from backend.sequence_utils import representative_category_id
 from backend.backup_utils import (
@@ -2060,28 +2061,28 @@ COMMUNITY_SEARCH_COOLDOWN = 5  # seconds between searches per IP
 # process leaves for the same upstream server -- two browsers pointed at one
 # NeXroll would otherwise double the request rate Typical Nerds sees -- and it
 # makes callers wait their turn instead of rejecting them, which is what lets a
-# bulk selection download straight through at a polite pace.
-COMMUNITY_DOWNLOAD_MIN_INTERVAL = 5.0  # seconds between downloads
+# bulk selection download straight through at a polite pace. The gap is the
+# server's "anti-spam" value in servers.json, else 5 s (community_servers).
 _community_download_gate = threading.Lock()
 _community_download_last = 0.0
 
 
-def _await_community_download_slot() -> float:
-    """Block until at least COMMUNITY_DOWNLOAD_MIN_INTERVAL has passed since the
-    last community download started. Returns how long the caller waited."""
+def _await_community_download_slot(interval: float) -> float:
+    """Block until at least interval seconds have passed since the last
+    community download started. Returns how long the caller waited."""
     global _community_download_last
     with _community_download_gate:
         waited = 0.0
-        remaining = COMMUNITY_DOWNLOAD_MIN_INTERVAL - (time.monotonic() - _community_download_last)
+        remaining = interval - (time.monotonic() - _community_download_last)
         if remaining > 0:
             time.sleep(remaining)
             waited = remaining
         _community_download_last = time.monotonic()
         return waited
 
-# Community preroll server defaults
-DEFAULT_COMMUNITY_BASE_URL = "https://prerolls.uk"
-COMMUNITY_SERVERS_JSON_URL = "https://prerolls.uk/servers.json"
+# Community preroll server defaults (the server list itself: community_servers)
+DEFAULT_COMMUNITY_BASE_URL = community_servers.FALLBACK_URL
+COMMUNITY_SERVERS_JSON_URL = community_servers.SERVERS_JSON_URLS[0]
 
 # Shared User-Agent for ALL outbound requests to community servers.
 COMMUNITY_USER_AGENT = f"NeXRoll/{app_version} (+https://github.com/JFLXCLOUD/NeXroll)"
@@ -2128,61 +2129,63 @@ PREROLLS_INDEX_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds (refresh weekly reco
 
 # Search synonyms and ranking live in backend/community_search.py.
 
-_community_default_server_cache = {"url": None, "at": 0.0}
-_COMMUNITY_DEFAULT_SERVER_TTL = 600  # 10 minutes
+_community_server_list_cache = {"servers": None, "source": None, "at": 0.0, "ok": False}
+_COMMUNITY_SERVER_LIST_TTL = 600     # 10 minutes
+_COMMUNITY_SERVER_LIST_RETRY = 60    # after a failed fetch
+_community_set_aside_logged = set()
 
 
-def _resolve_default_community_server() -> Optional[str]:
-    """Resolve an active community *file* server from servers.json.
+def _community_server_list() -> Optional[list]:
+    """Typical Nerds' server list (servers.json), cached for 10 minutes.
 
-    The bare prerolls.uk domain is now the project website — its directory paths
-    302-redirect and its root is a landing page, so the index scrape and file
-    downloads must target one of the mirror file servers it advertises (e.g.
-    https://usa.prerolls.uk). Cached 10 min; returns None if servers.json can't
-    be reached.
+    Tries prerolls.uk, then the copy on home.prerolls.uk. A failed fetch keeps
+    the last list and tries again a minute later, so an outage doesn't add a
+    wait to every request. None when no list has been fetched yet.
     """
-    import time as _t
-    now = _t.time()
-    cached = _community_default_server_cache.get("url")
-    if cached and (now - _community_default_server_cache.get("at", 0)) < _COMMUNITY_DEFAULT_SERVER_TTL:
-        return cached
-    try:
-        import requests as _r
-        resp = _r.get(COMMUNITY_SERVERS_JSON_URL, timeout=10, headers=_community_headers())
-        if resp.ok:
-            servers = (resp.json() or {}).get("servers", []) or []
-            pick = next((s for s in servers
-                         if str(s.get("status", "")).lower() == "active" and s.get("baseUrl")), None)
-            if not pick:
-                pick = next((s for s in servers if s.get("baseUrl")), None)
-            if pick:
-                url = str(pick["baseUrl"]).rstrip("/")
-                _community_default_server_cache.update({"url": url, "at": now})
-                return url
-    except Exception as e:
-        _file_log(f"Could not resolve community file server from servers.json: {e}")
-    return None
+    cache = _community_server_list_cache
+    now = time.time()
+    ttl = _COMMUNITY_SERVER_LIST_TTL if cache["ok"] else _COMMUNITY_SERVER_LIST_RETRY
+    if cache["at"] and now - cache["at"] < ttl:
+        return cache["servers"]
+    servers, source = community_servers.fetch(requests.get, _community_headers())
+    if servers:
+        cache.update({"servers": servers, "source": source, "ok": True, "at": now})
+    else:
+        _file_log("Could not fetch the community server list (servers.json); "
+                  + ("keeping the last one" if cache["servers"] else "using the saved or default server"))
+        cache.update({"ok": False, "at": now})
+    return cache["servers"]
 
 
-def _get_community_base_url(db=None) -> str:
-    """Get the effective community server base URL (never trailing-slashed).
+def _community_server_choice(db=None) -> tuple:
+    """(URL in use, saved URL set aside or None, saved URL or None).
 
-    Priority: the user's explicitly-chosen server, then an active mirror from
-    servers.json, then the DEFAULT_COMMUNITY_BASE_URL constant as a last resort.
-    Resolving via servers.json matters because the bare prerolls.uk default is
-    the website now and won't serve the preroll directory tree.
-    """
+    A saved prerolls.uk server that servers.json no longer lists (usa.prerolls.uk
+    after October 2026) is set aside for the first active server; see
+    community_servers."""
+    saved = None
     if db is not None:
         try:
             setting = db.query(models.Setting).first()
-            if setting and getattr(setting, "community_server_url", None):
-                return setting.community_server_url.rstrip("/")
+            saved = getattr(setting, "community_server_url", None) if setting else None
         except Exception:
-            pass
-    resolved = _resolve_default_community_server()
-    if resolved:
-        return resolved
-    return DEFAULT_COMMUNITY_BASE_URL
+            saved = None
+    url, set_aside = community_servers.effective(saved, _community_server_list())
+    if set_aside and set_aside not in _community_set_aside_logged:
+        _community_set_aside_logged.add(set_aside)
+        _file_log(f"Community server {set_aside} is no longer in servers.json; using {url}")
+    return url, set_aside, community_servers.normalize(saved) or None
+
+
+def _get_community_base_url(db=None) -> str:
+    """The community server URL in use (never trailing-slashed): the server
+    picked under Change Server, else the first active one in servers.json."""
+    return _community_server_choice(db)[0]
+
+
+def _community_download_delay(db=None) -> float:
+    """Seconds between file downloads from the server in use."""
+    return community_servers.download_delay(_get_community_base_url(db), _community_server_list())
 
 # NOTE: Wildcard CORS removed for security. Specific-origin CORS middleware is defined below.
 
@@ -28085,13 +28088,9 @@ def remove_category_from_jellyfin(category_id: int, db: Session = Depends(get_db
 
 # --- Community Prerolls Feature ---
 
-# Cache for community preroll health check (5 minute TTL)
-_community_health_cache = {"status": None, "checked_at": None, "error": None}
+# Cache for community preroll health check (5 minute TTL, per server)
+_community_health_cache = {"status": None, "checked_at": None, "error": None, "server_url": None}
 COMMUNITY_HEALTH_CACHE_TTL = 300  # 5 minutes in seconds
-
-# Cache for community servers list (10 minute TTL)
-_community_servers_cache = {"data": None, "fetched_at": None}
-COMMUNITY_SERVERS_CACHE_TTL = 600  # 10 minutes
 
 # Cache for top5 community prerolls (30 minute TTL)
 _community_top5_cache = {"data": None, "fetched_at": None, "platform": None}
@@ -28103,133 +28102,106 @@ _index_build_lock = False
 @app.get("/community-prerolls/health")
 def check_community_prerolls_health(db: Session = Depends(get_db)):
     """
-    Check if prerolls.uk is accessible.
-    Results are cached for 5 minutes to avoid excessive requests.
+    Check whether the community server in use answers.
+    Results are cached for 5 minutes per server, so a server change is checked
+    at once.
     Returns: {
         "online": bool,
         "response_time_ms": int or None,
         "last_checked": datetime,
-        "error": str or None
+        "error": str or None,
+        "server_url": the server checked,
+        "server_name": its servers.json name, None for a custom URL
     }
     """
     now = utcnow()
-    
+    server_url = _get_community_base_url(db)
+    listed = community_servers.find(server_url, _community_server_list())
+    server = {"server_url": server_url, "server_name": listed.get("name") if listed else None}
+
     # Check cache first
-    if (_community_health_cache["checked_at"] and 
-        (now - _community_health_cache["checked_at"]).total_seconds() < COMMUNITY_HEALTH_CACHE_TTL):
+    cache = _community_health_cache
+    if (cache["checked_at"] and cache.get("server_url") == server_url and
+        (now - cache["checked_at"]).total_seconds() < COMMUNITY_HEALTH_CACHE_TTL):
         return {
-            "online": _community_health_cache["status"],
-            "response_time_ms": _community_health_cache.get("response_time_ms"),
-            "last_checked": _community_health_cache["checked_at"].isoformat() + "Z",
-            "error": _community_health_cache.get("error"),
-            "cached": True
+            "online": cache["status"],
+            "response_time_ms": cache.get("response_time_ms"),
+            "last_checked": cache["checked_at"].isoformat() + "Z",
+            "error": cache.get("error"),
+            "cached": True,
+            **server
         }
-    
+
     # Perform health check
+    response_time_ms = None
     try:
         start_time = time.time()
-        response = requests.get(
-            _get_community_base_url(db) + "/",
-            timeout=10,
-            headers=_community_headers()
-        )
+        response = requests.get(server_url + "/", timeout=10, headers=_community_headers())
         response_time_ms = int((time.time() - start_time) * 1000)
-        
         is_online = response.status_code == 200
         error_msg = None if is_online else f"HTTP {response.status_code}"
-        
-        # Update cache
-        _community_health_cache.update({
-            "status": is_online,
-            "checked_at": now,
-            "response_time_ms": response_time_ms,
-            "error": error_msg
-        })
-        
-        return {
-            "online": is_online,
-            "response_time_ms": response_time_ms,
-            "last_checked": now.isoformat() + "Z",
-            "error": error_msg,
-            "cached": False
-        }
-        
     except requests.exceptions.Timeout:
-        error_msg = "Request timeout (>10s)"
-        _community_health_cache.update({
-            "status": False,
-            "checked_at": now,
-            "response_time_ms": None,
-            "error": error_msg
-        })
-        return {
-            "online": False,
-            "response_time_ms": None,
-            "last_checked": now.isoformat() + "Z",
-            "error": error_msg,
-            "cached": False
-        }
+        is_online, error_msg = False, "Request timeout (>10s)"
     except Exception as e:
-        error_msg = f"Connection error: {str(e)}"
-        _community_health_cache.update({
-            "status": False,
-            "checked_at": now,
-            "response_time_ms": None,
-            "error": error_msg
-        })
-        return {
-            "online": False,
-            "response_time_ms": None,
-            "last_checked": now.isoformat() + "Z",
-            "error": error_msg,
-            "cached": False
-        }
+        is_online, error_msg = False, f"Connection error: {str(e)}"
+
+    cache.update({
+        "status": is_online,
+        "checked_at": now,
+        "response_time_ms": response_time_ms,
+        "error": error_msg,
+        "server_url": server_url
+    })
+    return {
+        "online": is_online,
+        "response_time_ms": response_time_ms,
+        "last_checked": now.isoformat() + "Z",
+        "error": error_msg,
+        "cached": False,
+        **server
+    }
 
 @app.get("/community-prerolls/servers")
 def get_community_servers():
     """
-    Fetch the list of available community preroll mirror servers from the
-    central servers.json endpoint.  Results are cached for 10 minutes.
+    Typical Nerds' server list (servers.json, cached for 10 minutes), plus
+    default_url, the server NeXroll uses when none is picked.
     """
-    import datetime
-    now = utcnow()
+    servers = _community_server_list()
+    if servers is None:
+        return {"servers": [], "error": "Could not fetch the server list (servers.json)"}
+    return {
+        "servers": servers,
+        "source": _community_server_list_cache.get("source"),
+        "default_url": community_servers.default_url(servers)
+    }
 
-    # Return cached result if still fresh
-    if (_community_servers_cache["fetched_at"] and
-        (now - _community_servers_cache["fetched_at"]).total_seconds() < COMMUNITY_SERVERS_CACHE_TTL):
-        return {**_community_servers_cache["data"], "cached": True}
 
-    import requests as _requests
-    try:
-        resp = _requests.get(COMMUNITY_SERVERS_JSON_URL, timeout=10,
-                             headers=_community_headers())
-        if resp.ok:
-            data = resp.json()
-            servers = data.get("servers", [])
-            result = {"servers": servers, "source": COMMUNITY_SERVERS_JSON_URL}
-            _community_servers_cache.update({"data": result, "fetched_at": now})
-            return result
-        return {"servers": [], "error": f"HTTP {resp.status_code}"}
-    except Exception as e:
-        _file_log(f"Failed to fetch community servers list: {e}")
-        return {"servers": [], "error": str(e)}
+def _community_server_url_payload(db) -> dict:
+    url, set_aside, saved = _community_server_choice(db)
+    servers = _community_server_list()
+    listed = community_servers.find(url, servers)
+    return {
+        "server_url": url,
+        "is_custom": bool(saved) and not set_aside,
+        "default_url": community_servers.default_url(servers) or DEFAULT_COMMUNITY_BASE_URL,
+        "server_name": listed.get("name") if listed else None,
+        # The saved server, when servers.json no longer lists it (it is kept,
+        # and used again if the list brings it back).
+        "set_aside_url": set_aside,
+        # Gap between downloads; the bulk download queue paces itself by it.
+        "download_delay_seconds": community_servers.download_delay(url, servers)
+    }
+
 
 @app.get("/community-prerolls/server-url")
 def get_community_server_url(db: Session = Depends(get_db)):
-    """Return the effective community server URL.
+    """Return the community server in use and whether the user picked it.
 
-    When no custom server is chosen, report the resolved active mirror (e.g.
-    https://usa.prerolls.uk) rather than the bare prerolls.uk constant, so the UI
-    shows — and highlights — the server that index builds/downloads actually use.
+    With nothing picked it is the first active server in servers.json, so the
+    UI shows (and highlights) the server index builds and downloads use.
     """
-    setting = db.query(models.Setting).first()
-    custom_url = getattr(setting, "community_server_url", None) if setting else None
-    resolved_default = _resolve_default_community_server() or DEFAULT_COMMUNITY_BASE_URL
-    return {
-        "server_url": (custom_url.rstrip("/") if custom_url else resolved_default),
-        "is_custom": bool(custom_url),
-        "default_url": resolved_default
-    }
+    return _community_server_url_payload(db)
 
 @app.put("/community-prerolls/server-url")
 def set_community_server_url(
@@ -28237,7 +28209,8 @@ def set_community_server_url(
     db: Session = Depends(get_db)
 ):
     """
-    Set the community server URL.  Pass url=null or url="" to reset to default.
+    Set the community server URL. url=null, "" or the default server clears
+    the choice, so NeXroll follows servers.json if Typical Nerds changes it.
     """
     setting = db.query(models.Setting).first()
     if not setting:
@@ -28246,18 +28219,17 @@ def set_community_server_url(
         db.commit()
         db.refresh(setting)
 
-    clean_url = url.rstrip("/") if url else None
-    setting.community_server_url = clean_url if clean_url else None
+    clean_url = community_servers.normalize(url) or None
+    if clean_url and community_servers.same_server(
+            clean_url, community_servers.default_url(_community_server_list())):
+        clean_url = None
+    setting.community_server_url = clean_url
     db.commit()
 
-    resolved_default = _resolve_default_community_server() or DEFAULT_COMMUNITY_BASE_URL
-    effective = clean_url or resolved_default
-    _file_log(f"Community server URL updated to: {effective}")
-    return {
-        "server_url": effective,
-        "is_custom": bool(clean_url),
-        "default_url": resolved_default
-    }
+    payload = _community_server_url_payload(db)
+    _file_log(f"Community server URL updated to: {payload['server_url']}"
+              + ("" if clean_url else " (default from servers.json)"))
+    return payload
 
 @app.get("/community-prerolls/fair-use-policy")
 def get_community_fair_use_policy():
@@ -29711,7 +29683,8 @@ def download_community_preroll(
     Download a preroll from the community library and import into local storage.
     
     Downloads the file into PREROLLS_DIR and creates a Preroll database entry.
-    Paced to one download every 5 seconds across the whole install.
+    Paced across the whole install by the server's "anti-spam" seconds
+    (servers.json), else one download every 5 seconds.
     """
     import urllib.request
     import urllib.parse
@@ -29728,7 +29701,7 @@ def download_community_preroll(
     # Space downloads out for the community server's sake. This waits rather than
     # returning 429: a bulk selection is a legitimate request, it just has to be
     # paced. The client paces itself too, so in practice this rarely sleeps.
-    waited = _await_community_download_slot()
+    waited = _await_community_download_slot(_community_download_delay(db))
     if waited:
         _file_log(f"[DOWNLOAD] Waited {waited:.1f}s for the community download slot")
     

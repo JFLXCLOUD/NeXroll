@@ -5522,6 +5522,17 @@ body.dark .nx-comm-ai-badge { color: #c084fc; }
 }
 .nx-comm-actionbar-spacer { flex: 1 1 auto; }
 
+/* Change Server: the line under the card title, and the notice shown when a
+   saved server is no longer on Typical Nerds' list. */
+.nx-comm-server-hint { margin: -0.2rem 0 0.75rem; color: var(--text-muted); font-size: 0.85rem; }
+.nx-comm-server-notice { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.nx-comm-server-notice > svg { flex: 0 0 auto; color: var(--warning-color); }
+.nx-comm-server-notice > div { flex: 1 1 260px; min-width: 0; }
+.nx-comm-server-notice strong,
+.nx-comm-server-notice span { display: block; }
+.nx-comm-server-notice strong { color: var(--text-color); font-size: 0.9rem; }
+.nx-comm-server-notice span { margin-top: 2px; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+
 /* Match Existing Prerolls / Rematch All progress: the action bar's last item,
    on a row of its own under the buttons. */
 .nx-comm-match {
@@ -10162,9 +10173,10 @@ body.light .nx-ap-trailer-table > article.selected { background: color-mix(in sr
 .nx-content-community .nx-community > .nx-community-browser { order: 4; margin-bottom: 11px; }
 .nx-content-community .nx-community > .nx-comm-actionbar { order: 2; margin: 0 0 11px; padding: 0 3px; }
 .nx-content-community .nx-community > .nx-comm-server-card { order: 2; margin-bottom: 11px; }
+.nx-content-community .nx-community > .nx-comm-server-notice { order: 2; margin: 0 0 11px; }
 .nx-content-community .nx-community > .nx-community-random-card { order: 6; margin-top: 20px; margin-bottom: 20px; }
 .nx-content-community .nx-community > .nx-community-attribution { order: 7; }
-.nx-content-community .nx-community > *:not(.nx-conn-hero):not(.nx-comm-toolbar):not(.card):not(.nx-community-browser):not(.nx-comm-actionbar):not(.nx-community-attribution) { order: 5; }
+.nx-content-community .nx-community > *:not(.nx-conn-hero):not(.nx-comm-toolbar):not(.card):not(.nx-community-browser):not(.nx-comm-actionbar):not(.nx-community-attribution):not(.nx-comm-server-notice) { order: 5; }
 .nx-community .nx-conn-hero { min-height: 60px; border-radius: 11px; background: linear-gradient(90deg, var(--card-bg), color-mix(in srgb, var(--error-color) 8%, var(--card-bg))); }
 .nx-community .nx-conn-hero-badge { width: 34px; height: 34px; border-radius: 9px; }
 .nx-community .nx-conn-hero-badge svg { width: 17px; height: 17px; }

@@ -6,6 +6,7 @@ import LibraryTrailersTile from './components/LibraryTrailersTile';
 import { isAICommunitySource } from './utils/communityAI';
 import { COMMUNITY_LENGTH_PRESETS, appendCommunityLengthParams, formatPrerollLength } from './utils/communityLength';
 import { initialVersionPicks, platformLabel, rowVersions, versionView, wantedVersions } from './utils/communityVersions';
+import { communityFileUrl, sameServer, serverHost } from './utils/communityServers';
 import { bootHints, isKonami, isTypingTarget, pushKey, readSecretThemes, saveSecretThemes } from './utils/easterEggs';
 import Intermission from './components/Intermission';
 import { genreMatchSummary, ratingSummary } from './utils/trailerRatings';
@@ -654,7 +655,7 @@ const formatCommunitySize = (item, meta) => (
   || (typeof item?.file_size === 'string' && item.file_size !== 'Unknown' ? item.file_size : null)
   || (meta === undefined ? 'Checking…' : 'Unknown')
 );
-const communityDirectSrc = (item) => item?.url || item?.download_url || '';
+const communityDirectSrc = (item, serverUrl) => communityFileUrl(item, serverUrl);
 const communityProxySrc = (item) => {
   const id = item?.id ? String(item.id) : '';
   if (!id || id.startsWith('_')) return '';
@@ -1304,6 +1305,24 @@ function App() {
   const [communityServerLoading, setCommunityServerLoading] = useState(false);
   const [communityCustomUrlInput, setCommunityCustomUrlInput] = useState('');
   const [communityShowCustomUrl, setCommunityShowCustomUrl] = useState(false);
+  // A saved server that servers.json no longer lists (usa.prerolls.uk since
+  // October 2026); the backend uses the default server instead.
+  const [communityServerSetAside, setCommunityServerSetAside] = useState('');
+  // Seconds between bulk downloads, set per server in servers.json (5 without).
+  const [communityDownloadDelay, setCommunityDownloadDelay] = useState(5);
+  // Apply a community-prerolls/server-url answer (GET or PUT). The custom URL
+  // field only shows a URL that isn't one of the listed servers.
+  const applyCommunityServerInfo = (data, servers = communityServers) => {
+    if (!data || data.__error) return;
+    const url = data.server_url || '';
+    setCommunityServerUrl(url);
+    setCommunityServerIsCustom(!!data.is_custom);
+    setCommunityServerSetAside(data.set_aside_url || '');
+    const delay = Number(data.download_delay_seconds);
+    setCommunityDownloadDelay(Number.isFinite(delay) && delay >= 0 ? delay : 5);
+    const listed = (servers || []).some(s => sameServer(s.baseUrl, url));
+    setCommunityCustomUrlInput(data.is_custom && !listed ? url : '');
+  };
 
   useEffect(() => {
     try { localStorage.setItem('communityInspectorOpen', communityInspectorOpen ? '1' : '0'); } catch (_) {}
@@ -3453,13 +3472,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
                   fetch(apiUrl('community-prerolls/servers'))
                 ]);
                 const serverUrlData = await serverUrlRes.json();
-                setCommunityServerUrl(serverUrlData.server_url || '');
-                setCommunityServerIsCustom(!!serverUrlData.is_custom);
-                if (serverUrlData.is_custom) {
-                  setCommunityCustomUrlInput(serverUrlData.server_url || '');
-                }
                 const serversData = await serversRes.json();
-                setCommunityServers(serversData.servers || []);
+                const servers = serversData.servers || [];
+                setCommunityServers(servers);
+                applyCommunityServerInfo(serverUrlData, servers);
               } catch (serverError) {
                 console.error('Failed to load community server info:', serverError);
               }
@@ -7861,8 +7877,8 @@ const DashboardTiles = {
           </button>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-          <span className="nx-tile-row-k">
-            <Globe size={14} /> prerolls.uk
+          <span className="nx-tile-row-k" title={communityHealth?.server_name || undefined}>
+            <Globe size={14} /> {serverHost(communityHealth?.server_url) || 'prerolls.uk'}
           </span>
           {online === undefined ? (
             <span className="nx-chip" style={{ fontSize: '0.75rem' }}>Checking…</span>
@@ -8782,10 +8798,11 @@ const DashboardTiles = {
       // Four tiles like every other page. The server and index state used to
       // sit in a hero card above these; "Local matches" and "Downloaded" both
       // counted the community ids in the library, so they are one tile now.
-      const communityServer = communityServers.find(s => communityServerUrl === (s.baseUrl || '').replace(/\/+$/, ''));
+      const communityServer = communityServers.find(s => sameServer(s.baseUrl, communityServerUrl));
       const ageDays = Math.floor(communityIndexStatus?.age_days || 0);
       items = [
-        { label: 'Server', value: communityServer?.name || (communityServerUrl || '').replace(/^https?:\/\//, '') || '—' },
+        { label: 'Server', value: communityServer?.name || serverHost(communityServerUrl) || '—',
+          tone: communityServerSetAside ? 'warning' : '' },
         { label: 'Indexed', value: Number(communityIndexStatus?.total_prerolls || 0).toLocaleString() },
         { label: 'In your library', value: downloadedCommunityIds.length, tone: downloadedCommunityIds.length ? 'success' : '' },
         { label: 'Index age',
@@ -35175,6 +35192,32 @@ const DashboardTiles = {
       startCommunityMatch(true);
     };
 
+    // Save the Change Server choice. null (or the default server) clears it, so
+    // NeXroll follows servers.json if Typical Nerds changes the main server.
+    const saveCommunityServer = async (url) => {
+      setCommunityServerLoading(true);
+      try {
+        const res = await fetch(apiUrl('community-prerolls/server-url'), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        applyCommunityServerInfo(await res.json());
+        // The dashboard's Community tile checks the server in use.
+        fetch(apiUrl('community-prerolls/health'))
+          .then(safeJson)
+          .then(h => { if (h && !h.__error) setCommunityHealth(h); })
+          .catch(() => {});
+      } catch (e) {
+        console.error('Failed to change the community server:', e);
+        showAlert('Could not change the community server. Check that NeXroll is still running.', 'error');
+      }
+      setCommunityServerLoading(false);
+    };
+    const communityServerLabel = (url) => communityServers.find(s => sameServer(s.baseUrl, url))?.name || serverHost(url);
+    const communityDefaultServer = communityServers.find(s => s.status === 'active') || null;
+
     // Handle matching existing prerolls to community library
     const handleMatchExisting = async () => {
       if (communityIsMigrating) return;
@@ -35578,8 +35621,9 @@ const DashboardTiles = {
 
     // ---- Bulk selection + paced download queue ----
     // Typical Nerds asked that NeXroll not burst requests at their server, so the
-    // queue leaves a fixed gap between downloads and runs strictly one at a time.
-    const COMMUNITY_BULK_GAP_SECONDS = 5;
+    // queue runs strictly one at a time and leaves the server's gap between
+    // downloads ("anti-spam" in servers.json, else 5 s).
+    const communityBulkGap = communityDownloadDelay;
     const communitySelectable = communitySearchResults.filter(p => p && p.id && !isPrerollAlreadyDownloaded(p));
     const communityAllSelected = communitySelectable.length > 0
       && communitySelectable.every(p => communitySelectedIds.includes(p.id));
@@ -35663,7 +35707,7 @@ const DashboardTiles = {
         // Pace the queue. Counting down a second at a time keeps the wait visible
         // and lets Cancel take effect without waiting out the full gap.
         if (i < queue.length - 1 && !communityBulkCancelRef.current) {
-          for (let s = COMMUNITY_BULK_GAP_SECONDS; s > 0 && !communityBulkCancelRef.current; s--) {
+          for (let s = Math.ceil(communityBulkGap); s > 0 && !communityBulkCancelRef.current; s--) {
             setCommunityBulk(prev => (prev ? { ...prev, waiting: s } : prev));
             await new Promise(resolve => setTimeout(resolve, 1000));
           }
@@ -36044,35 +36088,53 @@ const DashboardTiles = {
           {renderCommunityMatchPanel()}
         </div>
 
+        {/* A saved server that Typical Nerds no longer lists (usa.prerolls.uk
+            since October 2026). OK clears the saved choice. */}
+        {communityServerSetAside && (
+          <div className="nx-notice warn nx-comm-server-notice" role="status">
+            <AlertTriangle size={16} />
+            <div>
+              <strong>The server you picked is no longer available</strong>
+              <span>
+                {serverHost(communityServerSetAside)} isn't on Typical Nerds' server list any more, so NeXroll
+                is using {communityServerLabel(communityServerUrl)} instead.
+              </span>
+            </div>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => saveCommunityServer(null)}
+              disabled={communityServerLoading}
+              title={`Forget ${serverHost(communityServerSetAside)}`}
+            >
+              OK
+            </button>
+          </div>
+        )}
+
         {/* Server picker (toggled from the page header's "Change Server") */}
         {communityShowCustomUrl && (
           <div className="card nx-comm-server-card">
             <div className="nx-conn-method-lead" style={{ fontSize: '0.95rem' }}><Server size={16} /> Community Server</div>
+            {communityDefaultServer && (
+              <p className="nx-comm-server-hint">
+                Typical Nerds runs these servers. NeXroll uses {communityDefaultServer.name} unless you pick another.
+              </p>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
               {communityServers.filter(s => s.status === 'active').map(s => {
-                const sUrl = (s.baseUrl || '').replace(/\/+$/, '');
-                const sActive = communityServerUrl === sUrl;
+                const sActive = sameServer(s.baseUrl, communityServerUrl);
+                const where = [s.location?.city, s.location?.country].filter(Boolean).join(', ');
                 return (
                   <button
-                    key={s.id}
-                    onClick={async () => {
-                      setCommunityServerLoading(true);
-                      try {
-                        await fetch(apiUrl('community-prerolls/server-url'), {
-                          method: 'PUT',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ url: sUrl })
-                        });
-                        setCommunityServerUrl(sUrl);
-                        setCommunityServerIsCustom(true);
-                        setCommunityCustomUrlInput('');
-                      } catch (e) { console.error('Failed to set server:', e); }
-                      setCommunityServerLoading(false);
-                    }}
+                    key={s.id || s.baseUrl}
+                    type="button"
+                    onClick={() => saveCommunityServer(s.baseUrl)}
                     disabled={communityServerLoading}
+                    aria-pressed={sActive}
                     className={sActive ? 'button' : 'button button-secondary'}
                     style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                    title={`${s.name} — ${s.location?.city || ''}, ${s.location?.country || ''}`}
+                    title={[serverHost(s.baseUrl), where].filter(Boolean).join(' · ')}
                   >
                     {s.location?.countryCode && (
                       <img
@@ -36097,28 +36159,21 @@ const DashboardTiles = {
                 style={{ flex: 1 }}
               />
               <button
-                onClick={async () => {
+                type="button"
+                onClick={() => {
                   const url = communityCustomUrlInput.trim().replace(/\/+$/, '');
                   // Empty field = nothing to save. Don't send null here, or it
-                  // would reset a server you just picked above. Use "Reset to
-                  // default" to clear a custom URL.
+                  // would reset a server you just picked above. Reset clears a
+                  // saved server.
                   if (!url) {
-                    showAlert('Enter a custom server URL, or pick a server above. Use "Reset to default" to clear.', 'info');
+                    showAlert('Enter a custom server URL, or pick a server above. Use Reset to go back to the default server.', 'info');
                     return;
                   }
-                  setCommunityServerLoading(true);
-                  try {
-                    await fetch(apiUrl('community-prerolls/server-url'), {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ url })
-                    });
-                    const res = await fetch(apiUrl('community-prerolls/server-url'));
-                    const data = await res.json();
-                    setCommunityServerUrl(data.server_url || '');
-                    setCommunityServerIsCustom(!!data.is_custom);
-                  } catch (e) { console.error('Failed to save custom URL:', e); }
-                  setCommunityServerLoading(false);
+                  if (!/^https?:\/\//i.test(url)) {
+                    showAlert('Enter the full address, starting with https://', 'info');
+                    return;
+                  }
+                  saveCommunityServer(url);
                 }}
                 disabled={communityServerLoading}
                 className="button"
@@ -36127,25 +36182,11 @@ const DashboardTiles = {
               </button>
               {communityServerIsCustom && (
                 <button
-                  onClick={async () => {
-                    setCommunityServerLoading(true);
-                    try {
-                      await fetch(apiUrl('community-prerolls/server-url'), {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: null })
-                      });
-                      const res = await fetch(apiUrl('community-prerolls/server-url'));
-                      const data = await res.json();
-                      setCommunityServerUrl(data.server_url || '');
-                      setCommunityServerIsCustom(false);
-                      setCommunityCustomUrlInput('');
-                    } catch (e) { console.error('Failed to reset server URL:', e); }
-                    setCommunityServerLoading(false);
-                  }}
+                  type="button"
+                  onClick={() => saveCommunityServer(null)}
                   disabled={communityServerLoading}
                   className="button button-secondary"
-                  title="Reset to default server"
+                  title={communityDefaultServer ? `Go back to ${communityDefaultServer.name}` : 'Go back to the default server'}
                 >
                   Reset
                 </button>
@@ -36490,7 +36531,7 @@ const DashboardTiles = {
                       <div className="nx-comm-bulk-status">
                         <strong>{communitySelectedCount} selected</strong>
                         <span>
-                          Downloads run one at a time, {COMMUNITY_BULK_GAP_SECONDS}s apart
+                          Downloads run one at a time{communityBulkGap > 0 ? `, ${communityBulkGap}s apart` : ''}
                           {communitySearchResults.some(p => p.versions && communitySelectedIds.includes(p.id)) && (
                             getConnectedServers().length
                               ? `. Prerolls with several versions get the ${describeServers(getConnectedServers())} version${getConnectedServers().length > 1 ? 's' : ''}.`
@@ -36666,7 +36707,7 @@ const DashboardTiles = {
                         // making them click play on every result.
                         autoPlay
                         preload="metadata"
-                        src={communityDirectSrc(inspectorShown)}
+                        src={communityDirectSrc(inspectorShown, communityServerUrl)}
                         onError={event => communityPreviewFallback(event, inspectorShown, () => {
                           console.error('Community preroll preview failed:', inspectorShown?.id);
                         })}
@@ -39189,7 +39230,7 @@ const DashboardTiles = {
                  maxHeight: '70vh',
                  borderRadius: '4px'
                }}
-               src={communityDirectSrc(communityPreviewShown)}
+               src={communityDirectSrc(communityPreviewShown, communityServerUrl)}
                onError={event => communityPreviewFallback(event, communityPreviewShown, () => {
                  alert('Failed to load video. NeXroll could not reach the community server directly or through this server - check that the community server is reachable from your network.');
                })}
