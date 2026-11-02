@@ -10,6 +10,11 @@
 # PUID and PGID were documented, and set by the Unraid template, for years
 # before the image used them, so honouring them by default would have changed
 # the user of every existing install on update. Hence the explicit switch.
+#
+# Once the switch is on, it fails closed: if NeXroll can't be dropped to
+# PUID:PGID (bad IDs, PUID 0, /data not writable by that user), the container
+# refuses to start instead of quietly running as root. Set NEXROLL_ALLOW_ROOT=true
+# to allow the root fallback.
 set -eu
 
 truthy() {
@@ -23,8 +28,22 @@ say() {
     printf 'NeXroll: %s\n' "$*" >&2
 }
 
+# The drop was asked for but can't be done: stop, unless root is explicitly
+# allowed (then return, and the caller starts NeXroll as root).
+root_or_stop() {
+    if truthy "${NEXROLL_ALLOW_ROOT:-}"; then
+        say "$1 NEXROLL_ALLOW_ROOT is true, so NeXroll is running as root."
+        return 0
+    fi
+    say "$1 Refusing to run as root; fix this, or set NEXROLL_ALLOW_ROOT=true to allow it."
+    exit 1
+}
+
 # Off, or already started as another user (Docker's `user:` setting): run as is.
 if ! truthy "${NEXROLL_RUN_AS_PUID:-}" || [ "$(id -u)" != "0" ]; then
+    if [ "$(id -u)" = "0" ]; then
+        say "WARNING: running as root. Set NEXROLL_RUN_AS_PUID=true (with PUID/PGID) to run as a normal user."
+    fi
     exec "$@"
 fi
 
@@ -32,11 +51,12 @@ PUID="${PUID:-99}"
 PGID="${PGID:-100}"
 case "$PUID:$PGID" in
     *[!0-9:]*|:*|*:)
-        say "PUID and PGID must be numbers (got '$PUID' and '$PGID'); running as root."
+        root_or_stop "PUID and PGID must be numbers (got '$PUID' and '$PGID')."
         exec "$@"
         ;;
 esac
 if [ "$PUID" = "0" ]; then
+    root_or_stop "PUID is 0."
     exec "$@"
 fi
 
@@ -102,11 +122,9 @@ can_write() {
     setpriv --reuid="$PUID" --regid="$PGID" --clear-groups test -w "$1"
 }
 
-# Without its data folder NeXroll can't start, so keep running as root rather
-# than fail; say why, so it can be fixed.
+# Without its data folder NeXroll can't start as that user.
 if ! can_write /data; then
-    say "user $PUID:$PGID can't write to /data, so NeXroll is running as root."
-    say "Give that user the folder mounted at /data on the host, or turn NEXROLL_RUN_AS_PUID off."
+    root_or_stop "user $PUID:$PGID can't write to /data; give that user the folder mounted at /data on the host."
     exec "$@"
 fi
 list_folders | sort -u | while IFS= read -r folder; do
