@@ -13,6 +13,14 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.3.0
+
+- **Security fixes.** With login on, read-only API keys can no longer make changes, backups fetched with a key leave out your keys, and preroll videos need a login. The Plex probe sends your token only to your own Plex server, and restores and Community downloads can no longer be pointed elsewhere. See [Authentication](Configuration#authentication).
+- **More than one Radarr and Sonarr** in NeX-Up, for example a 1080p and a 4K one. See [More than one Radarr](NeX-Up#more-than-one-radarr).
+- **Community Prerolls on Typical Nerds' new servers,** prerolls.uk with home.prerolls.uk as a backup. See [Servers](Community-Prerolls#servers).
+- **Community matching compares file size and length,** so renamed files are found and lookalike names no longer link. See [Prerolls you already have](Community-Prerolls#prerolls-you-already-have).
+- **Upload progress in Add Prerolls,** with Cancel, and files are sent once. See [Upload](Preroll-Library#upload).
+
 ## What's New in v2.2.9
 
 - **Three new themes:** Silent Film, VHS Rewind and Screenplay, a light one. Terminal and Nocturne now change the whole look, not just the colors. See [Theme](Configuration#theme).
