@@ -130,11 +130,11 @@ API keys are used with the `/external/*` API endpoints. With login on they also 
 
 Enable login-based access control:
 
-1. Go to **Settings → Authentication**
-2. Enable **Username/Password Authentication**
-3. Create user accounts:
+1. Go to **Settings → Users**
+2. Create user accounts with **Add User**:
    - **Admin** — Full access to all settings and configuration
    - **User** — Standard access (view and manage prerolls)
+3. Turn on **Require Login** (it needs at least one account)
 
 With login on, everything except the sign-in screen needs a login or an API key, including the preroll videos and thumbnails the Library plays. The Jellyfin and Emby plugins keep working: they use their own endpoints, with the plugin's API key when one is set.
 
