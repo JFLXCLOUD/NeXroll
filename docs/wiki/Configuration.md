@@ -124,7 +124,7 @@ Generate API keys for external programmatic access:
    - **Expiration**: 24h, 7d, 30d, 90d, 1 year, or Never
 4. Copy the generated key (starts with `nx_`) — it's only shown once
 
-API keys are used with the `/external/*` API endpoints. See [API Documentation](API) for details.
+API keys are used with the `/external/*` API endpoints. With login on they also work on the rest of the API: read-only keys can only read, and only Full Access keys can change anything. See [API Documentation](API) for details.
 
 ### Username/Password Authentication
 
@@ -135,6 +135,8 @@ Enable login-based access control:
 3. Create user accounts:
    - **Admin** — Full access to all settings and configuration
    - **User** — Standard access (view and manage prerolls)
+
+With login on, everything except the sign-in screen needs a login or an API key, including the preroll videos and thumbnails the Library plays. The Jellyfin and Emby plugins keep working: they use their own endpoints, with the plugin's API key when one is set.
 
 ### Security Features
 

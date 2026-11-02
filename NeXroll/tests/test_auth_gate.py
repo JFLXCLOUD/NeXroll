@@ -40,7 +40,17 @@ class AuthGateExemptionTests(unittest.TestCase):
 
     def test_static_assets_and_preflight_remain_public(self):
         self.assertTrue(is_auth_gate_exempt("GET", "/static/js/main.js"))
+        self.assertTrue(is_auth_gate_exempt("GET", "/static/css/main.css"))
+        self.assertTrue(is_auth_gate_exempt("GET", "/static/media/font.woff2"))
         self.assertTrue(is_auth_gate_exempt("OPTIONS", "/categories"))
+
+    def test_preroll_videos_and_thumbnails_need_login(self):
+        for path in ("/static/prerolls/Halloween/intro.mp4",
+                     "/static/prerolls/thumbnails/Halloween/intro.mp4.jpg",
+                     "/static/thumbnails/Halloween/intro.mp4.jpg"):
+            with self.subTest(path=path):
+                self.assertFalse(is_auth_gate_exempt("GET", path))
+                self.assertFalse(is_auth_gate_exempt("HEAD", path))
 
     def test_api_routes_are_not_exempt(self):
         self.assertFalse(is_auth_gate_exempt("GET", "/categories"))

@@ -29,6 +29,14 @@ AUTH_GATE_EXEMPT_PREFIXES = (
     "/plugin/",
 )
 
+# Inside /static/, the preroll videos and their thumbnails stay behind the gate;
+# only the app's own files (js, css, media) are open. Only NeXroll's pages load
+# these, from the same origin, so the login cookie goes with them.
+AUTH_GATE_PROTECTED_PREFIXES = (
+    "/static/prerolls/",
+    "/static/thumbnails/",
+)
+
 # Cross-origin access. NeXroll's pages are served from the same origin as the
 # API, so browsers need CORS only for the routes other origins call: the
 # plugin routes and the API-key /external/ routes (dashboards). Everything else
@@ -79,7 +87,7 @@ def is_auth_gate_exempt(method: str, path: str) -> bool:
     return (
         method.upper() == "OPTIONS"
         or path in AUTH_GATE_EXEMPT_EXACT
-        or path.startswith(AUTH_GATE_EXEMPT_PREFIXES)
+        or (path.startswith(AUTH_GATE_EXEMPT_PREFIXES) and not path.startswith(AUTH_GATE_PROTECTED_PREFIXES))
     )
 
 

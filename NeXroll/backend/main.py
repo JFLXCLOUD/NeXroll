@@ -2335,16 +2335,17 @@ app.add_middleware(_ScopedCORSMiddleware)
 #   - the pre-login surface the login screen itself needs (/auth/status,
 #     login, logout, register, reset-password — each self-guards internally)
 #   - /health for Docker/uptime probes
-#   - /plugin/*, /jellyfin/plugin/*, /emby/plugin/*: the Jellyfin/Emby plugin
-#     endpoints do their own optional API-key auth; session-gating them would
-#     break every existing plugin install
+#   - /plugin/*: the Jellyfin/Emby plugin endpoints do their own optional
+#     API-key auth; session-gating them would break every existing plugin
+#     install (/jellyfin/plugin/* and /emby/plugin/* are gated, see auth_gate)
 #   - the SPA shell + static assets, so the login screen can load at all
-#     (/data thumbnails are deliberately NOT exempt — preroll content stays
-#     behind the gate)
+#     (preroll videos and thumbnails under /static/prerolls/ and /data are
+#     deliberately NOT exempt — preroll content stays behind the gate)
 #
 # Requests with a valid API key (X-Api-Key header or ?api_key=) also pass:
-# GET/HEAD requires a "read" key, anything else a "write" key — so external
-# automation keeps working when login is required.
+# GET/HEAD requires a "read" key, anything else a "full" one (validate_api_key
+# treats "write" as "full") — so external automation keeps working when login
+# is required, and a read-only key can't change anything.
 # auth_enabled is read on every gated request; cache it briefly so static-ish
 # traffic doesn't hammer SQLite. The /auth/settings PUT resets the cache so a
 # toggle takes effect immediately.

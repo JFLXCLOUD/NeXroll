@@ -41,6 +41,8 @@ changes it sends are refused with 403. Scripts and servers are not affected.
 
 API keys are generated in **Settings → API Keys**. Keys can be scoped as **read-only** or **full access** and can have expiration dates.
 
+With login on, a key also works on the internal endpoints: a read-only key for reading (`GET`), a full access key for anything that changes something. Before 2.3.0 a read-only key could also make changes. A backup fetched with any key leaves out the Plex token and the Jellyfin, Emby, Radarr, Sonarr and TMDB keys; restoring such a backup keeps the keys the install already has.
+
 ### When Authentication is Disabled
 
 If authentication is not enabled in Settings, all internal API endpoints are accessible without credentials. External API endpoints always require a valid API key.

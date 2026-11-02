@@ -87,10 +87,25 @@ def _secrets_file_path() -> str:
     return os.path.join(_program_data_root(), "secrets.json")
 
 
+def _owner_only(path: str) -> None:
+    """Make a secrets file readable by its owner only. Not on Windows, where the
+    folder's ACLs apply instead. The plain-file store's base64 hides tokens from
+    a glance, not from anyone who can read the file."""
+    if os.name == "nt":
+        return
+    try:
+        if os.stat(path).st_mode & 0o077:
+            os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def _atomic_write(path: str, data: bytes) -> None:
     tmp = path + ".tmp"
-    with open(tmp, "wb") as f:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(fd, "wb") as f:
         f.write(data)
+    _owner_only(tmp)  # a .tmp left by a crash keeps its old mode through os.open
     try:
         if os.path.exists(path):
             os.remove(path)
@@ -363,6 +378,7 @@ def _plain_file_get(name: str) -> Optional[str]:
         fp = _secrets_file_path()
         if not os.path.exists(fp):
             return None
+        _owner_only(fp)  # written readable by everyone before 2.3.0
         with open(fp, "r", encoding="utf-8") as f:
             data = json.load(f)
         entry = data.get(name)

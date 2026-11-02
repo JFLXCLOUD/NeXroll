@@ -56,5 +56,18 @@ class SameOriginTests(unittest.TestCase):
         self.assertFalse(same("ftp://192.168.1.5:32400", "http://192.168.1.5:32400"))
 
 
+@unittest.skipIf(os.name == "nt", "file modes apply on Linux and macOS; Windows uses the folder's ACLs")
+class SecretsFileModeTests(unittest.TestCase):
+    def test_secrets_file_is_owner_only(self):
+        from backend import secure_store
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "secrets.json")
+            secure_store._atomic_write(path, b"{}")
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            os.chmod(path, 0o644)  # as written before 2.3.0
+            secure_store._owner_only(path)
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()
