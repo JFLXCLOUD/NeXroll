@@ -16628,13 +16628,21 @@ _SETTINGS_FILE_PATH_COLUMNS = (
 # Exported as ISO strings, so they have to be parsed back before assignment.
 _SETTINGS_DATETIME_COLUMNS = ("community_fair_use_accepted_at",)
 
+# Keys and tokens in the settings row. Left out of a backup fetched with an API
+# key (see _backup_may_include_credentials), and a blank one in a backup never
+# replaces the key this install has.
+_SETTINGS_SECRET_COLUMNS = frozenset({
+    "plex_token", "jellyfin_api_key", "emby_api_key",
+    "nexup_radarr_api_key", "nexup_sonarr_api_key", "nexup_tmdb_api_key",
+})
 
-def _export_settings(setting) -> dict:
+
+def _export_settings(setting, include_secrets: bool = True) -> dict:
     """Every persisted preference, minus this install's own runtime state.
 
-    Includes credentials: without them a restored install cannot reconnect, and
-    the system ZIP already carries the whole database anyway. The UI labels the
-    download accordingly.
+    Includes credentials unless include_secrets is false: without them a
+    restored install cannot reconnect, and the system ZIP already carries the
+    whole database anyway. The UI labels the download accordingly.
     """
     if not setting:
         return {}
@@ -16642,6 +16650,8 @@ def _export_settings(setting) -> dict:
     for column in models.Setting.__table__.columns:
         name = column.name
         if name in _SETTINGS_BACKUP_SKIP:
+            continue
+        if name in _SETTINGS_SECRET_COLUMNS and not include_secrets:
             continue
         value = getattr(setting, name, None)
         if isinstance(value, datetime.datetime):
@@ -16676,6 +16686,8 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
             # A backup from a newer NeXroll can name columns this build lacks.
             report["unknown_columns"] += 1
             continue
+        if name in _SETTINGS_SECRET_COLUMNS and not value:
+            continue  # a backup made without keys keeps this install's
 
         if name in _SETTINGS_CATEGORY_FKS:
             value = category_id_map.get(value) if value is not None else None
@@ -16819,9 +16831,10 @@ def _fit_restored_database_to_this_install(db_file: str, own_preroll_folder, nex
 
     A system backup's database is copied whole, so it names the old machine's
     preroll folder, NeX-Up storage and uploaded logos, soundtracks and
-    backdrops. A folder that does not exist here is replaced by this install's
-    own (as the JSON restore does), so new NeX-Up files land beside the
-    restored ones; an asset path is relinked to the copy the restore extracts.
+    backdrops. A preroll folder that does not exist here is replaced by this
+    install's own (as the JSON restore does). The NeX-Up folder is always this
+    install's, where the restore extracts NeX-Up files, so new ones land beside
+    the restored ones; an asset path is relinked to the copy the restore extracts.
     Works on the extracted file with sqlite3, before the application opens it.
     """
     import sqlite3
@@ -16845,7 +16858,9 @@ def _fit_restored_database_to_this_install(db_file: str, own_preroll_folder, nex
                 updates["preroll_folder"] = keep
                 report["paths_kept"].append(f"preroll_folder={folder}")
             storage = values.get("nexup_storage_path")
-            if storage and not os.path.isdir(storage):
+            # The restore extracts NeX-Up files into this install's folder, so
+            # the database has to name that one, not the backup's.
+            if storage and not _paths_equal(storage, nexup_root):
                 os.makedirs(nexup_root, exist_ok=True)
                 updates["nexup_storage_path"] = nexup_root
                 report["paths_kept"].append(f"nexup_storage_path={storage}")
@@ -16890,12 +16905,12 @@ def backup_status(db: Session = Depends(get_db)):
 
 
 def _backup_may_include_credentials(request) -> bool:
-    """Media server credentials go only to the UI, not to an API key.
+    """Credentials and keys go only to the UI, not to an API key.
 
     With sign-in on, a read-only External API key can fetch a backup. That key
     is meant for dashboards and automation; it must not hand out the Plex
-    token. A request with no API key passed the gate as a signed-in session,
-    or sign-in is off.
+    token or the media server, Radarr, Sonarr and TMDB keys. A request with no
+    API key passed the gate as a signed-in session, or sign-in is off.
     """
     if request is None:
         return True
@@ -16914,6 +16929,7 @@ def backup_database(request: Request = None, db: Session = Depends(get_db)):
     `schema_version` field allows future restore code to handle older payloads.
     """
     try:
+        with_keys = _backup_may_include_credentials(request)
         data = {
             # v5 adds media server credentials, schedule IDs (for remapping
             # ignored conflicts) and sidebar favorites; v4 added settings,
@@ -17011,7 +17027,7 @@ def backup_database(request: Request = None, db: Session = Depends(get_db)):
             # The whole Settings row: connections, credentials, path mappings,
             # dashboard layout, generator defaults. Previously absent entirely,
             # which is what made a restore on a new machine come back blank.
-            "settings": _export_settings(db.query(models.Setting).first()),
+            "settings": _export_settings(db.query(models.Setting).first(), include_secrets=with_keys),
             "ignored_paths": [
                 {
                     "path": ip.path,
@@ -17042,14 +17058,14 @@ def backup_database(request: Request = None, db: Session = Depends(get_db)):
             # like the main ones' in "settings". Ids are kept: they are part of
             # the movie and show keys on trailer rows.
             "radarr_servers": [
-                {"id": r.id, "name": r.name, "url": r.url, "api_key": r.api_key}
+                {"id": r.id, "name": r.name, "url": r.url, "api_key": r.api_key if with_keys else ""}
                 for r in db.query(models.RadarrServer).order_by(models.RadarrServer.id).all()
             ],
             "sonarr_servers": [
-                {"id": r.id, "name": r.name, "url": r.url, "api_key": r.api_key}
+                {"id": r.id, "name": r.name, "url": r.url, "api_key": r.api_key if with_keys else ""}
                 for r in db.query(models.SonarrServer).order_by(models.SonarrServer.id).all()
             ],
-            "credentials": _export_credentials() if _backup_may_include_credentials(request) else {},
+            "credentials": _export_credentials() if with_keys else {},
             "exported_at": utcnow().isoformat(),
             "exported_by_version": app_version,
         }
@@ -17630,11 +17646,17 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
             if backup_key not in backup_data:
                 continue
             try:
+                # A backup made without keys keeps the key this install has for
+                # the same address; a server with no key either way is left out.
+                own_keys = {str(s.url).rstrip("/").lower(): s.api_key for s in db.query(server_model).all()}
                 db.query(server_model).delete(synchronize_session=False)
                 for row in backup_data.get(backup_key) or []:
-                    if isinstance(row, dict) and row.get("url") and row.get("api_key"):
+                    if not isinstance(row, dict) or not row.get("url"):
+                        continue
+                    api_key = row.get("api_key") or own_keys.get(str(row["url"]).rstrip("/").lower())
+                    if api_key:
                         db.add(server_model(id=row.get("id"), name=row.get("name"),
-                                            url=row["url"], api_key=row["api_key"]))
+                                            url=row["url"], api_key=api_key))
                 db.commit()
             except Exception as server_err:
                 db.rollback()
@@ -17742,19 +17764,10 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                     db_temp = os.path.join(work_dir, "nexroll.db")
                     extract(zip_ref, "database/nexroll.db", db_temp)
 
-                    # Keep the backup's NeX-Up folder when it exists on this
-                    # machine (a same-machine restore); otherwise use this install's.
-                    try:
-                        import sqlite3
-                        _con = sqlite3.connect(db_temp)
-                        try:
-                            _row = _con.execute("SELECT nexup_storage_path FROM settings WHERE nexup_storage_path IS NOT NULL LIMIT 1").fetchone()
-                        finally:
-                            _con.close()
-                        if _row and _row[0] and os.path.isdir(_row[0]):
-                            nexup_root = _row[0]
-                    except Exception:
-                        pass
+                    # NeX-Up files always go into this install's NeX-Up folder.
+                    # The folder named in the uploaded database used to be taken
+                    # when it existed here, which let a crafted backup write
+                    # files into any existing folder NeXroll can write to.
                     fit = _fit_restored_database_to_this_install(db_temp, own_preroll_folder, nexup_root, nexup_files)
                     paths_kept = fit["paths_kept"]
 

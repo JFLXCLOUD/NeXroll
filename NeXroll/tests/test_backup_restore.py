@@ -32,7 +32,7 @@ from tests.test_trailer_filters import main_ast
 FUNCTIONS = {
     'backup_database', 'restore_database', '_export_settings', '_restore_settings', '_stamp_backup_taken',
     '_export_credentials', '_restore_credentials', '_remap_ignored_conflicts', '_snapshot_sqlite',
-    '_fit_restored_database_to_this_install', '_backup_may_include_credentials',
+    '_fit_restored_database_to_this_install', '_backup_may_include_credentials', '_paths_equal',
 }
 CONSTANT_PREFIXES = ('_SETTINGS_', '_BACKUP_CREDENTIALS')
 
@@ -154,6 +154,46 @@ def test_credentials_go_to_the_ui_but_not_to_an_api_key(source, headers, query, 
     assert bool(backup['credentials']) is included
 
 
+def test_keys_in_settings_and_extra_arr_servers_go_to_the_ui_only(source):
+    setting = source.query(models.Setting).first()
+    setting.plex_token, setting.nexup_radarr_api_key, setting.nexup_tmdb_api_key = 'plex-db', 'radarr-key', 'tmdb-key'
+    source.add(models.RadarrServer(name='Radarr 4K', url='http://radarr4k:7878', api_key='radarr-4k-key'))
+    source.add(models.SonarrServer(name='Sonarr Anime', url='http://anime:8989', api_key='sonarr-anime-key'))
+    source.commit()
+    env = load(FakeSecrets())
+
+    ui = env['backup_database'](request=SimpleNamespace(headers={}, query_params={}), db=source)
+    assert ui['settings']['plex_token'] == 'plex-db' and ui['settings']['nexup_tmdb_api_key'] == 'tmdb-key'
+    assert ui['radarr_servers'][0]['api_key'] == 'radarr-4k-key'
+
+    keyed = env['backup_database'](request=SimpleNamespace(headers={'X-Api-Key': 'nx_full'}, query_params={}), db=source)
+    assert not set(keyed['settings']) & env['_SETTINGS_SECRET_COLUMNS']
+    assert keyed['settings']['plex_url'] == 'http://plex:32400'  # everything else is still there
+    assert [s['api_key'] for s in keyed['radarr_servers'] + keyed['sonarr_servers']] == ['', '']
+    assert 'radarr-4k-key' not in json.dumps(keyed, default=str)
+
+
+def test_a_backup_without_keys_keeps_this_installs_keys(source, tmp_path):
+    source.add(models.RadarrServer(name='Radarr 4K', url='http://radarr4k:7878', api_key='source-key'))
+    source.add(models.RadarrServer(name='Gone', url='http://gone:7878', api_key='gone-key'))
+    source.commit()
+    backup = json.loads(json.dumps(load(FakeSecrets())['backup_database'](
+        request=SimpleNamespace(headers={'X-Api-Key': 'nx_full'}, query_params={}), db=source), default=str))
+
+    target = session(tmp_path / 'target.db')
+    target.add(models.Setting(plex_token='target-plex', jellyfin_api_key='target-jf'))
+    target.add(models.RadarrServer(name='4K', url='http://RADARR4K:7878/', api_key='target-key'))
+    target.commit()
+    load(FakeSecrets())['restore_database'](backup, db=target)
+
+    setting = target.query(models.Setting).first()
+    assert (setting.plex_token, setting.jellyfin_api_key, setting.plex_url) == ('target-plex', 'target-jf', 'http://plex:32400')
+    # The same Radarr keeps this install's key; one this install has no key for is left out.
+    assert [(s.name, s.url, s.api_key) for s in target.query(models.RadarrServer).all()] == [
+        ('Radarr 4K', 'http://radarr4k:7878', 'target-key')]
+    target.close()
+
+
 def test_an_older_backup_without_schedule_ids_drops_conflict_ignores_it_cannot_translate(source, tmp_path):
     backup = json.loads(json.dumps(load(FakeSecrets())['backup_database'](db=source), default=str))
     for schedule in backup['schedules']:
@@ -226,6 +266,24 @@ def test_a_restored_database_is_pointed_at_this_machines_folders_and_assets(tmp_
     assert row['nexup_coming_soon_list_custom_audio_path'] == '/data/nexup/dynamic_prerolls/assets/gone.mp3'  # not in the backup
     assert row['nexup_dynamic_preroll_custom_backdrop_path'] == str(existing_asset)  # already fine here
     assert report['assets_relinked'] == 1 and len(report['paths_kept']) == 2
+
+
+def test_a_restored_database_never_names_another_existing_folder_for_nexup(tmp_path):
+    # A crafted backup naming a folder that exists here (on Docker, /app) used
+    # to have the restore write its NeX-Up files there.
+    env = load(FakeSecrets())
+    elsewhere = tmp_path / 'app'
+    elsewhere.mkdir()
+    nexup_root = str(tmp_path / 'NeXup')
+    for storage, expected in ((str(elsewhere), nexup_root), (nexup_root + os.sep, nexup_root + os.sep)):
+        restored = tmp_path / f'restored-{len(storage)}.db'
+        with contextlib.closing(sqlite3.connect(restored)) as con:
+            con.execute('CREATE TABLE settings (nexup_storage_path TEXT)')
+            con.execute('INSERT INTO settings VALUES (?)', (storage,))
+            con.commit()
+        env['_fit_restored_database_to_this_install'](str(restored), None, nexup_root, [])
+        with contextlib.closing(sqlite3.connect(restored)) as check:
+            assert check.execute('SELECT nexup_storage_path FROM settings').fetchone()[0] == expected
 
 
 def test_a_json_restore_skips_brand_assets_that_are_not_on_this_machine(tmp_path):
