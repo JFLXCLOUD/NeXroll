@@ -29,6 +29,12 @@ AUTH_GATE_EXEMPT_PREFIXES = (
     "/plugin/",
 )
 
+# Inside the exempt /static/ tree, the preroll media itself still needs a login
+# (or an API key). The app's build assets under /static/js and /static/css do not.
+AUTH_GATE_PROTECTED_PREFIXES = (
+    "/static/prerolls/",
+)
+
 # Cross-origin access. NeXroll's pages are served from the same origin as the
 # API, so browsers need CORS only for the routes other origins call: the
 # plugin routes and the API-key /external/ routes (dashboards). Everything else
@@ -79,7 +85,7 @@ def is_auth_gate_exempt(method: str, path: str) -> bool:
     return (
         method.upper() == "OPTIONS"
         or path in AUTH_GATE_EXEMPT_EXACT
-        or path.startswith(AUTH_GATE_EXEMPT_PREFIXES)
+        or (path.startswith(AUTH_GATE_EXEMPT_PREFIXES) and not path.startswith(AUTH_GATE_PROTECTED_PREFIXES))
     )
 
 

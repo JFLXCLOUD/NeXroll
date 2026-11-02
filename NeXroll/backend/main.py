@@ -30990,8 +30990,12 @@ def plugin_get_intros(
     Accepts optional API key authentication via X-Api-Key header.
     If provided and valid, the plugin client is tracked as connected.
     """
-    # Optional API key auth — allow unauthenticated for backwards compatibility
+    # API key auth is optional while login is off (backwards compatible). With
+    # login on, the plugin must send its API key: the list names every preroll
+    # file and carries signed download links.
     api_key_value = request.headers.get("X-Api-Key") or request.query_params.get("api_key")
+    if not api_key_value and _auth_gate_enabled():
+        raise HTTPException(status_code=401, detail="API key required")
     if api_key_value:
         key_record = validate_api_key(api_key_value, "read", db)
         if not key_record:

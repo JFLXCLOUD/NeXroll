@@ -19,6 +19,12 @@ def site(value, mode=None):
 
 
 class AuthGateExemptionTests(unittest.TestCase):
+    def test_preroll_media_is_behind_the_gate_but_build_assets_are_not(self):
+        self.assertFalse(is_auth_gate_exempt("GET", "/static/prerolls/Movies/a.mp4"))
+        self.assertFalse(is_auth_gate_exempt("GET", "/static/prerolls/thumbnails/Movies/a.mp4.jpg"))
+        self.assertTrue(is_auth_gate_exempt("GET", "/static/js/main.js"))
+        self.assertTrue(is_auth_gate_exempt("GET", "/plugin/stream"))
+
     def test_manifest_icons_are_available_before_login(self):
         public = Path(__file__).resolve().parents[1] / "frontend" / "public"
         manifest = json.loads((public / "manifest.json").read_text(encoding="utf-8"))
