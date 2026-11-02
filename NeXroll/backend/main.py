@@ -4668,7 +4668,8 @@ def validate_api_key(api_key: str, required_permission: str = "read", db: Sessio
         return None
     
     # Check permissions
-    if required_permission == "full" and key_record.permissions != "full":
+    # "write" (what the auth gate asks for on mutating requests) needs a full key too
+    if required_permission in ("write", "full") and key_record.permissions != "full":
         return None
     
     # Update last used timestamp
