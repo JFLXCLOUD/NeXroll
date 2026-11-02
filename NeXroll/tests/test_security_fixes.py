@@ -114,5 +114,19 @@ class SecretsFileModeTests(unittest.TestCase):
                 os.environ.update(old)
 
 
+class DownloadTargetTests(unittest.TestCase):
+    def test_only_public_http_targets(self):
+        check = lift("_normalize_url", "_same_origin", "_check_download_target")["_check_download_target"]
+        check("http://8.8.8.8/a.mp4")
+        for bad in ("http://127.0.0.1/x", "http://10.1.2.3/x", "http://192.168.0.5:9393/x",
+                    "http://169.254.169.254/latest", "http://[::1]/x", "http://0.0.0.0/x",
+                    "file:///etc/passwd", "ftp://8.8.8.8/x", "http:///x"):
+            with self.subTest(url=bad), self.assertRaises(ValueError):
+                check(bad)
+        check("http://192.168.0.5:8080/a.mp4", "http://192.168.0.5:8080")  # the configured community server
+        with self.assertRaises(ValueError):
+            check("http://192.168.0.5:9999/a.mp4", "http://192.168.0.5:8080")
+
+
 if __name__ == "__main__":
     unittest.main()

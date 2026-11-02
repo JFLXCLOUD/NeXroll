@@ -29715,6 +29715,69 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
         log_event('ERROR', 'system', f'Community search error: {e}', source='search_community_prerolls')
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
+COMMUNITY_MAX_DOWNLOAD_BYTES = int(os.environ.get("NEXROLL_COMMUNITY_MAX_MB", "2048") or 2048) * 1024 * 1024
+COMMUNITY_DOWNLOAD_DEADLINE = 1800  # seconds for one file
+
+
+def _check_download_target(url: str, trusted_base: str = "") -> None:
+    """Raise ValueError unless url is http(s) and resolves only to public
+    addresses. The community server itself (trusted_base's origin) is exempt so
+    a mirror on the LAN keeps working.
+
+    shortcut: the name is resolved here and again by requests, so a DNS rebind
+    between the two is not caught; pin the address if that matters.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    parts = urlparse(url or "")
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError("only http(s) download URLs are allowed")
+    if trusted_base and _same_origin(url, trusted_base):
+        return
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    for info in socket.getaddrinfo(parts.hostname, port, proto=socket.IPPROTO_TCP):
+        addr = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not addr.is_global:
+            raise ValueError("download URL resolves to a non-public address")
+
+
+def _fetch_community_file(url: str, dest: str, headers: dict, trusted_base: str = "") -> None:
+    """Stream url into dest: every redirect hop is checked, the size is capped
+    and the whole download has a deadline. A partial file is removed on failure."""
+    start = time.monotonic()
+    try:
+        for _hop in range(6):
+            _check_download_target(url, trusted_base)
+            response = requests.get(url, stream=True, headers=headers, timeout=(10, 60), allow_redirects=False)
+            if response.is_redirect:
+                url = requests.compat.urljoin(url, response.headers.get("Location", ""))
+                response.close()
+                continue
+            break
+        else:
+            raise ValueError("too many redirects")
+        with response:
+            response.raise_for_status()
+            if int(response.headers.get("Content-Length") or 0) > COMMUNITY_MAX_DOWNLOAD_BYTES:
+                raise ValueError("file is larger than the download limit")
+            written = 0
+            with open(dest, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    written += len(chunk)
+                    if written > COMMUNITY_MAX_DOWNLOAD_BYTES:
+                        raise ValueError("file is larger than the download limit")
+                    if time.monotonic() - start > COMMUNITY_DOWNLOAD_DEADLINE:
+                        raise ValueError("download took too long")
+                    f.write(chunk)
+    except BaseException:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        raise
+
+
 @app.post("/community-prerolls/download")
 def download_community_preroll(
     request: CommunityPrerollDownloadRequest,
@@ -29813,12 +29876,7 @@ def download_community_preroll(
         
         # Download file using requests for better timeout control
         try:
-            response = requests.get(download_url, stream=True, headers=_community_headers(), timeout=60)
-            response.raise_for_status()
-            with open(file_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
+            _fetch_community_file(download_url, file_path, _community_headers(), _get_community_base_url(db))
         except Exception as dl_err:
             _file_log(f"Community preroll download failed: {str(dl_err)}", level="ERROR")
             log_event('ERROR', 'user', f'Community preroll download failed: {dl_err}', source='download_community_preroll')
