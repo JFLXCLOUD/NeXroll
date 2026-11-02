@@ -16697,6 +16697,13 @@ _SETTINGS_BACKUP_SKIP = frozenset({
     "nexup_last_sync", "nexup_last_sonarr_sync",
 })
 
+# Keys and tokens stored in the settings row. Left out of a backup fetched with
+# an API key, and a blank value in a backup never overwrites the stored one.
+_SETTINGS_SECRET_COLUMNS = frozenset({
+    "plex_token", "jellyfin_api_key", "emby_api_key",
+    "nexup_radarr_api_key", "nexup_sonarr_api_key", "nexup_tmdb_api_key",
+})
+
 # Foreign keys into tables the restore rebuilds. Exported as-is and translated
 # through the id maps the restore already builds for categories and sequences.
 _SETTINGS_CATEGORY_FKS = ("active_category", "nexup_category_id",
@@ -16723,7 +16730,7 @@ _SETTINGS_FILE_PATH_COLUMNS = (
 _SETTINGS_DATETIME_COLUMNS = ("community_fair_use_accepted_at",)
 
 
-def _export_settings(setting) -> dict:
+def _export_settings(setting, include_secrets: bool = True) -> dict:
     """Every persisted preference, minus this install's own runtime state.
 
     Includes credentials: without them a restored install cannot reconnect, and
@@ -16735,7 +16742,7 @@ def _export_settings(setting) -> dict:
     out = {}
     for column in models.Setting.__table__.columns:
         name = column.name
-        if name in _SETTINGS_BACKUP_SKIP:
+        if name in _SETTINGS_BACKUP_SKIP or (name in _SETTINGS_SECRET_COLUMNS and not include_secrets):
             continue
         value = getattr(setting, name, None)
         if isinstance(value, datetime.datetime):
@@ -16770,6 +16777,8 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
             # A backup from a newer NeXroll can name columns this build lacks.
             report["unknown_columns"] += 1
             continue
+        if name in _SETTINGS_SECRET_COLUMNS and not value:
+            continue  # a redacted backup keeps this install's keys
 
         if name in _SETTINGS_CATEGORY_FKS:
             value = category_id_map.get(value) if value is not None else None
@@ -17105,7 +17114,7 @@ def backup_database(request: Request = None, db: Session = Depends(get_db)):
             # The whole Settings row: connections, credentials, path mappings,
             # dashboard layout, generator defaults. Previously absent entirely,
             # which is what made a restore on a new machine come back blank.
-            "settings": _export_settings(db.query(models.Setting).first()),
+            "settings": _export_settings(db.query(models.Setting).first(), _backup_may_include_credentials(request)),
             "ignored_paths": [
                 {
                     "path": ip.path,

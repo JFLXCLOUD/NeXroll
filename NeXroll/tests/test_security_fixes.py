@@ -67,5 +67,27 @@ class SameOriginTests(unittest.TestCase):
         self.assertFalse(same("ftp://192.168.1.5:32400", "http://192.168.1.5:32400"))
 
 
+class BackupSecretsTests(unittest.TestCase):
+    def test_export_redacts_keys_and_restore_keeps_existing_ones(self):
+        import datetime
+        columns = [SimpleNamespace(name=n) for n in ("id", "plex_url", "nexup_radarr_api_key", "plex_token")]
+        models = SimpleNamespace(Setting=SimpleNamespace(__table__=SimpleNamespace(columns=columns)))
+        scope = lift("_export_settings", models=models, datetime=datetime, _SETTINGS_BACKUP_SKIP={"id"},
+                     _SETTINGS_SECRET_COLUMNS=frozenset({"plex_token", "nexup_radarr_api_key"}))
+        row = SimpleNamespace(id=1, plex_url="http://p", nexup_radarr_api_key="K", plex_token="T")
+        self.assertEqual(scope["_export_settings"](row)["nexup_radarr_api_key"], "K")
+        redacted = scope["_export_settings"](row, include_secrets=False)
+        self.assertEqual(redacted, {"plex_url": "http://p"})
+
+        restore = lift("_restore_settings", models=models, _SETTINGS_BACKUP_SKIP={"id"},
+                       _SETTINGS_SECRET_COLUMNS=frozenset({"plex_token", "nexup_radarr_api_key"}),
+                       _SETTINGS_CATEGORY_FKS=(), _SETTINGS_SEQUENCE_FKS=(), _SETTINGS_PREROLL_IDS=(),
+                       _SETTINGS_DATETIME_COLUMNS=(), _SETTINGS_PATH_COLUMNS=(), _SETTINGS_FILE_PATH_COLUMNS=(),
+                       _file_log=lambda *a: None, Optional=lambda x: x)["_restore_settings"]
+        db = SimpleNamespace(query=lambda *a: SimpleNamespace(first=lambda: row))
+        restore(db, {"plex_url": "http://new", "nexup_radarr_api_key": "", "plex_token": None}, {}, {})
+        self.assertEqual((row.plex_url, row.nexup_radarr_api_key, row.plex_token), ("http://new", "K", "T"))
+
+
 if __name__ == "__main__":
     unittest.main()
