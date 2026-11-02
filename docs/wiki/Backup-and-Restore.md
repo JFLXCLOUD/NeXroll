@@ -28,6 +28,8 @@ A portable text file containing everything except the videos:
 
 > **This file contains your server tokens and API keys.** Keep it somewhere private. Do not attach it to a public issue.
 
+A backup fetched with a NeXroll API key (from a script, rather than the Backup page) leaves out the Plex token and the Jellyfin, Emby, Radarr, Sonarr and TMDB keys (since 2.3.0). Restoring such a file keeps the keys the install already has.
+
 ### What is deliberately excluded
 
 - **User accounts and NeXroll API keys.** Restoring logins from a portable file is a credential transfer decision NeXroll does not make for you. Recreate accounts under **Settings → Users**. Favorites that belong to a user account stay behind with it.
@@ -67,7 +69,7 @@ Generated prerolls *are* included, because they cannot be recreated — they are
 
 Choose **Restore System (.zip)**. NeXroll closes its database connections, replaces the database file, and writes the videos, thumbnails and generated content back into this install's own locations — not the paths baked into the archive. That is what makes a Windows backup restorable into Docker and vice versa.
 
-Because generated prerolls live outside the prerolls folder, their database paths are relinked by filename after the files land, so entries do not end up pointing at a drive that does not exist here. Uploaded Generator logos, soundtracks and backdrops are relinked the same way, and a preroll folder or NeX-Up folder that does not exist on this machine is replaced by this install's own, so new NeX-Up downloads land beside the restored files. The media server credentials are put into this machine's secret store.
+Because generated prerolls live outside the prerolls folder, their database paths are relinked by filename after the files land, so entries do not end up pointing at a drive that does not exist here. Uploaded Generator logos, soundtracks and backdrops are relinked the same way, and a preroll folder that does not exist on this machine is replaced by this install's own. The NeX-Up files always go into this install's own NeX-Up folder, and the restored settings point at it, so new NeX-Up downloads land beside the restored files. (Before 2.3.0 a NeX-Up folder named in the backup was used if it existed here.) The media server credentials are put into this machine's secret store.
 
 The archive is written to disk and unpacked a piece at a time, so a backup larger than the machine's memory restores fine.
 
