@@ -11951,8 +11951,9 @@ def _is_within_directory(directory: str, target: str) -> bool:
     path-traversal entries like "../../etc/passwd" or absolute paths.
     """
     try:
-        abs_dir = os.path.abspath(directory)
-        abs_target = os.path.abspath(target)
+        # realpath, not abspath: a symlink inside the folder must not lead outside it
+        abs_dir = os.path.realpath(directory)
+        abs_target = os.path.realpath(target)
         return os.path.commonpath([abs_dir]) == os.path.commonpath([abs_dir, abs_target])
     except (ValueError, TypeError):
         # commonpath raises ValueError for paths on different drives (Windows)
@@ -16921,7 +16922,7 @@ def _fit_restored_database_to_this_install(db_file: str, own_preroll_folder, nex
                 updates["preroll_folder"] = keep
                 report["paths_kept"].append(f"preroll_folder={folder}")
             storage = values.get("nexup_storage_path")
-            if storage and not os.path.isdir(storage):
+            if storage and (not os.path.isdir(storage) or os.path.realpath(storage) != os.path.realpath(nexup_root)):
                 os.makedirs(nexup_root, exist_ok=True)
                 updates["nexup_storage_path"] = nexup_root
                 report["paths_kept"].append(f"nexup_storage_path={storage}")
@@ -17802,8 +17803,11 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                             _row = _con.execute("SELECT nexup_storage_path FROM settings WHERE nexup_storage_path IS NOT NULL LIMIT 1").fetchone()
                         finally:
                             _con.close()
-                        if _row and _row[0] and os.path.isdir(_row[0]):
-                            nexup_root = _row[0]
+                        # Only the folder this install already uses: the path in an
+                        # uploaded database must never choose where files are written.
+                        if _row and _row[0] and own_nexup_root and os.path.isdir(_row[0]) \
+                                and os.path.realpath(_row[0]) == os.path.realpath(own_nexup_root):
+                            nexup_root = own_nexup_root
                     except Exception:
                         pass
                     fit = _fit_restored_database_to_this_install(db_temp, own_preroll_folder, nexup_root, nexup_files)

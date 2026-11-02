@@ -44,5 +44,16 @@ class ApiKeyScopeTests(unittest.TestCase):
             self.assertTrue(self.check("full", needed))
 
 
+class WithinDirectoryTests(unittest.TestCase):
+    def test_traversal_absolute_and_symlink_are_refused(self):
+        within = lift("_is_within_directory")["_is_within_directory"]
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as other:
+            os.symlink(other, os.path.join(root, "link"))
+            self.assertTrue(within(root, os.path.join(root, "a", "b.mp4")))
+            self.assertFalse(within(root, os.path.join(root, "..", "x")))
+            self.assertFalse(within(root, os.path.join(root, "/etc/passwd")))
+            self.assertFalse(within(root, os.path.join(root, "link", "x")))
+
+
 if __name__ == "__main__":
     unittest.main()
