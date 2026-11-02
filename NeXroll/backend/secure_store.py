@@ -84,13 +84,39 @@ def _secrets_file_path() -> str:
     """
     Path to DPAPI-encrypted secret store (JSON with base64 blobs).
     """
-    return os.path.join(_program_data_root(), "secrets.json")
+    root = _program_data_root()
+    path = os.path.join(root, "secrets.json")
+    _restrict_permissions(root, path)
+    return path
+
+
+def _restrict_permissions(root: str, path: str) -> None:
+    """Make secrets.json owner-only (0600), and its folder 0700 when that folder
+    is set aside for secrets (NEXROLL_SECRETS_DIR). The default folder is the
+    shared data folder, which is left as it is. No-op on Windows."""
+    if sys.platform.startswith("win"):
+        return
+    try:
+        if os.path.exists(path) and os.stat(path).st_mode & 0o077:
+            os.chmod(path, 0o600)
+        sd = (os.environ.get("NEXROLL_SECRETS_DIR") or "").strip()
+        if sd and os.path.abspath(sd) == os.path.abspath(root) and os.stat(root).st_mode & 0o077:
+            os.chmod(root, 0o700)
+    except Exception:
+        pass
 
 
 def _atomic_write(path: str, data: bytes) -> None:
+    # Obfuscation, not encryption: on Linux/containers the values are base64 in
+    # this file, so the protection is the file mode (0600), not the encoding.
     tmp = path + ".tmp"
-    with open(tmp, "wb") as f:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
         f.write(data)
+    try:
+        os.chmod(tmp, 0o600)
+    except Exception:
+        pass
     try:
         if os.path.exists(path):
             os.remove(path)

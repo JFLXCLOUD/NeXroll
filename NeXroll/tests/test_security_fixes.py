@@ -89,5 +89,30 @@ class BackupSecretsTests(unittest.TestCase):
         self.assertEqual((row.plex_url, row.nexup_radarr_api_key, row.plex_token), ("http://new", "K", "T"))
 
 
+class SecretsFileModeTests(unittest.TestCase):
+    def test_secrets_file_is_owner_only(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("secure_store", Path(__file__).parents[1] / "backend" / "secure_store.py")
+        store = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(store)
+        with tempfile.TemporaryDirectory() as root:
+            old = dict(os.environ)
+            os.environ["NEXROLL_SECRETS_DIR"] = root
+            try:
+                path = os.path.join(root, "secrets.json")
+                open(path, "w").write("{}")
+                os.chmod(path, 0o644)
+                os.chmod(root, 0o755)
+                store._secrets_file_path()
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+                self.assertEqual(os.stat(root).st_mode & 0o777, 0o700)
+                os.remove(path)
+                store._atomic_write(path, b"{}")
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            finally:
+                os.environ.clear()
+                os.environ.update(old)
+
+
 if __name__ == "__main__":
     unittest.main()
