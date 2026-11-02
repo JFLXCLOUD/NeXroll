@@ -1300,54 +1300,107 @@ select.input {
   .nx-modal { max-height: 90vh; }
 }
 
-/* ---------- CategoryPicker (nx-catpicker) ---------- */
+/* ---------- CategoryPicker (nx-catpicker) ----------
+   One field: chips for the chosen categories, then a text box that searches
+   the list below. Buttons inside are small and reset min-height/padding, which
+   page-wide button rules (the Add Prerolls panel's, for one) used to inflate. */
 .nx-catpicker {
   position: relative;
 }
+.nx-catpicker > .nx-label { display: block; margin-bottom: 0.35rem; }
+.nx-catpicker-anchor { position: relative; }
 
 .nx-catpicker-input {
+  position: relative;
   min-height: 40px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 40px 6px 8px;
+  gap: 5px;
+  padding: 5px 82px 5px 7px;
   border: 1px solid var(--border-color);
-  background: var(--card-bg);
+  background: var(--input-bg, var(--card-bg));
   color: var(--text-color);
   border-radius: 8px;
   cursor: text;
-  box-shadow: inset 0 1px 2px var(--shadow);
 }
 
-.nx-catpicker-input.open {
-  border-color: var(--button-bg);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-sec-connect) 20%, transparent);
+.nx-catpicker-input.open,
+.nx-catpicker-input:focus-within {
+  border-color: var(--nx-section-accent, var(--button-bg));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-section-accent, var(--button-bg)) 18%, transparent);
 }
+.nx-catpicker.is-disabled .nx-catpicker-input { opacity: 0.6; cursor: not-allowed; }
 
-.nx-catpicker-hidden-input {
-  border: none;
-  outline: none;
-  background: transparent;
+/* The search box sits inside the field, so it gets none of the site-wide
+   input box styling (background, border, focus ring, minimum height). */
+body .nx-catpicker .nx-catpicker-input > input.nx-catpicker-search:not([type="checkbox"]),
+body .nx-catpicker .nx-catpicker-input > input.nx-catpicker-search:not([type="checkbox"]):focus,
+body .nx-catpicker .nx-catpicker-input > input.nx-catpicker-search:not([type="checkbox"]):focus-visible {
+  flex: 1 1 120px;
+  min-width: 110px;
+  width: auto;
+  height: 28px;
+  min-height: 0 !important;
+  margin: 0;
+  padding: 0 4px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  color: var(--text-color) !important;
+}
+body .nx-catpicker .nx-catpicker-input > input.nx-catpicker-search::placeholder { color: var(--text-muted) !important; opacity: 1; }
+
+.nx-catpicker .nx-chip {
+  max-width: 100%;
+  gap: 3px;
+  padding: 2px 3px 2px 9px;
+  border-color: color-mix(in srgb, var(--nx-section-accent, var(--button-bg)) 38%, var(--border-color));
+  background: color-mix(in srgb, var(--nx-section-accent, var(--button-bg)) 14%, transparent);
   color: var(--text-color);
-  padding: 4px;
-  min-width: 120px;
-  flex: 1;
+  font-size: 0.85rem;
+  line-height: 1.35;
 }
+.nx-catpicker .nx-chip-x {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border-radius: 999px;
+  color: var(--text-secondary);
+}
+.nx-catpicker .nx-chip-x:hover { background: color-mix(in srgb, var(--error-color) 18%, transparent); color: var(--text-color); }
 
-.nx-catpicker-clear {
+.nx-catpicker-tools {
   position: absolute;
-  right: 8px;
-  top: 8px;
-  height: 24px;
-  padding: 0 8px;
-  background: var(--button-bg);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.8rem;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
 }
+.nx-catpicker-clear,
+.nx-catpicker-toggle {
+  height: 26px;
+  min-height: 0 !important;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.nx-catpicker-clear { padding: 0 7px !important; font-size: 0.78rem !important; font-weight: 600; }
+.nx-catpicker-toggle { display: inline-grid; place-items: center; width: 26px; padding: 0 !important; color: var(--text-muted); }
+.nx-catpicker-toggle svg { transition: transform 0.15s ease; }
+.nx-catpicker-input.open .nx-catpicker-toggle svg { transform: rotate(180deg); }
+.nx-catpicker-clear:hover,
+.nx-catpicker-toggle:hover:not(:disabled) { background: var(--hover-bg); color: var(--text-color); }
+.nx-catpicker-toggle:disabled { cursor: not-allowed; }
 
 .nx-chip {
   display: inline-flex;
@@ -1396,77 +1449,135 @@ body.dark .nx-chip.primary {
   left: 0;
   right: 0;
   top: calc(100% + 4px);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--card-bg);
   color: var(--text-color);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-shadow: 0 8px 20px var(--shadow);
-  z-index: 100;
-  overflow: hidden;
+  border-radius: 9px;
+  box-shadow: 0 14px 34px var(--shadow);
 }
+.nx-catpicker-dropdown.is-up { top: auto; bottom: calc(100% + 4px); }
 
-.nx-catpicker-search {
-  padding: 0.5rem;
+.nx-catpicker-create {
+  padding: 6px;
   border-bottom: 1px solid var(--border-color);
 }
-
-.nx-catpicker-search input {
+.nx-catpicker-create-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
-  padding: 0.5rem;
-  border: 1px solid var(--border-color);
-  background: var(--card-bg);
-  color: var(--text-color);
-  border-radius: 6px;
+  min-height: 0 !important;
+  padding: 6px 8px !important;
+  border: 1px dashed var(--border-color);
+  border-radius: 7px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 0.85rem !important;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
 }
+.nx-catpicker-create-btn:hover,
+.nx-catpicker-create-btn.is-active {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--nx-section-accent, var(--button-bg)) 55%, var(--border-color));
+  background: color-mix(in srgb, var(--nx-section-accent, var(--button-bg)) 12%, transparent);
+  color: var(--text-color);
+}
+.nx-catpicker-create-btn:disabled { opacity: 0.6; cursor: wait; }
 
 .nx-catpicker-list {
-  max-height: 260px;
-  overflow: auto;
+  max-height: min(300px, 42vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+}
+
+.nx-catpicker-group {
+  margin: 6px 4px 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
 }
 
 .nx-catpicker-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.45rem 0.6rem;
-  border-bottom: 1px solid var(--border-color);
+  gap: 9px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--text-color);
+  font-size: 0.88rem;
+  cursor: pointer;
+  user-select: none;
 }
+.nx-catpicker-item.is-active { background: var(--hover-bg); }
+.nx-catpicker-item.selected { font-weight: 600; }
 
-.nx-catpicker-item:last-child {
-  border-bottom: none;
+.nx-catpicker-check {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid color-mix(in srgb, var(--text-muted) 70%, var(--border-color));
+  border-radius: 4px;
+  color: var(--button-text, #fff);
 }
-
-.nx-catpicker-item.selected {
-  background: color-mix(in srgb, var(--nx-sec-connect) 8%, transparent);
+.nx-catpicker-item.selected .nx-catpicker-check {
+  border-color: var(--button-bg);
+  background: var(--button-bg);
 }
 
 .nx-catpicker-name {
   flex: 1;
-}
-
-.nx-catpicker-star {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 1rem;
-  color: var(--text-color);
-  opacity: 0.6;
-}
-
-.nx-catpicker-star.active {
-  color: var(--warning-color);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nx-catpicker-empty {
   padding: 0.75rem;
-  font-size: 0.9rem;
-  color: var(--text-color);
-  opacity: 0.7;
+  font-size: 0.85rem;
+  color: var(--text-muted);
 }
 
+.nx-catpicker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+.nx-catpicker-done {
+  min-height: 0 !important;
+  padding: 5px 12px !important;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--nx-section-accent, var(--button-bg)) 16%, transparent);
+  color: var(--text-color);
+  font-size: 0.8rem !important;
+  font-weight: 700;
+  cursor: pointer;
+}
+.nx-catpicker-done:hover { background: color-mix(in srgb, var(--nx-section-accent, var(--button-bg)) 26%, transparent); }
+
 @media (max-width: 720px) {
-  .nx-catpicker-input { padding-right: 34px; }
-  .nx-catpicker-clear { top: 6px; }
+  .nx-catpicker-item { min-height: 40px; }
+  body .nx-catpicker .nx-catpicker-input > input.nx-catpicker-search:not([type="checkbox"]) { font-size: 16px !important; }
 }
 
 /* ---------- Plex page enhancements ---------- */
@@ -1612,18 +1723,6 @@ details.nx-plex-help[open] {
 
 /* Preroll list row title clamp */
 .preroll-row-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* Inline create button row for CategoryPicker dropdown */
-.nx-catpicker-create {
-  padding: 0.5rem;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--card-bg);
-}
-
-.nx-catpicker-create .button {
-  font-size: 0.85rem;
-  padding: 0.35rem 0.6rem;
-}
 
 /* CategorySelect's inline "+ New category" name field. Wraps under itself in
    narrow places (bulk bars, community rows) instead of overflowing. */
@@ -7009,14 +7108,16 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 .nx-library-scaling > .card,
 .nx-library-trash > .card { margin: 0 !important; border-radius: 11px !important; }
 .nx-library-add > .card:first-child { position: sticky; top: 69px; z-index: 6; overflow: hidden; padding: 0 !important; }
-.nx-library-add > .card:first-child button { min-height: 40px; padding: 9px 12px !important; font-size: .68rem !important; }
+/* Only the source tabs: this used to reach every button in the panel, which
+   inflated the category chips, file rows and the inline Settings link. */
+.nx-library-add > .card:first-child .nx-add-method-tabs button { min-height: 40px; padding: 9px 12px !important; font-size: .68rem !important; }
 .nx-library-scaling > .card:first-child,
 .nx-library-trash > .card:first-child { padding: 12px 14px !important; border-left: 3px solid var(--nx-section-accent) !important; }
 .nx-library-categories .nx-toolbar,
 .nx-library-scaling .nx-toolbar,
 .nx-library-trash .nx-toolbar { padding: 9px !important; border-radius: 10px !important; }
 .nx-library-categories input,
-.nx-library-add input,
+.nx-library-add input:where(:not([type="checkbox"], [type="radio"], [type="file"])),
 .nx-library-scaling select { min-height: 35px; background: var(--input-bg) !important; color: var(--text-color) !important; }
 
 /* Schedule subpages share the approved Command Center shell. */
@@ -8584,39 +8685,90 @@ body.light .nx-library-results-main .preroll-item { background: var(--card-bg); 
 .nx-library-add .nx-add-dropzone {
   grid-column: 1;
   grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   min-height: 230px;
   margin: 57px 13px 0;
-  padding: 45px 25px 20px !important;
-  border-width: 1px !important;
-  border-color: color-mix(in srgb, var(--border-color) 70%, var(--text-muted)) !important;
-  border-radius: 11px !important;
-  background: color-mix(in srgb, var(--card-bg) 88%, var(--bg-color)) !important;
+  padding: 32px 25px 24px;
+  border: 1px dashed color-mix(in srgb, var(--border-color) 70%, var(--text-muted));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--card-bg) 88%, var(--bg-color));
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
-.nx-library-add .nx-add-dropzone > svg { width: 48px; height: 48px; margin: 0 auto 12px; padding: 12px; border: 1px solid color-mix(in srgb, var(--nx-sec-library) 35%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--nx-sec-library) 14%, transparent); color: color-mix(in srgb, var(--nx-sec-library) 44%, var(--text-color)) !important; }
-.nx-library-add .nx-add-dropzone > div:nth-of-type(1) { font-size: 1.1rem; font-weight: 700 !important; }
-.nx-library-add .nx-add-dropzone > div:nth-of-type(2) { margin-top: 6px; font-size: 0.8rem !important; }
+.nx-library-add .nx-add-dropzone.has-files { min-height: 0; padding: 20px 25px 18px; }
+.nx-library-add .nx-add-dropzone:hover,
+.nx-library-add .nx-add-dropzone:focus-visible { border-color: var(--nx-section-accent); outline: none; }
+.nx-library-add .nx-add-dropzone.is-dragging {
+  border-style: solid;
+  border-color: var(--nx-section-accent);
+  background: color-mix(in srgb, var(--nx-section-accent) 10%, var(--card-bg));
+}
+.nx-library-add .nx-add-dropzone.is-disabled { cursor: default; opacity: 0.6; border-color: color-mix(in srgb, var(--border-color) 70%, var(--text-muted)); }
+.nx-library-add .nx-add-dropzone > svg { flex: 0 0 auto; width: 48px; height: 48px; margin: 0 auto 12px; padding: 12px; border: 1px solid color-mix(in srgb, var(--nx-sec-library) 35%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--nx-sec-library) 14%, transparent); color: color-mix(in srgb, var(--nx-sec-library) 44%, var(--text-color)); }
+.nx-library-add .nx-add-dropzone.has-files > svg { width: 38px; height: 38px; margin-bottom: 8px; padding: 9px; }
+.nx-library-add .nx-add-dropzone-title { color: var(--text-color); font-size: 1.1rem; font-weight: 700; }
+.nx-library-add .nx-add-dropzone.has-files .nx-add-dropzone-title { font-size: 1rem; }
+.nx-library-add .nx-add-dropzone-hint { margin-top: 6px; color: var(--text-secondary); font-size: 0.8rem; }
 .nx-library-add .nx-add-browse-files { min-height: 34px !important; margin-top: 11px; padding: 0 12px !important; font-size: 0.9rem !important; }
-.nx-library-add .nx-add-files { grid-column: 1; grid-row: 2; margin: 10px 13px 13px; padding: 0 !important; overflow: hidden; border-radius: 9px !important; background: transparent !important; }
-.nx-library-add .nx-add-files > div:first-child { min-height: 34px; margin: 0 !important; padding: 0 9px; border-bottom: 1px solid var(--border-color); }
-.nx-library-add .nx-add-files > div:last-child { max-height: 150px !important; padding: 0 9px; }
-.nx-library-add .nx-add-files > div:last-child > div { min-height: 39px; padding: 7px 0 !important; font-size: 0.8rem !important; }
-.nx-library-add .nx-add-detail,
-.nx-library-add .nx-add-submit { grid-column: 2; margin: 0 13px; }
-.nx-library-add .nx-add-category { grid-row: 1; margin-top: 66px; }
-.nx-library-add .nx-add-tags { grid-row: 2; margin-top: -112px; }
-.nx-library-add .nx-add-description { grid-row: 3; margin-top: -72px; }
-.nx-library-add .nx-add-submit { grid-row: 4; min-height: 34px !important; margin-top: -3px; padding: 0 12px !important; font-size: 1rem !important; }
-.nx-library-add .nx-add-detail > label { margin-bottom: 5px !important; color: var(--text-secondary) !important; font-size: 0.8rem !important; font-weight: 700 !important; }
+
+/* The upload list: one row per file with its size, state and a remove
+   button; a progress bar or the server's error goes on a second line. */
+.nx-library-add .nx-add-files { grid-column: 1; grid-row: 2; margin: 10px 13px 13px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 9px; }
+.nx-library-add .nx-add-files-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; padding: 0 5px 0 11px; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); font-size: 0.85rem; }
+.nx-library-add .nx-add-files-head strong { color: var(--text-color); }
+.nx-library-add .nx-add-files-head > span > span { margin-left: 6px; color: var(--text-muted); }
+.nx-library-add .nx-add-files-clear { padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 0.8rem; cursor: pointer; }
+.nx-library-add .nx-add-files-clear:hover:not(:disabled) { background: var(--hover-bg); color: var(--text-color); }
+.nx-library-add .nx-add-files-clear:disabled { opacity: 0.45; cursor: not-allowed; }
+.nx-library-add .nx-add-file-list { max-height: 330px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.nx-library-add .nx-add-file {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto 26px;
+  align-items: center;
+  column-gap: 9px;
+  row-gap: 5px;
+  padding: 6px 5px 6px 11px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.82rem;
+}
+.nx-library-add .nx-add-file:last-child { border-bottom: 0; }
+.nx-library-add .nx-add-file-icon { color: var(--nx-section-accent); }
+.nx-library-add .nx-add-file-name { overflow: hidden; color: var(--text-color); text-overflow: ellipsis; white-space: nowrap; }
+.nx-library-add .nx-add-file-size { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nx-library-add .nx-add-file-status { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; color: var(--text-secondary); font-size: 0.78rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nx-library-add .nx-add-file:is(.is-uploading, .is-processing) .nx-add-file-status { color: var(--nx-section-accent); font-weight: 700; }
+.nx-library-add .nx-add-file.is-completed .nx-add-file-status { color: color-mix(in srgb, var(--success-color) 80%, var(--text-color)); font-weight: 600; }
+.nx-library-add .nx-add-file:is(.is-error, .is-too-large) .nx-add-file-status { color: color-mix(in srgb, var(--error-color) 85%, var(--text-color)); font-weight: 600; }
+.nx-library-add .nx-add-file:is(.is-too-large, .is-skipped) :is(.nx-add-file-name, .nx-add-file-size) { opacity: 0.65; }
+.nx-library-add .nx-add-file-remove { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--text-muted); cursor: pointer; }
+.nx-library-add .nx-add-file-remove:hover { background: var(--hover-bg); color: var(--text-color); }
+.nx-library-add .nx-add-file-bar { grid-column: 2 / -1; height: 4px; overflow: hidden; border-radius: 999px; background: var(--border-color); }
+.nx-library-add .nx-add-file-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--nx-section-accent); transition: width 0.2s ease; }
+.nx-library-add .nx-add-file-error { grid-column: 2 / -1; color: color-mix(in srgb, var(--error-color) 85%, var(--text-color)); font-size: 0.76rem; line-height: 1.35; overflow-wrap: anywhere; }
+
+/* Details panel. Its overflow stays visible so the category list can open
+   over the fields below (it was clipped after two rows). */
+.nx-library-add .nx-add-detail > label,
+.nx-library-add .nx-add-category .nx-catpicker > .nx-label { display: block; margin-bottom: 5px !important; color: var(--text-secondary) !important; font-size: 0.8rem !important; font-weight: 700 !important; opacity: 1; }
+.nx-library-add .nx-add-optional { margin-left: 4px; color: var(--text-muted); font-size: 0.72rem; font-weight: 500; }
+.nx-library-add .nx-add-hint { display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.72rem; }
+.nx-library-add .nx-add-detail > :is(input, textarea) { width: 100%; }
+/* The phone rule for badges ([class*="tag"]) would pad and shrink the Tags field. */
+.nx-library-add .nx-add-detail.nx-add-tags { padding: 0 !important; font-size: inherit !important; }
 .nx-library-add .nx-add-detail :is(input, textarea) { font-size: 1rem !important; }
-.nx-library-add .nx-add-description textarea { min-height: 70px; }
+.nx-library-add .nx-add-description textarea { min-height: 64px; resize: vertical; }
 .nx-library-add .nx-add-details-panel {
   grid-column: 2;
   grid-row: 1 / span 3;
   min-height: 390px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  overflow: hidden;
+  gap: 12px;
+  overflow: visible;
   padding: 0 13px 13px;
   border: 1px solid var(--border-color);
   border-radius: 13px;
@@ -8630,17 +8782,48 @@ body.light .nx-library-results-main .preroll-item { background: var(--card-bg); 
   justify-content: space-between;
   gap: 8px;
   min-height: 56px;
-  margin: 0 -13px 3px;
+  margin: 0 -13px 1px;
   padding: 10px 13px;
   border-bottom: 1px solid var(--border-color);
 }
 .nx-library-add .nx-add-details-head > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .nx-library-add .nx-add-details-head strong { color: var(--text-color); font-size: 1rem; }
 .nx-library-add .nx-add-details-head span { color: var(--text-muted); font-size: 0.7rem; }
-.nx-library-add .nx-add-size-badge { flex: 0 0 auto; padding: 3px 6px; border-radius: 999px; background: color-mix(in srgb, var(--nx-sec-library) 16%, transparent); color: color-mix(in srgb, var(--nx-sec-library) 41%, var(--text-color)) !important; font-size: 0.7rem !important; font-weight: 800; }
-.nx-library-add .nx-add-details-panel .nx-add-detail,
-.nx-library-add .nx-add-details-panel .nx-add-submit { width: 100%; margin: 0 !important; }
-.nx-library-add .nx-add-details-panel .nx-add-submit { margin-top: auto !important; }
+.nx-library-add .nx-add-size-badge { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: color-mix(in srgb, var(--nx-sec-library) 16%, transparent); color: color-mix(in srgb, var(--nx-sec-library) 41%, var(--text-color)) !important; font-size: 0.7rem !important; font-weight: 800; }
+.nx-library-add .nx-add-category { position: relative; z-index: 2; }
+.nx-library-add .nx-add-skip-dupes { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--input-bg); cursor: pointer; }
+.nx-library-add .nx-add-skip-dupes input { flex: 0 0 auto; width: 15px; height: 15px; margin: 2px 0 0; accent-color: var(--button-bg); }
+.nx-library-add .nx-add-skip-dupes > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nx-library-add .nx-add-skip-dupes strong { color: var(--text-color); font-size: 0.85rem; font-weight: 600; }
+.nx-library-add .nx-add-skip-dupes small { color: var(--text-muted); font-size: 0.74rem; line-height: 1.35; }
+.nx-library-add .nx-add-skip-dupes:has(input:disabled) { opacity: 0.6; cursor: not-allowed; }
+
+.nx-library-add .nx-add-actions { display: flex; flex-direction: column; gap: 9px; margin-top: auto; }
+.nx-library-add .nx-add-submit { width: 100%; min-height: 38px !important; padding: 0 12px !important; font-size: 1rem !important; }
+.nx-library-add .nx-add-note { margin: 0; color: var(--text-secondary); font-size: 0.76rem; line-height: 1.4; }
+
+/* While uploading: overall progress across the batch, by bytes sent. */
+.nx-library-add .nx-add-progress { display: flex; flex-direction: column; gap: 7px; padding: 11px; border: 1px solid color-mix(in srgb, var(--nx-section-accent) 40%, var(--border-color)); border-radius: 10px; background: color-mix(in srgb, var(--nx-section-accent) 8%, var(--card-bg)); }
+.nx-library-add .nx-add-progress-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.nx-library-add .nx-add-progress-top strong { color: var(--text-color); font-size: 0.9rem; }
+.nx-library-add .nx-add-progress-top span { color: var(--nx-section-accent); font-weight: 800; font-variant-numeric: tabular-nums; }
+.nx-library-add .nx-add-progress-bar { height: 8px; overflow: hidden; border-radius: 999px; background: var(--border-color); }
+.nx-library-add .nx-add-progress-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--nx-section-accent); transition: width 0.25s ease; }
+.nx-library-add .nx-add-progress-meta { display: flex; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 0.74rem; }
+.nx-library-add .nx-add-progress-meta span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-library-add .nx-add-progress-meta span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.nx-library-add .nx-add-cancel { align-self: flex-end; min-height: 32px; }
+
+/* After an upload: what happened, with a way to the Library. */
+.nx-library-add .nx-add-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 11px; border: 1px solid color-mix(in srgb, var(--success-color) 40%, var(--border-color)); border-radius: 10px; background: color-mix(in srgb, var(--success-color) 8%, var(--card-bg)); font-size: 0.8rem; }
+.nx-library-add .nx-add-summary.has-errors { border-color: color-mix(in srgb, var(--error-color) 45%, var(--border-color)); background: color-mix(in srgb, var(--error-color) 7%, var(--card-bg)); }
+.nx-library-add .nx-add-summary.is-neutral { border-color: var(--border-color); background: var(--input-bg); }
+.nx-library-add .nx-add-summary-counts { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--text-secondary); }
+.nx-library-add .nx-add-summary-counts span { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.nx-library-add .nx-add-summary-counts .is-ok { color: color-mix(in srgb, var(--success-color) 80%, var(--text-color)); }
+.nx-library-add .nx-add-summary-counts .is-bad { color: color-mix(in srgb, var(--error-color) 85%, var(--text-color)); }
+.nx-library-add .nx-add-summary p { margin: 0; color: var(--text-secondary); line-height: 1.4; }
+.nx-library-add .nx-add-summary-link { padding: 0; border: 0; background: none; color: var(--nx-section-accent); font-size: 0.8rem; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .nx-library-add .nx-add-import {
   position: relative;
   display: grid;
@@ -8822,9 +9005,8 @@ body.light .nx-library-categories .nx-category-card { background: var(--card-bg)
   .nx-library-add .nx-add-detail,
   .nx-library-add .nx-add-submit,
   .nx-library-add .nx-add-details-panel { width: 100%; margin: 0 !important; }
-  .nx-library-add .nx-add-details-panel { min-height: 0; padding: 0; }
-  .nx-library-add .nx-add-dropzone,
-  .nx-library-add .nx-add-files { padding-left: 13px !important; padding-right: 13px !important; }
+  .nx-library-add .nx-add-details-panel { min-height: 0; padding: 0 13px 13px; box-shadow: none; }
+  .nx-library-add .nx-add-dropzone { padding-left: 13px; padding-right: 13px; }
   .nx-library-add .nx-add-upload { padding: 13px !important; border: 1px solid var(--border-color); border-radius: 13px; background: var(--card-bg); }
   .nx-library-add .nx-add-import { display: flex; flex-direction: column; gap: 10px; }
   .nx-library-add .nx-add-import::before { display: none; }

@@ -23,6 +23,7 @@ import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
 import SequenceConditionPanel from './components/SequenceConditionPanel';
 import CategorySelect from './components/CategorySelect';
+import CategoryPicker from './components/CategoryPicker';
 import GenrePicker from './components/GenrePicker';
 import { blocksHaveConditions, chainInfo, chainLabel, hasCondition, insertBlockAt, moveBlockTo, needsPlaybackInfo, otherwiseForChoice, removeBlockAt, useBuilderMode, useBuilderView } from './utils/sequenceConditions';
 import Sidebar from './components/Sidebar';
@@ -35,6 +36,7 @@ import PluginPlayback from './components/PluginPlayback';
 import { captureDynamicPrerollFrame, drawThemeBackdropFrame, fontStackFor, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
 import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount, sequenceHasUnsavedChanges } from './utils/sequenceValidator';
 import { isUncategorized, prerollCategoryLabels, prerollInCategory } from './utils/prerollCategories';
+import { MAX_UPLOAD_BYTES, VIDEO_EXTENSIONS, fileKey, isFinished, isTooLarge, mergeFiles, pendingFiles, sendUpload } from './utils/uploadQueue';
 import {
   buildBlendBothChanges,
   buildRecurrencePattern,
@@ -953,247 +955,6 @@ const Modal = ({ title, subtitle, className = '', bodyClassName = '', onClose, c
   );
 };
 
-const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreateCategory, label = 'Categories', placeholder = 'Search categories…' }) => {
-  const [open, setOpen] = React.useState(false);
-  const [query, setQuery] = React.useState('');
-  const containerRef = React.useRef(null);
-  const inputRef = React.useRef(null);
-  const searchRef = React.useRef(null);
-  // "+ New category" was only reachable by typing a name that matched nothing,
-  // so people closed the dialog to create one elsewhere. Naming mode makes it
-  // visible: the search box asks for the new name and Enter creates it.
-  const [naming, setNaming] = React.useState(false);
-  const listboxId = React.useMemo(() => 'nx-catpicker-list-' + Math.random().toString(36).slice(2), []);
-
-  React.useEffect(() => {
-    const onDocClick = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, []);
-
-  React.useEffect(() => {
-    if (open && inputRef.current) {
-      inputRef.current.focus();
-    }
-    if (!open) setNaming(false);
-  }, [open]);
-
-  const [creating, setCreating] = React.useState(false);
-
-  const items = Array.isArray(categories) ? categories.map(c => ({ id: String(c.id), name: c.name })) : [];
-  const normalizedPrimary = primaryId ? String(primaryId) : '';
-  const normalizedSecondary = Array.isArray(secondaryIds) ? secondaryIds.map(String) : [];
-
-  const selectedSet = new Set([normalizedPrimary, ...normalizedSecondary].filter(Boolean));
-
-  const filtered = items.filter(i => i.name.toLowerCase().includes(query.toLowerCase()));
-
-  const normalizedQuery = (query || '').trim();
-  const existsByName = items.some(i => i.name.toLowerCase() === normalizedQuery.toLowerCase());
-  const showCreate = !!onCreateCategory && normalizedQuery.length > 0 && !existsByName;
-
-  const handleCreateCategory = async () => {
-    if (!showCreate || !onCreateCategory) return;
-    try {
-      setCreating(true);
-      const created = await onCreateCategory(normalizedQuery);
-      if (created && created.id) {
-        const newId = String(created.id);
-        if (!normalizedPrimary) {
-          onChange(newId, normalizedSecondary);
-        } else {
-          const nextSecondary = [...normalizedSecondary, newId].filter((v, i, a) => v && a.indexOf(v) === i);
-          onChange(normalizedPrimary, nextSecondary);
-        }
-        setQuery('');
-        setNaming(false);
-        setOpen(false);
-      }
-    } catch (err) {
-      alert('Failed to create category: ' + (err && err.message ? err.message : err));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const toggle = (id) => {
-    id = String(id);
-    const isSelected = selectedSet.has(id);
-
-    if (isSelected) {
-      // Removing
-      if (id === normalizedPrimary) {
-        // Remove primary; promote first secondary (if any) to primary
-        const remaining = normalizedSecondary.filter(x => x !== id);
-        if (remaining.length > 0) {
-          const newPrimary = remaining[0];
-          const newSecondary = remaining.slice(1);
-          onChange(newPrimary, newSecondary);
-        } else {
-          onChange('', []);
-        }
-      } else {
-        const newSecondary = normalizedSecondary.filter(x => x !== id);
-        onChange(normalizedPrimary, newSecondary);
-      }
-    } else {
-      // Adding
-      if (!normalizedPrimary) {
-        onChange(id, normalizedSecondary);
-      } else {
-        const nextSecondary = [...normalizedSecondary, id].filter((v, i, a) => v && a.indexOf(v) === i);
-        onChange(normalizedPrimary, nextSecondary);
-      }
-    }
-  };
-
-  const makePrimary = (id) => {
-    id = String(id);
-    if (id === normalizedPrimary) return;
-    let nextSecondary = normalizedSecondary.filter(x => x !== id);
-    if (normalizedPrimary) {
-      nextSecondary = [normalizedPrimary, ...nextSecondary.filter(x => x !== normalizedPrimary)];
-    }
-    // Dedupe + remove blanks
-    nextSecondary = nextSecondary.filter((v, i, a) => v && a.indexOf(v) === i);
-    onChange(id, nextSecondary);
-    setOpen(false);
-  };
-
-  const clearAll = () => {
-    onChange('', []);
-    setQuery('');
-    setOpen(false);
-  };
-
-  // v1.13.13: categories are flat tags — no primary/secondary distinction in the UI.
-  // The component still accepts primaryId + secondaryIds and emits (primary, secondary)
-  // via onChange for backend storage compatibility (the first selected becomes the
-  // legacy primary). User-facing, all chips look identical.
-  const selectedItems = items.filter(i => selectedSet.has(i.id));
-
-  return (
-    <div ref={containerRef} className="nx-catpicker">
-      <label className="nx-label" style={{ marginBottom: '0.35rem' }}>{label}</label>
-
-      <div
-        className={`nx-catpicker-input ${open ? 'open' : ''}`}
-        onClick={() => setOpen(true)}
-        role="combobox"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-controls={listboxId}
-      >
-        {selectedItems.length === 0 && (
-          <span className="nx-chip ghost">No categories selected</span>
-        )}
-
-        {selectedItems.map(i => (
-          <span key={i.id} className="nx-chip" title="Category tag">
-            {i.name}
-            <button
-              type="button"
-              className="nx-chip-x"
-              onClick={(e) => { e.stopPropagation(); toggle(i.id); }}
-              aria-label={`Remove ${i.name}`}
-              title="Remove"
-            >
-              <X size={12} />
-            </button>
-          </span>
-        ))}
-
-        <input
-          ref={inputRef}
-          className="nx-catpicker-hidden-input"
-          placeholder={placeholder}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => setOpen(true)}
-        />
-
-        {(normalizedPrimary || normalizedSecondary.length > 0) && (
-          <button
-            type="button"
-            className="nx-catpicker-clear"
-            onClick={(e) => { e.stopPropagation(); clearAll(); }}
-            title="Clear all"
-          >
-            Clear
-          </button>
-        )}
-      </div>
-
-      {open && (
-        <div className="nx-catpicker-dropdown">
-          <div className="nx-catpicker-search">
-            <input
-              ref={searchRef}
-              type="text"
-              aria-label={onCreateCategory ? 'Search or create a category' : 'Search categories'}
-              placeholder={naming ? 'Name the new category, then press Enter' : (onCreateCategory ? 'Search or create a category…' : placeholder)}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter') return;
-                e.preventDefault();
-                if (showCreate) handleCreateCategory();
-                else if (filtered.length === 1) toggle(filtered[0].id);
-              }}
-            />
-          </div>
-          {onCreateCategory && !normalizedQuery && (
-            <div className="nx-catpicker-create">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={(e) => { e.stopPropagation(); setNaming(true); if (searchRef.current) searchRef.current.focus(); }}
-              >
-                <Plus size={14} style={{ marginRight: '6px' }} /> New category
-              </button>
-            </div>
-          )}
-          {showCreate && (
-            <div className="nx-catpicker-create">
-              <button
-                type="button"
-                className="button"
-                onClick={(e) => { e.stopPropagation(); handleCreateCategory(); }}
-                disabled={creating}
-                title={creating ? 'Creating…' : `Create category "${normalizedQuery}"`}
-              >
-                <Plus size={14} style={{ marginRight: '6px' }} /> Create "{normalizedQuery}"{creating ? '…' : ''}
-              </button>
-            </div>
-          )}
-          <div id={listboxId} className="nx-catpicker-list" role="listbox">
-            {filtered.length === 0 ? (
-              <div className="nx-catpicker-empty">No categories found</div>
-            ) : filtered.map(i => {
-              const selected = selectedSet.has(i.id);
-              return (
-                <div
-                  key={i.id}
-                  className={`nx-catpicker-item ${selected ? 'selected' : ''}`}
-                  onClick={() => toggle(i.id)}
-                  role="option"
-                  aria-selected={selected}
-                >
-                  <input type="checkbox" checked={selected} readOnly />
-                  <span className="nx-catpicker-name">{i.name}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 function App() {
   const [plexStatus, setPlexStatus] = useState('Disconnected');
   const [plexServerInfo, setPlexServerInfo] = useState(null);
@@ -1220,7 +981,16 @@ function App() {
   const [formHolidays, setFormHolidays] = useState([]);
   const [formHolidaysLoading, setFormHolidaysLoading] = useState(false);
   const [files, setFiles] = useState([]);
-  const [uploadProgress, setUploadProgress] = useState({});
+  const [uploadProgress, setUploadProgress] = useState({}); // fileKey -> { status, loaded, error, existingName }
+  const [uploadRunning, setUploadRunning] = useState(false);
+  const [uploadRun, setUploadRun] = useState(null); // { keys, totalBytes, index, cancelling } while running
+  const [uploadSummary, setUploadSummary] = useState(null); // counts from the last finished run
+  const [uploadSkipDuplicates, setUploadSkipDuplicates] = useState(true);
+  const [uploadDropActive, setUploadDropActive] = useState(false);
+  const uploadAbortRef = useRef(null);
+  const uploadCancelRef = useRef(false);
+  const uploadSentRef = useRef(false);
+  const addUploadFilesRef = useRef(null);
   // Hash-based routing: the current page lives in the URL hash (#/settings/storage)
   // so pages are deep-linkable, refresh-safe, and Back/Forward works. Tab IDs
   // already mirror paths (e.g. 'settings/storage'), so the mapping is 1:1.
@@ -3899,189 +3669,207 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
  
   // fetchData moved above initial effect
 
+  // Upload list: picked or dropped files are added (never replaced), so files
+  // can be gathered from several folders. A finished upload's rows stay with
+  // their result until new files are added or the list is cleared.
+  const addUploadFiles = (incoming) => {
+    if (uploadRunning) return;
+    const finishedKeys = uploadSummary
+      ? files.filter(file => isFinished(uploadProgress[fileKey(file)])).map(fileKey)
+      : [];
+    const kept = files.filter(file => !finishedKeys.includes(fileKey(file)));
+    const { files: next, notVideo, repeated } = mergeFiles(kept, incoming);
+    setFiles(next);
+    if (finishedKeys.length) {
+      setUploadProgress(prev => {
+        const copy = { ...prev };
+        finishedKeys.forEach(key => { delete copy[key]; });
+        return copy;
+      });
+    }
+    setUploadSummary(null);
+    if (notVideo.length) {
+      const names = notVideo.slice(0, 3).join(', ') + (notVideo.length > 3 ? ` and ${notVideo.length - 3} more` : '');
+      pushToast(`Left out ${notVideo.length} file${notVideo.length === 1 ? ' that is not a video' : 's that are not videos'}: ${names}`, 'info');
+    }
+    if (repeated) pushToast(`${repeated} file${repeated === 1 ? ' was' : 's were'} already in the list`, 'info');
+  };
+  addUploadFilesRef.current = addUploadFiles;
+
+  const removeUploadFile = (file) => {
+    if (uploadRunning) return;
+    const key = fileKey(file);
+    setFiles(prev => prev.filter(item => fileKey(item) !== key));
+    setUploadProgress(prev => {
+      const copy = { ...prev };
+      delete copy[key];
+      return copy;
+    });
+  };
+
+  const clearUploadFiles = () => {
+    if (uploadRunning) return;
+    setFiles([]);
+    setUploadProgress({});
+    setUploadSummary(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const cancelUpload = () => {
+    uploadCancelRef.current = true;
+    setUploadRun(prev => (prev ? { ...prev, cancelling: true } : prev));
+    // Once the server has the whole file it is already saving it, so only a
+    // file still being sent is stopped; otherwise the run ends after it.
+    if (!uploadSentRef.current && uploadAbortRef.current) uploadAbortRef.current();
+  };
+
+  // One request per file. The server hashes each file and, when asked, skips
+  // one already in the library, so files are no longer sent twice (a separate
+  // duplicate check used to read every file before uploading any).
   const handleUpload = async (e) => {
     e.preventDefault();
-    if (files.length === 0) {
-      alert('Please select files to upload');
-      return;
-    }
+    if (uploadRunning) return;
+    const queue = pendingFiles(files, uploadProgress);
+    if (queue.length === 0) return;
 
-    const totalFiles = files.length;
-    const results = [];
+    const keys = queue.map(fileKey);
+    const totalBytes = queue.reduce((total, file) => total + (Number(file.size) || 0), 0);
+    const form = uploadForm;
+    const categoryIds = (form.category_ids || []).map(id => parseInt(id, 10)).filter(n => !isNaN(n));
+    const counts = { completed: 0, skipped: 0, error: 0 };
+    let cancelled = false;
 
-    // Reset progress
-    setUploadProgress({});
+    uploadCancelRef.current = false;
+    setUploadSummary(null);
+    setUploadRun({ keys, totalBytes, index: 0, cancelling: false });
+    setUploadRunning(true);
+    setUploadProgress(prev => {
+      const copy = { ...prev };
+      keys.forEach(key => { copy[key] = { status: 'queued', loaded: 0 }; });
+      return copy;
+    });
 
-    // Check for duplicates first
-    const duplicateChecks = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const checkFormData = new FormData();
-      checkFormData.append('file', file);
-      
+    for (let i = 0; i < queue.length; i++) {
+      if (uploadCancelRef.current) { cancelled = true; break; }
+      const file = queue[i];
+      const key = keys[i];
+      setUploadRun(prev => (prev ? { ...prev, index: i } : prev));
+      setUploadProgress(prev => ({ ...prev, [key]: { status: 'uploading', loaded: 0 } }));
+
+      const formData = new FormData();
+      formData.append('file', file);
+      if (form.tags.trim()) formData.append('tags', form.tags.trim());
+      if (form.category_id) formData.append('category_id', form.category_id);
+      if (categoryIds.length > 0) formData.append('category_ids', JSON.stringify(categoryIds));
+      if (form.description.trim()) formData.append('description', form.description.trim());
+      if (uploadSkipDuplicates) formData.append('duplicate_action', 'skip');
+
+      uploadSentRef.current = false;
+      const request = sendUpload(apiUrl('prerolls/upload'), formData, {
+        onProgress: (loaded) => setUploadProgress(prev => ({ ...prev, [key]: { status: 'uploading', loaded } })),
+        onSent: () => {
+          uploadSentRef.current = true;
+          setUploadProgress(prev => ({ ...prev, [key]: { status: 'processing', loaded: file.size } }));
+        },
+      });
+      uploadAbortRef.current = request.abort;
       try {
-        const checkResponse = await fetch(apiUrl('prerolls/check-duplicate'), {
-          method: 'POST',
-          body: checkFormData
-        });
-        const checkData = await checkResponse.json();
-        if (!checkResponse.ok) {
-          throw new Error(checkData?.detail || `Duplicate check failed (HTTP ${checkResponse.status})`);
-        }
-        duplicateChecks.push({
-          file,
-          isDuplicate: checkData.is_duplicate,
-          existingPreroll: checkData.existing_preroll,
-          fileHash: checkData.file_hash
-        });
-      } catch (error) {
-        console.error(`Duplicate check error for ${file.name}:`, error);
-        // If check fails, assume not duplicate and continue
-        duplicateChecks.push({
-          file,
-          isDuplicate: false,
-          fileHash: null
-        });
-      }
-    }
-
-    // Find duplicates
-    const duplicates = duplicateChecks.filter(check => check.isDuplicate);
-    
-    // If there are duplicates, ask user what to do
-    let duplicateAction = 'allow'; // Default: allow duplicates
-    if (duplicates.length > 0) {
-      const duplicateNames = duplicates.map(d => ` • ${d.file.name}`).join('\n');
-      const message = `The following ${duplicates.length} file(s) already exist in your library:\n\n${duplicateNames}\n\nClick OK to SKIP these duplicates\nClick Cancel to UPLOAD them anyway`;
-      
-      const userChoice = await showConfirm(message, { title: 'Duplicate Files Detected', type: 'warning', confirmText: 'Skip Duplicates', cancelText: 'Upload Anyway' });
-      
-      if (userChoice) {
-        duplicateAction = 'skip';
-        alert(`Skipping ${duplicates.length} duplicate file(s). Only new files will be uploaded.`);
-      } else {
-        alert(`Allowing duplicates. All ${files.length} file(s) will be uploaded.`);
-      }
-    }
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const checkInfo = duplicateChecks[i];
-      
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        if (uploadForm.tags.trim()) formData.append('tags', uploadForm.tags.trim());
-        if (uploadForm.category_id) formData.append('category_id', uploadForm.category_id);
-        if (uploadForm.category_ids && uploadForm.category_ids.length > 0) {
-          const ids = uploadForm.category_ids.map(id => parseInt(id)).filter(n => !isNaN(n));
-          if (ids.length > 0) formData.append('category_ids', JSON.stringify(ids));
-        }
-        if (uploadForm.description.trim()) formData.append('description', uploadForm.description.trim());
-        
-        // Add duplicate action and hash
-        if (checkInfo.isDuplicate && duplicateAction === 'skip') {
-          formData.append('duplicate_action', 'skip');
-        }
-        if (checkInfo.fileHash) {
-          formData.append('file_hash', checkInfo.fileHash);
-        }
-
-        const response = await fetch(apiUrl('prerolls/upload'), {
-          method: 'POST',
-          body: formData
-        });
-
-        if (!response.ok) {
-          let detail = `Upload failed (HTTP ${response.status})`;
-          try {
-            const errorData = await response.json();
-            detail = errorData?.detail || errorData?.message || detail;
-          } catch (_) {
-            // Keep the HTTP status when the server did not return JSON.
-          }
-          throw new Error(detail);
-        }
-
-        const data = await response.json();
-        
+        const data = await request.promise;
         if (data.skipped) {
-          results.push({ file: file.name, success: true, skipped: true, data });
-          setUploadProgress(prev => ({
-            ...prev,
-            [file.name]: { status: 'skipped', progress: 100 }
-          }));
+          counts.skipped += 1;
+          const existing = data.existing_preroll || {};
+          setUploadProgress(prev => ({ ...prev, [key]: { status: 'skipped', loaded: file.size, existingName: existing.display_name || existing.filename || '' } }));
         } else {
-          results.push({ file: file.name, success: true, data });
-          setUploadProgress(prev => ({
-            ...prev,
-            [file.name]: { status: 'completed', progress: 100 }
-          }));
+          counts.completed += 1;
+          setUploadProgress(prev => ({ ...prev, [key]: { status: 'completed', loaded: file.size } }));
         }
-
       } catch (error) {
+        if (error.cancelled) {
+          cancelled = true;
+          break;
+        }
         console.error(`Upload error for ${file.name}:`, error);
-        results.push({ file: file.name, success: false, error: error.message });
-
-        // Update progress with error
-        setUploadProgress(prev => ({
-          ...prev,
-          [file.name]: { status: 'error', progress: 0, error: error.message }
-        }));
+        counts.error += 1;
+        setUploadProgress(prev => ({ ...prev, [key]: { status: 'error', loaded: 0, error: error.message } }));
+      } finally {
+        uploadAbortRef.current = null;
       }
     }
 
-    // Show summary
-    const successful = results.filter(r => r.success && !r.skipped).length;
-    const skippedResults = results.filter(r => r.success && r.skipped);
-    const skipped = skippedResults.length;
-    const failed = results.filter(r => !r.success).length;
-
-    let message = '';
-    if (failed === 0 && skipped === 0) {
-      message = `All ${totalFiles} files uploaded successfully!`;
-    } else if (successful === 0 && skipped > 0 && failed === 0) {
-      const skippedNames = skippedResults.map(r => ` • ${r.file}`).join('\n');
-      message = `ℹ️ All ${totalFiles} file(s) were skipped (duplicates):\n\n${skippedNames}`;
-    } else if (successful === 0 && failed > 0) {
-      message = 'Failed to upload any files.';
-    } else {
-      const parts = [];
-      if (successful > 0) parts.push(`${successful} uploaded`);
-      if (skipped > 0) parts.push(`${skipped} skipped (duplicates)`);
-      if (failed > 0) parts.push(`${failed} failed`);
-      message = `Upload complete: ${parts.join(', ')}.`;
-      
-      if (skipped > 0) {
-        const skippedNames = skippedResults.map(r => r.file).join(', ');
-        message += `\n\nSkipped: ${skippedNames}`;
-      }
-    }
-    if (failed > 0) {
-      const failureDetails = results
-        .filter(r => !r.success)
-        .map(r => `${r.file}: ${r.error || 'Upload failed'}`)
-        .join('\n');
-      message += `\n\nFailed:\n${failureDetails}`;
-    }
-    alert(message);
-
-    // Keep failed files and their form values available for a retry. Successful
-    // and skipped files are removed so retrying cannot upload them twice.
-    const failedFiles = results.reduce((pending, result, index) => {
-      if (!result.success && files[index]) pending.push(files[index]);
-      return pending;
-    }, []);
-    setFiles(failedFiles);
-    if (failed === 0) {
+    // Files a cancelled run never finished go back to ready.
+    setUploadProgress(prev => {
+      const copy = { ...prev };
+      keys.forEach(key => {
+        if (['queued', 'uploading', 'processing'].includes(copy[key]?.status)) delete copy[key];
+      });
+      return copy;
+    });
+    setUploadRunning(false);
+    setUploadRun(null);
+    const notSent = queue.length - counts.completed - counts.skipped - counts.error;
+    setUploadSummary({ ...counts, cancelled, notSent: cancelled ? notSent : 0 });
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (counts.error === 0 && !cancelled) {
       setUploadForm({ tags: '', category_id: '', category_ids: [], description: '' });
     }
-    // Clear the native input so the same failed file can be selected again.
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-    fetchData();
+    if (counts.completed > 0) fetchData();
+
+    const parts = [];
+    if (counts.completed) parts.push(`Added ${counts.completed} preroll${counts.completed === 1 ? '' : 's'}`);
+    if (counts.skipped) parts.push(`${counts.skipped} already in the library`);
+    if (counts.error) parts.push(`${counts.error} failed`);
+    if (cancelled) parts.push('upload cancelled');
+    const message = parts.join(', ');
+    if (counts.error || cancelled) pushToast(message.charAt(0).toUpperCase() + message.slice(1), 'info');
+    else if (message) showAlert(message, 'success');
   };
+
+  // Closing or reloading the tab would drop the files still to be sent.
+  useEffect(() => {
+    if (!uploadRunning) return undefined;
+    const onBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [uploadRunning]);
+
+  // On Add Prerolls, files dropped anywhere on the page are added to the
+  // upload list. A drop that missed the drop zone used to make the browser
+  // open the video in place of NeXroll.
+  useEffect(() => {
+    if (activeTab !== 'library/add') return undefined;
+    const carriesFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files');
+    const accepting = () => uploadMode === 'upload';
+    const onDragOver = (event) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = accepting() ? 'copy' : 'none';
+      if (accepting()) setUploadDropActive(true);
+    };
+    const onDragLeave = (event) => {
+      if (!event.relatedTarget) setUploadDropActive(false);
+    };
+    const onDrop = (event) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      setUploadDropActive(false);
+      if (accepting() && addUploadFilesRef.current) addUploadFilesRef.current(event.dataTransfer.files);
+    };
+    const onDragEnd = () => setUploadDropActive(false);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    window.addEventListener('dragend', onDragEnd);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+      window.removeEventListener('dragend', onDragEnd);
+      setUploadDropActive(false);
+    };
+  }, [activeTab, uploadMode]);
 
   // Shared validation for schedule recurrence patterns (used by both create and update)
   const validateScheduleRecurrence = () => {
@@ -10942,230 +10730,249 @@ const DashboardTiles = {
         </div>
 
         {/* Upload Files Content */}
-        {uploadMode === 'upload' && (
-          <div className="nx-add-body nx-add-upload" style={{ padding: '1.5rem' }}>
+        {uploadMode === 'upload' && (() => {
+          const queue = pendingFiles(files, uploadProgress);
+          const oversized = files.filter(isTooLarge);
+          const totalSize = files.reduce((total, file) => total + (Number(file.size) || 0), 0);
+          const runKeys = new Set(uploadRun?.keys || []);
+          const runFiles = files.filter(file => runKeys.has(fileKey(file)));
+          // Bytes sent so far: whole files once the server has them, plus the
+          // file being sent.
+          const runLoaded = runFiles.reduce((total, file) => {
+            const state = uploadProgress[fileKey(file)];
+            if (!state || state.status === 'queued') return total;
+            if (state.status === 'uploading') return total + Math.min(Number(file.size) || 0, state.loaded || 0);
+            return total + (Number(file.size) || 0);
+          }, 0);
+          const runPercent = uploadRun?.totalBytes ? Math.min(100, Math.round((runLoaded / uploadRun.totalBytes) * 100)) : 0;
+          const currentFile = uploadRunning && uploadRun ? runFiles[uploadRun.index] : null;
+          const currentState = currentFile ? uploadProgress[fileKey(currentFile)] : null;
+          const retryOnly = queue.length > 0 && queue.every(file => uploadProgress[fileKey(file)]?.status === 'error');
+          const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+          const submitLabel = retryOnly
+            ? `Retry ${plural(queue.length, 'file')}`
+            : queue.length > 0 ? `Upload ${plural(queue.length, 'preroll')}` : 'Upload prerolls';
+          const statusFor = (file) => {
+            const state = uploadProgress[fileKey(file)];
+            if (state) return state;
+            return { status: isTooLarge(file) ? 'too-large' : 'ready' };
+          };
+          return (
+          <div className="nx-add-body nx-add-upload">
             <form onSubmit={handleUpload}>
-              <div className="nx-add-upload-layout" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {/* File Drop Zone */}
-                <div className="nx-add-dropzone"
-                  onClick={() => fileInputRef.current?.click()}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.style.borderColor = 'var(--accent-color)';
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 212, 255, 0.08)';
-                  }}
-                  onDragEnter={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.style.borderColor = 'var(--accent-color)';
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 212, 255, 0.08)';
-                  }}
-                  onDragLeave={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.style.borderColor = 'var(--border-color)';
-                    e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.style.borderColor = 'var(--border-color)';
-                    e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                    const videoExts = ['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.ts','.mpg','.mpeg'];
-                    const droppedFiles = Array.from(e.dataTransfer.files).filter(f =>
-                      f.type.startsWith('video/') || videoExts.some(ext => f.name.toLowerCase().endsWith(ext))
-                    );
-                    if (droppedFiles.length > 0) {
-                      setFiles(prev => [...prev, ...droppedFiles]);
-                    }
-                  }}
-                  style={{
-                    border: '2px dashed var(--border-color)',
-                    borderRadius: '12px',
-                    padding: '2rem',
-                    textAlign: 'center',
-                    cursor: 'pointer',
-                    backgroundColor: 'var(--bg-color)',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--accent-color)';
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 212, 255, 0.05)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--border-color)';
-                    e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+              <div className="nx-add-upload-layout">
+                <div
+                  className={`nx-add-dropzone${uploadDropActive && !uploadRunning ? ' is-dragging' : ''}${uploadRunning ? ' is-disabled' : ''}${files.length > 0 ? ' has-files' : ''}`}
+                  role="button"
+                  tabIndex={uploadRunning ? -1 : 0}
+                  aria-disabled={uploadRunning}
+                  onClick={() => { if (!uploadRunning) fileInputRef.current?.click(); }}
+                  onKeyDown={(event) => {
+                    if (uploadRunning || (event.key !== 'Enter' && event.key !== ' ')) return;
+                    event.preventDefault();
+                    fileInputRef.current?.click();
                   }}
                 >
                   <input
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    onChange={(e) => setFiles(Array.from(e.target.files))}
-                    accept="video/*"
+                    onChange={(event) => { addUploadFiles(event.target.files); event.target.value = ''; }}
+                    accept={['video/*', ...VIDEO_EXTENSIONS].join(',')}
                     style={{ display: 'none' }}
                   />
-                  <Upload size={40} style={{ color: 'var(--text-secondary)', marginBottom: '0.75rem' }} />
-                  <div style={{ color: 'var(--text-color)', fontWeight: 500, marginBottom: '0.25rem' }}>
-                    Drag & drop video files here, or click to browse
+                  <Upload size={40} />
+                  <div className="nx-add-dropzone-title">
+                    {uploadRunning ? 'Uploading. Add more files when it finishes.' : uploadDropActive ? 'Drop to add these files' : 'Drag & drop video files here, or click to browse'}
                   </div>
-                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                    MP4, MKV, AVI, MOV, WebM, MPEG, and other common video formats
+                  <div className="nx-add-dropzone-hint">
+                    MP4, MKV, AVI, MOV, WebM, MPEG and other common video formats, up to {formatBytes(MAX_UPLOAD_BYTES)} each
                   </div>
-                  <button type="button" className="button nx-add-browse-files" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }}>
-                    Browse files
-                  </button>
+                  {!uploadRunning && (
+                    <button type="button" className="button nx-add-browse-files" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }}>
+                      {files.length > 0 ? 'Add more files' : 'Browse files'}
+                    </button>
+                  )}
                 </div>
 
-                {/* Selected Files List */}
                 {files.length > 0 && (
-                  <div className="nx-add-files" style={{
-                    backgroundColor: 'var(--bg-color)', 
-                    borderRadius: '8px', 
-                    padding: '1rem',
-                    border: '1px solid var(--border-color)'
-                  }}>
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'space-between',
-                      marginBottom: '0.75rem'
-                    }}>
-                      <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
-                        {files.length} file{files.length !== 1 ? 's' : ''} selected
-                      </span>
-                      <button 
-                        type="button"
-                        onClick={() => setFiles([])}
-                        style={{ 
-                          background: 'none', 
-                          border: 'none', 
-                          color: 'var(--text-secondary)', 
-                          cursor: 'pointer',
-                          fontSize: '0.85rem'
-                        }}
-                      >
-                        Clear
+                  <div className="nx-add-files">
+                    <div className="nx-add-files-head">
+                      <span><strong>{plural(files.length, 'file')}</strong> <span>{formatBytes(totalSize)}</span></span>
+                      <button type="button" className="nx-add-files-clear" onClick={clearUploadFiles} disabled={uploadRunning}>
+                        Clear list
                       </button>
                     </div>
-                    <div style={{ maxHeight: '150px', overflowY: 'auto' }}>
-                      {files.map((file, index) => (
-                        <div 
-                          key={index} 
-                          style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '0.5rem',
-                            padding: '0.35rem 0',
-                            borderBottom: index < files.length - 1 ? '1px solid var(--border-color)' : 'none',
-                            fontSize: '0.85rem'
-                          }}
-                        >
-                          <Film size={14} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />
-                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-color)' }}>
-                            {file.name}
-                          </span>
-                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', flexShrink: 0 }}>
-                            {(file.size / (1024 * 1024)).toFixed(1)} MB
-                          </span>
-                          {uploadProgress[file.name] && (
-                            <span style={{ marginLeft: '0.25rem' }}>
-                              {uploadProgress[file.name].status === 'completed' ? (
-                                <CheckCircle size={14} style={{ color: 'color-mix(in srgb, var(--success-color) 76%, #000)' }} />
-                              ) : uploadProgress[file.name].status === 'error' ? (
-                                <XCircle size={14} style={{ color: 'color-mix(in srgb, var(--error-color) 81%, #000)' }} />
-                              ) : (
-                                <Loader2 size={14} className="spin" style={{ color: 'var(--accent-color)' }} />
-                              )}
+                    <ul className="nx-add-file-list">
+                      {files.map(file => {
+                        const key = fileKey(file);
+                        const state = statusFor(file);
+                        const percent = state.status === 'uploading' && file.size
+                          ? Math.min(100, Math.round(((state.loaded || 0) / file.size) * 100))
+                          : null;
+                        return (
+                          <li key={key} className={`nx-add-file is-${state.status}`}>
+                            <Film size={14} className="nx-add-file-icon" />
+                            <span className="nx-add-file-name" title={file.name}>{file.name}</span>
+                            <span className="nx-add-file-size">{formatBytes(file.size)}</span>
+                            <span
+                              className="nx-add-file-status"
+                              title={state.status === 'skipped' && state.existingName ? `Already in your library as ${state.existingName}` : undefined}
+                            >
+                              {state.status === 'too-large' && <><AlertTriangle size={13} /> Over {formatBytes(MAX_UPLOAD_BYTES)}</>}
+                              {state.status === 'queued' && 'Waiting'}
+                              {state.status === 'uploading' && `${percent}%`}
+                              {state.status === 'processing' && <><Loader2 size={13} className="spin" /> Processing</>}
+                              {state.status === 'completed' && <><CheckCircle size={13} /> Added</>}
+                              {state.status === 'skipped' && <><Info size={13} /> Already in library</>}
+                              {state.status === 'error' && <><XCircle size={13} /> Failed</>}
                             </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                            {!uploadRunning ? (
+                              <button
+                                type="button"
+                                className="nx-add-file-remove"
+                                onClick={() => removeUploadFile(file)}
+                                aria-label={`Remove ${file.name} from the list`}
+                                title="Remove from the list"
+                              >
+                                <X size={14} />
+                              </button>
+                            ) : <span className="nx-add-file-remove-gap" aria-hidden="true" />}
+                            {state.status === 'uploading' && (
+                              <span className="nx-add-file-bar" aria-hidden="true"><span style={{ width: `${percent}%` }} /></span>
+                            )}
+                            {state.status === 'error' && state.error && (
+                              <span className="nx-add-file-error">{state.error}</span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
                   </div>
                 )}
 
                 <aside className="nx-add-details-panel">
-                <div className="nx-add-details-head">
-                  <div>
-                    <strong>Details for {files.length} file{files.length === 1 ? '' : 's'}</strong>
-                    <span>Applied to every uploaded preroll</span>
+                  <div className="nx-add-details-head">
+                    <div>
+                      <strong>Details</strong>
+                      <span>{files.length > 0 ? 'Applied to every file in this upload' : 'Applied to every file you upload'}</span>
+                    </div>
+                    {files.length > 0 && (
+                      <span className="nx-add-size-badge">{plural(files.length, 'file')}</span>
+                    )}
                   </div>
-                  {files.length > 0 && (
-                    <span className="nx-add-size-badge">
-                      {(files.reduce((total, file) => total + (Number(file.size) || 0), 0) / (1024 * 1024)).toFixed(1)} MB
+
+                  <div className="nx-add-detail nx-add-category">
+                    <CategoryPicker
+                      categories={categories}
+                      primaryId={uploadForm.category_id}
+                      secondaryIds={uploadForm.category_ids}
+                      onChange={(primary, secondary) => setUploadForm(prev => ({ ...prev, category_id: primary, category_ids: secondary }))}
+                      onCreateCategory={createCategoryInline}
+                      label="Categories"
+                      placeholder="Choose categories (optional)"
+                      disabled={uploadRunning}
+                    />
+                  </div>
+
+                  <div className="nx-add-detail nx-add-tags">
+                    <label htmlFor="nx-add-tags-input">Tags <span className="nx-add-optional">optional</span></label>
+                    <input
+                      id="nx-add-tags-input"
+                      type="text"
+                      placeholder="holiday, christmas, winter"
+                      value={uploadForm.tags}
+                      onChange={(e) => setUploadForm(prev => ({ ...prev, tags: e.target.value }))}
+                      className="input"
+                      disabled={uploadRunning}
+                    />
+                    <span className="nx-add-hint">Separate tags with commas.</span>
+                  </div>
+
+                  <div className="nx-add-detail nx-add-description">
+                    <label htmlFor="nx-add-description-input">Description <span className="nx-add-optional">optional</span></label>
+                    <textarea
+                      id="nx-add-description-input"
+                      placeholder="A note for these prerolls"
+                      value={uploadForm.description}
+                      onChange={(e) => setUploadForm(prev => ({ ...prev, description: e.target.value }))}
+                      rows="2"
+                      className="input"
+                      disabled={uploadRunning}
+                    />
+                  </div>
+
+                  <label className="nx-add-skip-dupes">
+                    <input
+                      type="checkbox"
+                      checked={uploadSkipDuplicates}
+                      onChange={(e) => setUploadSkipDuplicates(e.target.checked)}
+                      disabled={uploadRunning}
+                    />
+                    <span>
+                      <strong>Skip files already in the library</strong>
+                      <small>Compared by content, so a renamed copy is caught too.</small>
                     </span>
-                  )}
-                </div>
-                {/* Category Picker */}
-                <div className="nx-add-detail nx-add-category">
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
-                    Categories
                   </label>
-                  <CategoryPicker
-                    categories={categories}
-                    primaryId={uploadForm.category_id}
-                    secondaryIds={uploadForm.category_ids}
-                    onChange={(primary, secondary) => setUploadForm({ ...uploadForm, category_id: primary, category_ids: secondary })}
-                    onCreateCategory={createCategoryInline}
-                    placeholder="Select categories..."
-                  />
-                </div>
 
-                {/* Tags */}
-                <div className="nx-add-detail nx-add-tags">
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
-                    Tags (optional)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., holiday, christmas, winter"
-                    value={uploadForm.tags}
-                    onChange={(e) => setUploadForm({...uploadForm, tags: e.target.value})}
-                    className="input"
-                    style={{ width: '100%' }}
-                  />
-                </div>
-
-                {/* Description */}
-                <div className="nx-add-detail nx-add-description">
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
-                    Description (optional)
-                  </label>
-                  <textarea
-                    placeholder="Add a description for these prerolls..."
-                    value={uploadForm.description}
-                    onChange={(e) => setUploadForm({...uploadForm, description: e.target.value})}
-                    rows="2"
-                    className="input"
-                    style={{ width: '100%', resize: 'vertical' }}
-                  />
-                </div>
-
-                {/* Upload Button */}
-                <button 
-                  type="submit" 
-                  className="button nx-add-submit"
-                  disabled={files.length === 0}
-                  style={{ 
-                    width: '100%', 
-                    padding: '0.75rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.5rem',
-                    fontSize: '1rem'
-                  }}
-                >
-                  <Upload size={18} />
-                  Upload {files.length > 0 ? `${files.length} Preroll${files.length !== 1 ? 's' : ''}` : 'Prerolls'}
-                </button>
+                  <div className="nx-add-actions">
+                    {uploadRunning && uploadRun ? (
+                      <div className="nx-add-progress" role="status" aria-live="polite">
+                        <div className="nx-add-progress-top">
+                          <strong>
+                            {uploadRun.cancelling
+                              ? 'Stopping after this file…'
+                              : `${currentState?.status === 'processing' ? 'Processing' : 'Uploading'} ${Math.min(uploadRun.index + 1, uploadRun.keys.length)} of ${uploadRun.keys.length}`}
+                          </strong>
+                          <span>{runPercent}%</span>
+                        </div>
+                        <div className="nx-add-progress-bar" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={runPercent}>
+                          <span style={{ width: `${runPercent}%` }} />
+                        </div>
+                        <div className="nx-add-progress-meta">
+                          <span title={currentFile?.name}>{currentFile?.name || ''}</span>
+                          <span>{formatBytes(runLoaded) || '0 MB'} of {formatBytes(uploadRun.totalBytes) || '0 MB'}</span>
+                        </div>
+                        <button type="button" className="button button-secondary nx-add-cancel" onClick={cancelUpload} disabled={uploadRun.cancelling}>
+                          <X size={15} /> Cancel upload
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {uploadSummary && (
+                          <div className={`nx-add-summary${uploadSummary.error ? ' has-errors' : uploadSummary.completed ? '' : ' is-neutral'}`} role="status">
+                            <div className="nx-add-summary-counts">
+                              {uploadSummary.completed > 0 && <span className="is-ok"><CheckCircle size={13} /> {uploadSummary.completed} added</span>}
+                              {uploadSummary.skipped > 0 && <span><Info size={13} /> {uploadSummary.skipped} already in library</span>}
+                              {uploadSummary.error > 0 && <span className="is-bad"><XCircle size={13} /> {uploadSummary.error} failed</span>}
+                              {uploadSummary.cancelled && <span>Cancelled{uploadSummary.notSent > 0 ? `, ${uploadSummary.notSent} not sent` : ''}</span>}
+                            </div>
+                            {uploadSummary.error > 0 && <p>The failed files are still listed with the reason. Fix the problem, then retry them.</p>}
+                            {uploadSummary.completed > 0 && (
+                              <button type="button" className="nx-add-summary-link" onClick={() => setActiveTab('library')}>
+                                View in Library
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {oversized.length > 0 && (
+                          <p className="nx-add-note">
+                            {oversized.length === 1 ? '1 file is' : `${oversized.length} files are`} over {formatBytes(MAX_UPLOAD_BYTES)} and will be left out. Shrink {oversized.length === 1 ? 'it' : 'them'} first, or index {oversized.length === 1 ? 'its' : 'their'} folder with Import Folder.
+                          </p>
+                        )}
+                        <button type="submit" className="button nx-add-submit" disabled={queue.length === 0}>
+                          <Upload size={16} />
+                          {submitLabel}
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </aside>
               </div>
             </form>
           </div>
-        )}
+          );
+        })()}
 
         {/* Import Folder Content */}
         {uploadMode === 'import' && (

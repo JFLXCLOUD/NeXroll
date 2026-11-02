@@ -32,7 +32,13 @@ Open **Library → Add Prerolls**. There are two ways in, and they behave differ
 
 ### Upload
 
-Drag files in or browse for them. NeXroll copies each file into its own storage, generates a thumbnail, probes duration and resolution, and creates a library entry. Use this when the videos are not already organised on disk.
+Drag files anywhere onto the page or browse for them. NeXroll copies each file into its own storage, generates a thumbnail, probes duration and resolution, and creates a library entry. Use this when the videos are not already organised on disk.
+
+- Files are added to the list each time you browse or drop, so you can gather them from several folders. Remove one with its **x**. Files that aren't videos are left out, and so are files over 500 MB (index their folder with Import Folder instead).
+- The **Details** panel applies to every file in the upload: categories, tags (separated by commas) and a description.
+- **Skip files already in the library** (on by default) compares file contents, so a renamed copy of a preroll you already have is caught too. Turn it off to upload a second copy on purpose.
+- While uploading, each file shows its progress and the panel shows the whole upload's progress. **Cancel upload** stops the file being sent; a file the server already has is still saved, and the upload stops after it.
+- Afterwards each file shows **Added**, **Already in library** or **Failed** with the reason. Failed files stay in the list so you can retry them.
 
 ### Index an existing folder
 
@@ -54,7 +60,7 @@ NeXroll stores an uploaded file in a folder named after the first category you c
 
 You don't have to come here first to make a category. Wherever you put prerolls into one, you can create it on the spot:
 
-- **Uploading, or editing a preroll:** open the **Categories** box and click **New category**, or type a name that doesn't exist yet and press Enter.
+- **Uploading, or editing a preroll:** open the **Categories** box and click **New category**, or type a name that doesn't exist yet and press Enter. (When the name you type partly matches a category, Enter picks that category; use **Create** in the list to make the new one.)
 - **Import Folder, the Library's bulk bar, and Community Prerolls downloads:** choose **+ New category…** at the bottom of the category list, type the name, and click **Create**.
 
 The new category is selected straight away. Typing the name of a category you already have selects that one instead of making a duplicate.
