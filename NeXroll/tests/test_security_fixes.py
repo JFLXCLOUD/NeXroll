@@ -56,6 +56,30 @@ class SameOriginTests(unittest.TestCase):
         self.assertFalse(same("ftp://192.168.1.5:32400", "http://192.168.1.5:32400"))
 
 
+class CommunityFileUrlTests(unittest.TestCase):
+    def url(self, preroll_id="", sent="", base="https://prerolls.uk"):
+        env = lift("_community_file_url", _get_community_base_url=lambda db: base)
+        return env["_community_file_url"](None, preroll_id, sent)
+
+    def test_always_the_server_in_use_plus_the_path(self):
+        path = "/Holidays/Christmas/Snow%20-%20Plex.mp4"
+        self.assertEqual(self.url(path), "https://prerolls.uk" + path)
+        # The url stored in an index built on a server that has gone is ignored.
+        self.assertEqual(self.url(path, "https://usa.prerolls.uk" + path), "https://prerolls.uk" + path)
+        self.assertEqual(self.url(path, base="https://home.prerolls.uk/"), "https://home.prerolls.uk" + path)
+
+    def test_a_sent_url_only_gives_its_path(self):
+        self.assertEqual(self.url("", "http://127.0.0.1:9393/backup/database"), "https://prerolls.uk/backup/database")
+        self.assertEqual(self.url("", "http://169.254.169.254/latest/meta-data?x=1"),
+                         "https://prerolls.uk/latest/meta-data")
+
+    def test_nothing_usable_gives_nothing(self):
+        for preroll_id, sent in (("", ""), ("", "https://evil.test"), ("//evil.test/x.mp4", ""), ("/a\\b.mp4", "")):
+            with self.subTest(preroll_id=preroll_id, sent=sent):
+                self.assertEqual(self.url(preroll_id, sent), "")
+        self.assertEqual(self.url("/x.mp4", base=None), "")
+
+
 @unittest.skipIf(os.name == "nt", "file modes apply on Linux and macOS; Windows uses the folder's ACLs")
 class SecretsFileModeTests(unittest.TestCase):
     def test_secrets_file_is_owner_only(self):

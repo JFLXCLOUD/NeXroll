@@ -2200,6 +2200,29 @@ def _community_download_delay(db=None) -> float:
     """Seconds between file downloads from the server in use."""
     return community_servers.download_delay(_get_community_base_url(db), _community_server_list())
 
+
+# A file bigger than this is refused (the largest in the index is about 240 MB).
+COMMUNITY_MAX_DOWNLOAD_BYTES = 1024 ** 3
+
+
+def _community_file_url(db, preroll_id: str = "", url: str = "") -> str:
+    """Where to download a community file: the server in use plus the file's
+    path, never an address the request names. The path is the preroll id
+    (index ids are URL paths), else the path of the url sent along. "" when
+    there is no usable path or no server.
+
+    Downloads used to fetch the url the UI sent, which is the one stored in
+    the index: an index built on usa.prerolls.uk kept failing after that
+    server went, and a request could make NeXroll fetch any address."""
+    from urllib.parse import urlsplit
+    path = str(preroll_id or "") or urlsplit(str(url or "")).path
+    if path and not path.startswith("/"):
+        path = "/" + path
+    if not path or path == "/" or path.startswith("//") or "\\" in path:
+        return ""
+    base = (_get_community_base_url(db) or "").rstrip("/")
+    return f"{base}{path}" if base else ""
+
 # NOTE: Wildcard CORS removed for security. Specific-origin CORS middleware is defined below.
 
 # Add exception handler for Pydantic validation errors
@@ -29741,28 +29764,21 @@ def download_community_preroll(
         raise HTTPException(status_code=422, detail="Either preroll_id or url is required")
     
     _file_log(f"[DOWNLOAD] Received request - preroll_id: {request.preroll_id}, title: {request.title}, category_id: {request.category_id}")
-    
-    # Determine download URL
-    download_url = request.url
-    if request.preroll_id and not request.url:
-        # Community library uses URL paths as IDs (e.g., "/Holidays/Christmas/file.mp4")
-        # Validate format - reject only obviously invalid patterns (starts with underscore from old mangled IDs)
-        preroll_id_str = str(request.preroll_id)
-        if preroll_id_str.startswith('_') or '\\' in preroll_id_str:
-            _file_log(f"[DOWNLOAD] Invalid community_id format (mangled ID): {request.preroll_id}")
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Invalid community preroll ID format. This appears to be a mangled ID. Please refresh the community search."
-            )
-        
-        # Build download URL - community library serves files directly by path
-        # The preroll_id is already the URL path (e.g., "/Holidays/Christmas/file.mp4")
-        base_url = _get_community_base_url(db)
-        download_url = f"{base_url}{preroll_id_str}"
-        _file_log(f"[DOWNLOAD] Resolved download URL: {download_url}")
-    
+
+    # Community library uses URL paths as IDs (e.g., "/Holidays/Christmas/file.mp4")
+    # Validate format - reject only obviously invalid patterns (starts with underscore from old mangled IDs)
+    preroll_id_str = str(request.preroll_id or "")
+    if preroll_id_str.startswith('_') or '\\' in preroll_id_str:
+        _file_log(f"[DOWNLOAD] Invalid community_id format (mangled ID): {request.preroll_id}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid community preroll ID format. This appears to be a mangled ID. Please refresh the community search."
+        )
+
+    download_url = _community_file_url(db, preroll_id_str, request.url)
     if not download_url:
         raise HTTPException(status_code=422, detail="No download URL available")
+    _file_log(f"[DOWNLOAD] Resolved download URL: {download_url}")
     
     try:
         # Ensure directories exist
@@ -29804,13 +29820,24 @@ def download_community_preroll(
         
         # Download file using requests for better timeout control
         try:
-            response = requests.get(download_url, stream=True, headers=_community_headers(), timeout=60)
-            response.raise_for_status()
-            with open(file_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
+            with requests.get(download_url, stream=True, headers=_community_headers(), timeout=60) as response:
+                response.raise_for_status()
+                announced = str(response.headers.get("Content-Length") or "")
+                if announced.isdigit() and int(announced) > COMMUNITY_MAX_DOWNLOAD_BYTES:
+                    raise ValueError(f"file is larger than {COMMUNITY_MAX_DOWNLOAD_BYTES // 1024 ** 2} MB")
+                written = 0
+                with open(file_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            written += len(chunk)
+                            if written > COMMUNITY_MAX_DOWNLOAD_BYTES:
+                                raise ValueError(f"file is larger than {COMMUNITY_MAX_DOWNLOAD_BYTES // 1024 ** 2} MB")
+                            f.write(chunk)
         except Exception as dl_err:
+            try:
+                os.remove(file_path)  # no half-downloaded file left in the category folder
+            except OSError:
+                pass
             _file_log(f"Community preroll download failed: {str(dl_err)}", level="ERROR")
             log_event('ERROR', 'user', f'Community preroll download failed: {dl_err}', source='download_community_preroll')
             raise HTTPException(status_code=500, detail="Download failed. Check logs for details.")
