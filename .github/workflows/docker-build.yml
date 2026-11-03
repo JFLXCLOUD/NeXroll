@@ -1,4 +1,4 @@
-﻿name: Build and Push Docker Image
+name: Build and Push Docker Image
 
 on:
   push:
@@ -105,7 +105,7 @@ jobs:
           SHORT_SHA="${{ steps.version.outputs.short_sha }}"
 
           if [ "$IS_DEV" = "true" ]; then
-            echo "tags=${{ env.IMAGE_NAME }}:dev,${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
+            echo "tags=${{ env.IMAGE_NAME }}:latest,${{ env.IMAGE_NAME }}:dev,${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
           else
             echo "tags=${{ env.IMAGE_NAME }}:${VERSION},${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
           fi
