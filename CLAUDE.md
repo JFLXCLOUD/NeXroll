@@ -24,7 +24,7 @@ docker build -t ghcr.io/artic5693/nexroll:latest .
 docker push ghcr.io/artic5693/nexroll:latest
 
 # On Unraid — pull and restart
-ssh -i ~/.ssh/unraid root@192.168.1.219 "docker pull ghcr.io/artic5693/nexroll:latest && docker restart nexroll"
+ssh tower-root "docker pull ghcr.io/artic5693/nexroll:latest && docker restart nexroll"
 ```
 
 ### Local build deploy (patches/hotfixes)
@@ -33,7 +33,7 @@ When building directly on the server instead of via CI, always prune dangling im
 to prevent untagged layers from filling the docker.img vdisk:
 
 ```bash
-ssh -i ~/.ssh/unraid root@192.168.1.219 "cd /tmp/nexroll-build && docker build -t nexroll-patched:latest . && docker stop nexroll && docker rm nexroll && docker run <flags> nexroll-patched:latest && docker image prune -f"
+ssh tower-root "cd /tmp/nexroll-build && docker build -t nexroll-patched:latest . && docker stop nexroll && docker rm nexroll && docker run <flags> nexroll-patched:latest && docker image prune -f"
 ```
 
 The `docker image prune -f` at the end removes the previous untagged image. Without it, each
