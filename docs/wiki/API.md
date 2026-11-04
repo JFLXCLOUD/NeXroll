@@ -935,6 +935,70 @@ Schedule-conflict detection lives in the frontend, so the count is passed in via
 `status` is one of `healthy`, `attention`, or `degraded`. Each check's `status`
 is one of `ok`, `warn`, `error`, or `unknown`.
 
+### Install Update (Windows installer builds)
+
+```http
+GET /update/install
+POST /update/install
+```
+
+`GET` says whether **Install Update** works on this install and how the last
+update went:
+
+```json
+{
+  "supported": true,
+  "reason": null,
+  "message": null,
+  "current_version": "2.3.0",
+  "status": {
+    "state": "done",
+    "message": "Updated NeXroll from 2.2.9 to 2.3.0",
+    "request_id": "9f2c41d0...",
+    "from_version": "2.2.9",
+    "to_version": "2.3.0",
+    "started_at": "2026-11-05T12:00:01.1234567Z",
+    "updated_at": "2026-11-05T12:01:40.7654321Z"
+  }
+}
+```
+
+`reason` is `docker`, `not_installer` (a source install) or `updater_missing`
+(installed before Install Update existed; install the next version by hand
+once). `status.state` is `checking`, `downloading`, `installing` or
+`restarting` while an update runs, then `done`, `failed` or `up_to_date`.
+
+`POST` with `{"version": "2.3.1"}` backs up the database, then starts the
+NeXroll Updater task, which stops NeXroll, installs that release from GitHub
+and starts NeXroll again. The version must be newer than the one running.
+With Require Login on, only an admin (or a request made on the NeXroll
+machine itself) may start an update. Responses: `200` with `request_id`,
+`400` for a missing or not-newer version, `409` when updates can't be
+installed here or one is already running, `500` when the backup or the task
+could not start. Poll `GET /update/install` until `current_version` is the new
+version or `status.state` is `failed`.
+
+Automatic updates are part of the update settings:
+
+```http
+GET /update/settings
+PUT /update/settings
+```
+
+```json
+{
+  "check_interval": "daily",
+  "include_prerelease": false,
+  "auto_install": false,
+  "auto_hour": 4,
+  "auto_delay_days": 3
+}
+```
+
+`auto_hour` is 0-23 on the schedules' clock and `auto_delay_days` 0-30 (values
+outside are brought into range). Changing an `auto_*` field follows the same
+admin rule as `POST /update/install`.
+
 ---
 
 ## Error Responses

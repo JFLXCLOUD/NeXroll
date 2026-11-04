@@ -7,6 +7,12 @@
 ; - Optionally creates a Startup shortcut
 ; - Writes InstallDir and PrerollPath to HKLM\Software\NeXroll
 ; - Installs only runtime files (no venv/sources)
+; - Registers the "NeXroll Updater" task behind Install update in the web UI
+;
+; /S /UPDATE is how NeXrollUpdater.ps1 runs it: files only. The service,
+; shortcuts, Startup entry and firewall rule stay as they are, the Plex token
+; setup and winget are skipped, and nothing is started (the updater starts
+; NeXroll again the way it was running).
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -35,6 +41,7 @@ OutFile "dist\NeXroll_Installer_v${APP_VERSION}.exe"
 ; Variables
 Var PREROLL_PATH
 Var hPrerollEdit
+Var UPDATE_MODE
 
 ; Interface
 !define MUI_ABORTWARNING
@@ -172,7 +179,9 @@ Section "!NeXroll Application (Required)" SEC_APP
   SetOutPath "$INSTDIR"
   ; Convenience start script
   File "start_windows.bat"
-  
+  ; Run by the NeXroll Updater task (registered below)
+  File "NeXrollUpdater.ps1"
+
   ; Documentation
   ; Ship the same changelog the Docker image and NeXroll.spec bundle. This used
   ; to read a local Releases\CHANGELOG.md copy that nothing kept in sync, so the
@@ -231,17 +240,28 @@ Section "!NeXroll Application (Required)" SEC_APP
   nsExec::ExecToStack 'cmd /c icacls "%ProgramData%\NeXroll" /grant *S-1-5-32-545:(OI)(CI)M /T /C' $0
   Pop $0
 
-  ; Start Menu shortcuts
-  CreateDirectory "$SMPROGRAMS\NeXroll"
-  CreateShortCut "$SMPROGRAMS\NeXroll\NeXroll.lnk" "$INSTDIR\NeXroll.exe" "" "$INSTDIR\NeXroll.exe" 0
-  CreateShortCut "$SMPROGRAMS\NeXroll\NeXroll Tray.lnk" "$INSTDIR\NeXrollTray.exe" "" "$INSTDIR\NeXrollTray.exe" 0
-  CreateShortCut "$SMPROGRAMS\NeXroll\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
+  ; Shortcuts go to the current user's folders. An update runs as SYSTEM and
+  ; the shortcuts from the first install still point at the same files.
+  ${If} $UPDATE_MODE != "1"
+    ; Start Menu shortcuts
+    CreateDirectory "$SMPROGRAMS\NeXroll"
+    CreateShortCut "$SMPROGRAMS\NeXroll\NeXroll.lnk" "$INSTDIR\NeXroll.exe" "" "$INSTDIR\NeXroll.exe" 0
+    CreateShortCut "$SMPROGRAMS\NeXroll\NeXroll Tray.lnk" "$INSTDIR\NeXrollTray.exe" "" "$INSTDIR\NeXrollTray.exe" 0
+    CreateShortCut "$SMPROGRAMS\NeXroll\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
 
-  ; Desktop shortcut
-  CreateShortCut "$DESKTOP\NeXroll.lnk" "$INSTDIR\NeXroll.exe" "" "$INSTDIR\NeXroll.exe" 0
+    ; Desktop shortcut
+    CreateShortCut "$DESKTOP\NeXroll.lnk" "$INSTDIR\NeXroll.exe" "" "$INSTDIR\NeXroll.exe" 0
+  ${EndIf}
 
   ; Uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
+
+  ; The task Install update starts. The script leaves an up-to-date task
+  ; alone, which matters during an update: the task is running the old copy.
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\NeXrollUpdater.ps1" -Register -InstallDir "$INSTDIR"'
+  Pop $0
+  Pop $1
+  DetailPrint "Updater task ($0): $1"
 
   ; Add Programs and Features (Uninstall) entry
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NeXroll" "DisplayName" "NeXroll"
@@ -381,6 +401,11 @@ Section "Uninstall"
   ; Force 64-bit registry view to match installer
   SetRegView 64
   
+  ; Remove the updater task while its script is still here
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\NeXrollUpdater.ps1" -Unregister'
+  Pop $0
+  Pop $1
+
   ; Stop and remove Windows service if installed
   IfFileExists "$INSTDIR\NeXrollService.exe" 0 +5
     nsExec::ExecToStack '"$INSTDIR\NeXrollService.exe" stop' $0
@@ -419,6 +444,8 @@ Section "Uninstall"
   Delete "$INSTDIR\setup_plex_token.exe"
   Delete "$INSTDIR\NeXrollTray.exe"
   Delete "$INSTDIR\start_windows.bat"
+  Delete "$INSTDIR\NeXrollUpdater.ps1"
+  RMDir /r "$INSTDIR\update"
   Delete "$INSTDIR\CHANGELOG.md"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\uninstall.exe"
@@ -440,6 +467,23 @@ SectionEnd
 ; Optional: warn if ffmpeg not found and SEC_DEPS not selected
 ; ------------------------------
 Function .onInit
+   ; /UPDATE (from NeXrollUpdater.ps1): install the files and change nothing
+   ; else. The service, Startup and firewall sections would add back what the
+   ; user turned off; the token setup and winget need the signed-in user, and
+   ; an update runs as SYSTEM.
+   ${GetParameters} $R0
+   ClearErrors
+   ${GetOptions} $R0 "/UPDATE" $R1
+   ${IfNot} ${Errors}
+     StrCpy $UPDATE_MODE "1"
+     SectionSetFlags ${SEC_SERVICE} 0
+     SectionSetFlags ${SEC_TOKEN} 0
+     SectionSetFlags ${SEC_STARTUP} 0
+     SectionSetFlags ${SEC_DEPS} 0
+     SectionSetFlags ${SEC_VCREDIST} 0
+     SectionSetFlags ${SEC_FIREWALL} 0
+   ${EndIf}
+
    ; Best-effort: stop running NeXroll processes so upgrade can proceed
    ; Try to stop the Windows service first (ignore errors if not installed/running)
    nsExec::ExecToStack 'sc stop "NeXrollService"' $0
@@ -484,6 +528,11 @@ FunctionEnd
 ; Post-install message (simplified)
 ; ------------------------------
 Function .onInstSuccess
+   ; An update: NeXrollUpdater.ps1 starts NeXroll the way it was running
+   ${If} $UPDATE_MODE == "1"
+     Return
+   ${EndIf}
+
    ; Launch NeXrollTray.exe in the USER's context (not elevated/SYSTEM)
    ; The installer runs as admin, so we need to de-elevate to access mapped drives
    ; and user-specific network credentials. The most reliable method is to use

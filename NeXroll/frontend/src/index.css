@@ -10767,6 +10767,50 @@ body .nx-settings-log-viewer .nx-settings-log-toolbar > select {
 .nx-settings-system .nx-sys-row-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .nx-settings-system .nx-sys-row.is-wrap { justify-content: flex-start; gap: 14px; }
 
+/* Install update progress: same box as the Update Available banner, colored by outcome. */
+.nx-settings-system .nx-update-run {
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  background-color: var(--card-bg);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
+}
+.nx-settings-system .nx-update-run--done {
+  background-color: var(--success-soft);
+  border-color: color-mix(in srgb, var(--success-color) 40%, transparent);
+}
+/* Automatic Updates: "At [4:00 AM] once a release is [3 days old]". */
+.nx-settings-system .nx-update-auto {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.6rem;
+}
+.nx-settings-system .nx-update-auto label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.nx-settings-system .nx-update-auto select {
+  padding: 0.3rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-size: 11px;
+}
+.nx-settings-system .nx-update-run--failed {
+  background-color: var(--error-soft);
+  border-color: color-mix(in srgb, var(--error-color) 38%, transparent);
+}
+
 /* Full-width explanatory panel (Report Issues) shares the tile surface but is a
    block of prose, not a stat, so it opts out of the tile's min-height. */
 .nx-settings-system .nx-sys-tile.nx-sys-panel { min-height: 0; gap: 0; padding: 11px 13px; margin-bottom: 11px; }

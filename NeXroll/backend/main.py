@@ -117,6 +117,7 @@ from backend.community_search import QueryMatcher
 from backend import community_catalog
 from backend import community_match
 from backend import community_servers
+from backend import self_update
 from backend.shuffle_bag import shuffle_bag_sample
 from backend.sequence_utils import representative_category_id
 from backend.backup_utils import (
@@ -636,6 +637,10 @@ def ensure_schema() -> None:
                 ("update_include_prerelease", "update_include_prerelease BOOLEAN DEFAULT 0"),
                 ("update_last_check", "update_last_check DATETIME"),
                 ("update_dismissed_version", "update_dismissed_version TEXT"),
+                ("update_auto_install", "update_auto_install BOOLEAN DEFAULT 0"),
+                ("update_auto_hour", "update_auto_hour INTEGER DEFAULT 4"),
+                ("update_auto_delay_days", "update_auto_delay_days INTEGER DEFAULT 3"),
+                ("update_auto_last_attempt", "update_auto_last_attempt TEXT"),
             ]
             for col_name, col_def in update_columns:
                 if not _sqlite_has_column("settings", col_name):
@@ -797,6 +802,10 @@ def ensure_settings_schema_now() -> None:
                 "update_include_prerelease": "BOOLEAN",
                 "update_last_check": "DATETIME",
                 "update_dismissed_version": "TEXT",
+                "update_auto_install": "BOOLEAN",
+                "update_auto_hour": "INTEGER",
+                "update_auto_delay_days": "INTEGER",
+                "update_auto_last_attempt": "TEXT",
                 # Custom preroll storage folder
                 "preroll_folder": "TEXT",
                 # Ignored conflicts
@@ -2497,7 +2506,7 @@ async def _request_logging_mw(request: Request, call_next):
         '/plex/status', '/jellyfin/status', '/settings/active-category',
         '/scheduler/active-schedule-ids',
         '/system/version', '/system/dependencies', '/system/ffmpeg-info',
-        '/update/settings', '/community-prerolls/index-status',
+        '/update/settings', '/update/install', '/community-prerolls/index-status',
         '/community-prerolls/downloaded-ids', '/auth/status'
     )
     if request.method == 'GET' and path in skip_polling:
@@ -2927,6 +2936,9 @@ def startup_event():
 
     # Weekly Community index refresh; does nothing unless the user turned it on.
     threading.Thread(target=_community_auto_refresh_loop, daemon=True, name="community-auto-refresh").start()
+
+    # Automatic updates (Windows installer builds); does nothing unless turned on.
+    threading.Thread(target=_auto_update_loop, daemon=True, name="auto-update").start()
 
     # Community IDs for old Community downloads. Started here, not at import:
     # it reads the local index, which is set up further down the module.
@@ -7087,12 +7099,21 @@ async def update_get_settings(
     Get update check settings.
     """
     setting = db.query(models.Setting).first()
-    
+
     return {
         "check_interval": getattr(setting, 'update_check_interval', 'daily') if setting else 'daily',
         "include_prerelease": getattr(setting, 'update_include_prerelease', False) if setting else False,
         "last_check": getattr(setting, 'update_last_check', None) if setting else None,
-        "dismissed_version": getattr(setting, 'update_dismissed_version', None) if setting else None
+        "dismissed_version": getattr(setting, 'update_dismissed_version', None) if setting else None,
+        **_auto_update_settings(setting),
+    }
+
+
+def _auto_update_settings(setting) -> dict:
+    return {
+        "auto_install": bool(getattr(setting, 'update_auto_install', False)) if setting else False,
+        "auto_hour": self_update.auto_hour(getattr(setting, 'update_auto_hour', None)),
+        "auto_delay_days": self_update.auto_delay_days(getattr(setting, 'update_auto_delay_days', None)),
     }
 
 
@@ -7106,11 +7127,18 @@ async def update_settings(
     """
     body = await request.json()
     setting = db.query(models.Setting).first()
-    
+
+    # Automatic installs follow Install update's rule: with login on, admins only.
+    if any(key in body for key in ('auto_install', 'auto_hour', 'auto_delay_days')):
+        user = get_current_user_optional(request, db)
+        if _check_auth_enabled(db) and not _is_local_request(request):
+            if not user or user.role != 'admin':
+                raise HTTPException(status_code=403, detail="Admin access required")
+
     if not setting:
         setting = models.Setting(plex_url=None, plex_token=None)
         db.add(setting)
-    
+
     # Update settings
     valid_intervals = ['never', 'startup', 'hourly', 'daily', 'weekly']
     if 'check_interval' in body:
@@ -7121,14 +7149,21 @@ async def update_settings(
         setting.update_include_prerelease = bool(body['include_prerelease'])
     if 'dismissed_version' in body:
         setting.update_dismissed_version = body['dismissed_version'] if body['dismissed_version'] else None
-    
+    if 'auto_install' in body:
+        setting.update_auto_install = bool(body['auto_install'])
+    if 'auto_hour' in body:
+        setting.update_auto_hour = self_update.auto_hour(body['auto_hour'])
+    if 'auto_delay_days' in body:
+        setting.update_auto_delay_days = self_update.auto_delay_days(body['auto_delay_days'])
+
     db.commit()
-    
+
     return {
         "success": True,
         "check_interval": setting.update_check_interval,
         "include_prerelease": setting.update_include_prerelease,
-        "dismissed_version": setting.update_dismissed_version
+        "dismissed_version": setting.update_dismissed_version,
+        **_auto_update_settings(setting),
     }
 
 
@@ -7143,55 +7178,7 @@ async def update_check_now(
     """
     import urllib.request
     import json as json_module
-    import re as re_mod
     from datetime import datetime
-    
-    def _parse_semver(v: str):
-        """Parse a version string into (major, minor, patch, pre_tag, pre_num).
-        Examples:
-          '1.12.0'         -> (1, 12, 0, None, 0)
-          'v1.12.0-beta.8' -> (1, 12, 0, 'beta', 8)
-          '1.12.0-rc.2'    -> (1, 12, 0, 'rc', 2)
-        """
-        s = str(v).strip().lstrip('vV')
-        m = re_mod.match(r'(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[.-]([a-zA-Z]+)[.-]?(\d+))?', s)
-        if not m:
-            return (0, 0, 0, None, 0)
-        major = int(m.group(1))
-        minor = int(m.group(2) or 0)
-        patch = int(m.group(3) or 0)
-        pre_tag = m.group(4).lower() if m.group(4) else None
-        pre_num = int(m.group(5) or 0)
-        return (major, minor, patch, pre_tag, pre_num)
-
-    def _compare_versions(a: str, b: str) -> int:
-        """Compare two version strings. Returns 1 if a > b, -1 if a < b, 0 if equal.
-        Semver rules: pre-release < stable for same base version.
-        """
-        va = _parse_semver(a)
-        vb = _parse_semver(b)
-        # Compare major.minor.patch
-        for i in range(3):
-            if va[i] > vb[i]: return 1
-            if va[i] < vb[i]: return -1
-        # Same base version — compare pre-release
-        a_pre, a_num = va[3], va[4]
-        b_pre, b_num = vb[3], vb[4]
-        if a_pre is None and b_pre is None:
-            return 0  # both stable
-        if a_pre is None:
-            return 1  # a is stable, b is pre-release → a > b
-        if b_pre is None:
-            return -1  # b is stable, a is pre-release → a < b
-        # Both have pre-release tags
-        pre_order = {'alpha': 0, 'beta': 1, 'rc': 2}
-        a_rank = pre_order.get(a_pre, 99)
-        b_rank = pre_order.get(b_pre, 99)
-        if a_rank != b_rank:
-            return 1 if a_rank > b_rank else -1
-        if a_num > b_num: return 1
-        if a_num < b_num: return -1
-        return 0
 
     setting = db.query(models.Setting).first()
     include_prerelease = getattr(setting, 'update_include_prerelease', False) if setting else False
@@ -7226,7 +7213,7 @@ async def update_check_now(
             db.commit()
         
         latest_tag = data.get('tag_name', '').lstrip('vV')
-        cmp = _compare_versions(latest_tag, current_version)
+        cmp = self_update.compare_versions(latest_tag, current_version)
         
         return {
             "success": True,
@@ -7267,6 +7254,163 @@ async def update_check_now(
         _file_log(msg, level=level)
         log_event(level, 'system', msg, source='update_check_now')
         return {"success": False, "error": str(e), "network_error": is_network_error}
+
+
+@app.get("/update/install")
+def update_install_info():
+    """Whether Install update works on this install, and the last update's status."""
+    info = self_update.support(in_docker=_is_running_in_docker())
+    info["status"] = self_update.read_status() if info["supported"] else None
+    info["current_version"] = getattr(app, "version", None)
+    return info
+
+
+@app.post("/update/install")
+async def update_install(request: Request, db: Session = Depends(get_db)):
+    """Install a newer release (Windows installer builds); see backend/self_update.py.
+
+    Backs up the database, then starts the NeXroll Updater task, which stops
+    NeXroll, installs the release and starts it again. Poll GET /update/install.
+    """
+    user = get_current_user_optional(request, db)
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    version = str((body or {}).get("version") or "").strip().lstrip("vV")
+    if not self_update.VERSION_RE.match(version):
+        raise HTTPException(status_code=400, detail="Name the version to install, for example 2.3.1")
+    current = getattr(app, "version", "0.0.0")
+    if self_update.compare_versions(version, current) <= 0:
+        raise HTTPException(status_code=400, detail=f"NeXroll {current} is installed; {version} is not newer")
+
+    info = self_update.support(in_docker=_is_running_in_docker())
+    if not info["supported"]:
+        raise HTTPException(status_code=409, detail=info["message"])
+    if self_update.update_running():
+        raise HTTPException(status_code=409, detail="An update is already running")
+
+    try:
+        request_id, backup = _start_self_update(version, f"requested by {user.username if user else 'local access'}")
+    except self_update.UpdateError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"started": True, "request_id": request_id, "version": version, "backup": backup}
+
+
+def _start_self_update(version: str, why: str):
+    """Back up the database and start the NeXroll Updater task. Returns (request id, backup path)."""
+    current = getattr(app, "version", "0.0.0")
+    try:
+        backup = self_update.backup_database(DB_PATH, version, _snapshot_sqlite)
+        request_id = self_update.start_update(version, int(os.environ.get("NEXROLL_PORT", "9393")))
+    except self_update.UpdateError as e:
+        _file_log(f"Install update: {e}", level="ERROR")
+        log_event('ERROR', 'system', f'Install update failed to start: {e}', source='update_install')
+        raise
+    msg = f"Updating NeXroll {current} to {version} ({why}; database backed up to {backup})"
+    _file_log(msg)
+    log_event('INFO', 'system', msg, source='update_install')
+    return request_id, backup
+
+
+# Automatic updates: see backend/self_update.py. A check costs one GitHub API
+# call and only happens inside the chosen hour.
+AUTO_UPDATE_CHECK_SECONDS = 600
+_auto_update_last_note = ""
+
+
+def _auto_update_note(text: str) -> None:
+    """Log why nothing was installed, once per change rather than every check."""
+    global _auto_update_last_note
+    if text != _auto_update_last_note:
+        _auto_update_last_note = text
+        _file_log(f"Automatic update: {text}")
+
+
+def _auto_update_tick(now_local=None, now_utc=None) -> Optional[str]:
+    """Start an automatic update if one is due. Returns the version started."""
+    now_utc = now_utc or datetime.datetime.now(datetime.timezone.utc)
+    db = SessionLocal()
+    try:
+        setting = db.query(models.Setting).first()
+        if not setting or not getattr(setting, 'update_auto_install', False):
+            return None
+        # The hour is on the clock schedules use (Settings > timezone).
+        now_local = now_local or _localized_now(db)
+        if now_local.hour != self_update.auto_hour(getattr(setting, 'update_auto_hour', None)):
+            return None
+        if not self_update.support(in_docker=_is_running_in_docker())["supported"] or self_update.update_running():
+            return None
+        try:
+            release = self_update.fetch_latest_release()
+        except Exception as e:
+            _auto_update_note(f"could not reach GitHub ({e})")
+            return None
+        version, reason = self_update.auto_candidate(
+            release, getattr(app, "version", "0.0.0"),
+            self_update.auto_delay_days(getattr(setting, 'update_auto_delay_days', None)),
+            getattr(setting, 'update_auto_last_attempt', None), now_utc)
+        if not version:
+            _auto_update_note(f"nothing to install ({reason})")
+            return None
+        # NeXroll is down for a few minutes: Jellyfin/Emby playbacks starting
+        # then get no prerolls, and Plex rotation pauses. Wait for a quiet tick.
+        if self_update.recent_playback():
+            _auto_update_note(f"{version} waits: a Jellyfin/Emby playback started within the hour")
+            return None
+        if _plex_playing_count(setting):
+            _auto_update_note(f"{version} waits: Plex is playing")
+            return None
+        setting.update_auto_last_attempt = self_update.format_attempt(version, now_utc)
+        db.commit()
+    finally:
+        db.close()
+    try:
+        _start_self_update(version, "automatic update")
+    except self_update.UpdateError:
+        return None
+    return version
+
+
+def _plex_playing_count(setting) -> Optional[int]:
+    """Sessions Plex is playing, or None without Plex or when it can't be asked.
+
+    Its own request rather than the scheduler's probe, whose session tracking
+    belongs to the playback guard.
+    """
+    plex_url = getattr(setting, 'plex_url', None)
+    token = getattr(setting, 'plex_token', None)
+    if not plex_url or not token:
+        return None
+    try:
+        import xml.etree.ElementTree as ET
+        connector = PlexConnector(plex_url, token)
+        response = requests.get(f"{str(plex_url).rstrip('/')}/status/sessions",
+                                headers=connector.headers or {"X-Plex-Token": token}, timeout=6,
+                                verify=getattr(connector, "_verify", True))
+        if response.status_code != 200 or not response.content:
+            return None
+        root = ET.fromstring(response.content)
+        size = root.get("size")
+        return int(size) if size is not None else len(list(root))
+    except Exception:
+        return None
+
+
+def _auto_update_loop():
+    import random as _random
+    # Not right at startup: a restart loop must not turn into an update loop.
+    time.sleep(_random.uniform(300, 900))
+    while True:
+        try:
+            _auto_update_tick()
+        except Exception as e:
+            _file_log(f"Automatic update check failed: {e}", level="WARNING")
+        time.sleep(AUTO_UPDATE_CHECK_SECONDS)
 
 
 # ============================================================================
@@ -31035,6 +31179,9 @@ def plugin_get_intros(
 
     try:
         whole_pool = (whole or "").strip().lower() in ("1", "true", "yes") or (item_id or "").strip() == "0"
+        if not whole_pool:
+            # A playback is starting; automatic updates wait for a quiet hour.
+            self_update.note_playback()
         result = _resolve_current_intros(
             db,
             media_type=media_type,

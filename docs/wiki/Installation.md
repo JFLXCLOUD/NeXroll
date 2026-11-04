@@ -187,6 +187,14 @@ docker compose up -d --force-recreate
 ### Windows
 Download and run the latest installer — it will update your existing installation.
 
+Or update from the web UI: **Settings > System > Updates > Install Update**.
+NeXroll backs up its database, downloads the release from GitHub, checks the
+installer against the SHA-256 GitHub publishes for it, installs it and starts
+itself again the way it was running (service, tray or NeXroll.exe). Useful
+when NeXroll runs on a machine you rarely sit at. The first version with this
+button has to be installed by hand once; installs from before it show
+**Download Update** instead.
+
 ### Python
 ```bash
 git pull

@@ -170,6 +170,46 @@ When an update is available:
 - Displays release notes with markdown rendering
 - Can be dismissed (persists across sessions)
 
+### Install Update (Windows)
+
+On installs made with the Windows installer, the update card on
+**Settings > System** has an **Install Update** button. NeXroll is unavailable
+for a few minutes while the update installs; movies already playing keep
+playing, and anything started in that time plays without prerolls. The page
+follows the update and reloads when the new version answers.
+
+How it works: the installer registers a **NeXroll Updater** task in Windows
+Task Scheduler. NeXroll backs up its database to
+`%ProgramData%\NeXroll\update-backups` (the newest three are kept) and starts
+the task, which runs as SYSTEM so it can install without a Windows permission
+prompt. The task only installs an official NeXroll release from GitHub that is
+newer than the one installed, after checking the installer against the SHA-256
+GitHub publishes for it. It never installs an older version, whoever starts it.
+The installer runs in update mode: your service, shortcuts, Startup entry and
+firewall rule stay as you set them. NeXroll then starts again the way it was
+running: the service if it was running, and the tray or NeXroll.exe for each
+user who had one open.
+
+With Require Login on, only admins can install updates. Docker installs update
+by pulling the new image.
+
+### Automatic updates (Windows)
+
+Where Install Update works, the update card also has **Automatic Updates**
+(off by default). Turned on, NeXroll installs a new version by itself:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **At** | 4:00 AM | The hour to install in, on the clock schedules use (the timezone in Settings) |
+| **once a release is** | 3 days old | How long a release must be out first; a quick fix release in those days is the one that gets installed |
+
+Only stable releases are installed automatically, never pre-releases. Inside
+the chosen hour NeXroll checks every 10 minutes and waits while something is
+playing: a Plex session, or a Jellyfin/Emby playback that started within the
+hour. A version that was tried and didn't install is tried again the next day,
+not over and over. Each update backs up the database first, like Install
+Update, and shows under **Last update** on the card and in the Logs.
+
 ---
 
 ## Logging

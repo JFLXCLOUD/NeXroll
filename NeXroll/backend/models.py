@@ -471,6 +471,11 @@ class Setting(Base):
     update_include_prerelease = Column(Boolean, default=False)  # Include beta/pre-release versions
     update_last_check = Column(DateTime, nullable=True)  # Last time we checked for updates
     update_dismissed_version = Column(String, nullable=True)  # Version user dismissed
+    # Automatic updates (Windows installer builds; backend/self_update.py)
+    update_auto_install = Column(Boolean, default=False)  # opt-in
+    update_auto_hour = Column(Integer, default=4)  # local hour to install in, 0-23
+    update_auto_delay_days = Column(Integer, default=3)  # days a release must be out first
+    update_auto_last_attempt = Column(String, nullable=True)  # "version|ISO time" of the last try
     
     # Enhanced Logging Settings
     log_level = Column(String, default='INFO')  # 'DEBUG', 'INFO', 'WARNING', 'ERROR'

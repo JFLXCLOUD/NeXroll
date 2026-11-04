@@ -420,6 +420,20 @@ Fixed in 2.2.0-beta.5. If the install itself fails with an npm `ENOENT` about a 
 
 Set how often NeXroll checks for a new version, and whether pre-releases count. **Check for Updates** runs it immediately and reports what it found.
 
+On Windows installs, **Install Update** installs the new version from the page (see [Configuration](Configuration#install-update-windows)).
+
+**Install Update says the update did not finish.**
+The reason is shown on the card. The full story is in `update\update.log` in the NeXroll install folder (normally `C:\Program Files\NeXroll\update\update.log`). The database was backed up first to `%ProgramData%\NeXroll\update-backups`. If NeXroll doesn't come back, run the installer from the release page by hand; it keeps your data.
+
+**"The updater did not start."**
+Task Scheduler should list a task named **NeXroll Updater**. Running the installer by hand creates it again. A group policy that only allows signed PowerShell scripts also stops it; install updates by hand on such machines.
+
+**Automatic updates never install.**
+They only run in the chosen hour, for a stable release that is at least the chosen number of days old and has its Windows installer, and they wait while something plays. app.log (Logs > App log) has an "Automatic update:" line saying why nothing was installed. A version that failed is tried again the next day.
+
+**There is no Install Update button, only Download Update.**
+The install predates Install Update (install the new version by hand once), or NeXroll runs from Docker or from source, which update their own way.
+
 ### Danger zone
 
 **Factory reset** empties the database and clears saved connections, returning the install to first-run setup. It can optionally delete downloaded trailers, uploaded prerolls and the PO-token provider from disk. This cannot be undone — take a backup first. See [Backup and Restore](Backup-and-Restore).

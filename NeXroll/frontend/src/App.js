@@ -11,6 +11,8 @@ import { bootHints, isKonami, isTypingTarget, pushKey, readSecretThemes, saveSec
 import Intermission from './components/Intermission';
 import { genreMatchSummary, ratingSummary } from './utils/trailerRatings';
 import { youtubeThumbnail, youtubeVideoId } from './utils/youtube';
+import { compareVersions, normalizeVersionString, parseSemver } from './utils/versions';
+import { installRunFromReply, installRunLost, isInstallRunActive } from './utils/selfUpdate';
 import useHealthSummary from './hooks/useHealthSummary';
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -841,51 +843,10 @@ function localResetBase() {
   }
 })();
   
-// Version helpers (module-scope) - stable across renders
-const normalizeVersionString = (input) => {
-  try {
-    if (!input) return '0.0.0';
-    let s = String(input).trim();
-    s = s.replace(/^v+/i, '');
-    return s || '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-};
-const parseSemver = (v) => {
-  const s = normalizeVersionString(v);
-  const m = s.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[.-]([a-zA-Z]+)[.-]?(\d+))?/);
-  if (!m) return { major: 0, minor: 0, patch: 0, preTag: null, preNum: 0 };
-  return {
-    major: parseInt(m[1], 10) || 0,
-    minor: parseInt(m[2] || '0', 10),
-    patch: parseInt(m[3] || '0', 10),
-    preTag: m[4] ? m[4].toLowerCase() : null,
-    preNum: parseInt(m[5] || '0', 10)
-  };
-};
+// Version helpers (module-scope) - stable across renders; see utils/versions.js
 const parseVersion = (v) => {
   const sv = parseSemver(v);
   return [sv.major, sv.minor, sv.patch];
-};
-const compareVersions = (a, b) => {
-  const va = parseSemver(a);
-  const vb = parseSemver(b);
-  // Compare major.minor.patch
-  if (va.major !== vb.major) return va.major > vb.major ? 1 : -1;
-  if (va.minor !== vb.minor) return va.minor > vb.minor ? 1 : -1;
-  if (va.patch !== vb.patch) return va.patch > vb.patch ? 1 : -1;
-  // Same base version — compare pre-release
-  if (!va.preTag && !vb.preTag) return 0; // both stable
-  if (!va.preTag) return 1; // a is stable, b is pre-release
-  if (!vb.preTag) return -1; // b is stable, a is pre-release
-  // Both have pre-release tags
-  const preOrder = { alpha: 0, beta: 1, rc: 2 };
-  const aRank = preOrder[va.preTag] ?? 99;
-  const bRank = preOrder[vb.preTag] ?? 99;
-  if (aRank !== bRank) return aRank > bRank ? 1 : -1;
-  if (va.preNum !== vb.preNum) return va.preNum > vb.preNum ? 1 : -1;
-  return 0;
 };
 const extractVersionFromRelease = (data) => {
   const tag = (data && data.tag_name) || '';
@@ -1166,6 +1127,10 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [updateSettings, setUpdateSettings] = useState({ check_interval: 'daily', include_prerelease: false, last_check: null, dismissed_version: null });
+  // Install update (Windows installer builds; see utils/selfUpdate.js): what
+  // GET /update/install says this install can do, and the update started here.
+  const [selfUpdate, setSelfUpdate] = useState(null);
+  const [installRun, setInstallRun] = useState(null);
   // Focus dashboard data. Health is a composite score from the backend; the
   // conflict count is folded in from the frontend, which owns that detection.
   const [showCustomizeDashboard, setShowCustomizeDashboard] = useState(false);
@@ -2760,6 +2725,90 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     } catch {}
     setShowUpdateBanner(false);
   };
+
+  // Settings > System asks whether Install update works here, and how the
+  // last update went.
+  useEffect(() => {
+    if (activeTab !== 'settings/system') return undefined;
+    let cancelled = false;
+    fetch(apiUrl('update/install'))
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (!cancelled) setSelfUpdate(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeTab]);
+
+  const handleInstallUpdate = async () => {
+    if (!updateInfo?.version || isInstallRunActive(installRun)) return;
+    const version = normalizeVersionString(updateInfo.version);
+    if (!window.confirm(`Install NeXroll v${version} now?\n\nNeXroll stops for a few minutes while the update installs, then starts again by itself. Movies already playing keep playing; anything started in that time plays without prerolls.`)) return;
+    setInstallRun({ version, requestId: null, phase: 'running', message: 'Backing up the database...', startedAt: Date.now() });
+    try {
+      const res = await fetch(apiUrl('update/install'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      setInstallRun(run => run && { ...run, requestId: data.request_id, message: 'Starting the updater...' });
+    } catch (e) {
+      setInstallRun(run => run && { ...run, phase: 'failed', message: 'Could not start the update: ' + (e?.message || e) });
+    }
+  };
+
+  // Automatic update choices (PUT /update/settings); the server keeps them in range.
+  const saveAutoUpdateSettings = async (patch) => {
+    setUpdateSettings(prev => ({ ...prev, ...patch }));
+    try {
+      const res = await fetch(apiUrl('update/settings'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      setUpdateSettings(prev => ({ ...prev, auto_install: data.auto_install, auto_hour: data.auto_hour, auto_delay_days: data.auto_delay_days }));
+    } catch (e) {
+      showAlert('Could not save automatic updates: ' + (e?.message || e), 'error');
+      try {
+        const res = await fetch(apiUrl('update/settings'));
+        if (res.ok) setUpdateSettings(await res.json());
+      } catch {}
+    }
+  };
+
+  // While an update installs, follow it until the new version answers.
+  const installActive = isInstallRunActive(installRun);
+  const installRequestId = installRun?.requestId || null;
+  useEffect(() => {
+    if (!installActive || !installRequestId) return undefined;
+    let stopped = false;
+    let timer = null;
+    const tick = async () => {
+      try {
+        const res = await fetch(apiUrl('update/install'), { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (stopped) return;
+        setSelfUpdate(data);
+        setInstallRun(run => installRunFromReply(run, data));
+      } catch {
+        if (stopped) return;
+        setInstallRun(run => installRunLost(run));
+      }
+      if (!stopped) timer = setTimeout(tick, 3000);
+    };
+    timer = setTimeout(tick, 2000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [installActive, installRequestId]);
+
+  // The new version serves a new page; load it.
+  useEffect(() => {
+    if (installRun?.phase !== 'done') return undefined;
+    const t = setTimeout(() => window.location.reload(), 2500);
+    return () => clearTimeout(t);
+  }, [installRun?.phase]);
 
   const handleInstallPWA = async () => {
     if (!deferredPrompt) return;
@@ -32652,8 +32701,41 @@ const DashboardTiles = {
           <Download size={20} /> Updates
         </h2>
         
+        {/* Install update progress (replaces the banner while it runs) */}
+        {installRun && (
+          <div className={`nx-update-run nx-update-run--${installRun.phase}`} role="status" aria-live="polite">
+            <div className="nx-sys-row-main">
+              {installRun.phase === 'failed' ? (
+                <AlertTriangle size={20} style={{ color: 'var(--error-color)' }} />
+              ) : installRun.phase === 'done' ? (
+                <CheckCircle size={20} style={{ color: 'var(--success-color)' }} />
+              ) : (
+                <Loader2 size={20} className="spin" style={{ color: 'var(--accent-color)' }} />
+              )}
+              <div>
+                <div style={{ fontWeight: '600', color: 'var(--text-color)' }}>
+                  {installRun.phase === 'failed' ? `Update to v${installRun.version} did not finish`
+                    : installRun.phase === 'done' ? `Updated to v${installRun.version}`
+                    : `Installing v${installRun.version}`}
+                </div>
+                <div className="nx-sys-note">{installRun.message}</div>
+              </div>
+            </div>
+            {installRun.phase === 'failed' && (
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {updateInfo?.url && (
+                  <a href={updateInfo.url} target="_blank" rel="noopener noreferrer" className="button button-secondary" style={{ textDecoration: 'none' }}>
+                    <Download size={14} style={{ marginRight: '0.35rem' }} /> Download Instead
+                  </a>
+                )}
+                <button onClick={() => setInstallRun(null)} className="button button-secondary">Close</button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Update Available Banner */}
-        {updateInfo && showUpdateBanner && (
+        {!installRun && updateInfo && showUpdateBanner && (
           <div style={{
             padding: '1rem',
             backgroundColor: 'var(--success-soft)',
@@ -32679,22 +32761,46 @@ const DashboardTiles = {
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <a 
-                href={updateInfo.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="button"
-                style={{ textDecoration: 'none', backgroundColor: 'var(--success-color)' }}
-              >
-                <Download size={14} style={{ marginRight: '0.35rem' }} /> Download Update
-              </a>
-              <button 
+              {selfUpdate?.supported ? (
+                <>
+                  <button
+                    onClick={handleInstallUpdate}
+                    className="button"
+                    style={{ backgroundColor: 'var(--success-color)' }}
+                  >
+                    <Download size={14} style={{ marginRight: '0.35rem' }} /> Install Update
+                  </button>
+                  <a
+                    href={updateInfo.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="button button-secondary"
+                    style={{ textDecoration: 'none' }}
+                  >
+                    Release Notes
+                  </a>
+                </>
+              ) : (
+                <a
+                  href={updateInfo.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="button"
+                  style={{ textDecoration: 'none', backgroundColor: 'var(--success-color)' }}
+                >
+                  <Download size={14} style={{ marginRight: '0.35rem' }} /> Download Update
+                </a>
+              )}
+              <button
                 onClick={handleDismissUpdate}
                 className="button button-secondary"
               >
                 Dismiss
               </button>
             </div>
+            {selfUpdate?.reason === 'updater_missing' && (
+              <div className="nx-sys-note" style={{ flexBasis: '100%' }}>{selfUpdate.message}</div>
+            )}
           </div>
         )}
         
@@ -32778,6 +32884,56 @@ const DashboardTiles = {
               Get early access to new features (may be unstable)
             </div>
           </div>
+
+          {/* Automatic updates (Windows installer builds, where Install Update works) */}
+          {selfUpdate?.supported && (
+            <div className="nx-sys-tile">
+              <div className="nx-sys-tile-head">
+                <RefreshCw size={18} />
+                <span style={{ fontWeight: 'bold' }}>Automatic Updates</span>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={!!updateSettings.auto_install}
+                  onChange={(e) => saveAutoUpdateSettings({ auto_install: e.target.checked })}
+                  style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                />
+                <span className="nx-sys-note">Install new versions automatically</span>
+              </label>
+              {updateSettings.auto_install && (
+                <div className="nx-update-auto">
+                  <label>
+                    At
+                    <select
+                      value={updateSettings.auto_hour ?? 4}
+                      onChange={(e) => saveAutoUpdateSettings({ auto_hour: Number(e.target.value) })}
+                    >
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>
+                          {new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    once a release is
+                    <select
+                      value={updateSettings.auto_delay_days ?? 3}
+                      onChange={(e) => saveAutoUpdateSettings({ auto_delay_days: Number(e.target.value) })}
+                    >
+                      {[0, 1, 3, 7, 14].map(d => (
+                        <option key={d} value={d}>{d === 0 ? 'out' : d === 1 ? '1 day old' : `${d} days old`}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+                Stable releases only. Waits while something is playing; a failed update is tried again the next day.
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Last Check Info & Check Now Button */}
@@ -32793,6 +32949,11 @@ const DashboardTiles = {
               <>Last checked: {new Date(updateSettings.last_check).toLocaleString()}</>
             ) : (
               <>Never checked</>
+            )}
+            {!installRun && ['done', 'failed'].includes(selfUpdate?.status?.state) && (
+              <div style={{ color: selfUpdate.status.state === 'failed' ? 'var(--error-color)' : undefined }}>
+                Last update{selfUpdate.status.updated_at ? ` (${new Date(selfUpdate.status.updated_at).toLocaleString()})` : ''}: {selfUpdate.status.message}
+              </div>
             )}
           </div>
           <button 
