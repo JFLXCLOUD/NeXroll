@@ -12,6 +12,8 @@ import Intermission from './components/Intermission';
 import { genreMatchSummary, ratingSummary } from './utils/trailerRatings';
 import { youtubeThumbnail, youtubeVideoId } from './utils/youtube';
 import { compareVersions, normalizeVersionString, parseSemver } from './utils/versions';
+import { wallClock } from './utils/timezones';
+import TimezoneNotice from './components/TimezoneNotice';
 import { installRunFromReply, installRunLost, isInstallRunActive } from './utils/selfUpdate';
 import useHealthSummary from './hooks/useHealthSummary';
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense } from 'react';
@@ -184,6 +186,14 @@ const DEFAULT_HIDDEN = DEFAULT_ORDER.filter(key => !FOCUS_ESSENTIAL_KEYS.include
 const DASH_KEYS = DEFAULT_ORDER.slice();
 const NEXROLL_WIKI_URL = 'https://github.com/JFLXCLOUD/NeXroll/wiki';
 
+// Schedule times are wall-clock times on NeXroll's clock (its timezone
+// setting), so anything comparing them with "now" uses scheduleNow(): this
+// browser's time as NeXroll's clock reads it. The App keeps scheduleZone in
+// step with the setting. Same as new Date() while both clocks agree; see
+// utils/timezones.js and issue #50.
+let scheduleZone = null;
+const scheduleNow = (date = new Date()) => wallClock(scheduleZone, date);
+
 // Monthly schedules deliberately store start_date as this sentinel; their real
 // dates live in recurrence_pattern. It must never be shown as a run date.
 const SCHEDULE_DATE_SENTINEL_YEAR = 2000;
@@ -200,7 +210,7 @@ const usableScheduleDate = (value) => {
 // a schedule that has not started yet -- on a recurring schedule it is simply
 // the day it was created, which is never a run date.
 const upcomingScheduleDate = (schedule) => {
-  const startOfToday = new Date();
+  const startOfToday = scheduleNow();
   startOfToday.setHours(0, 0, 0, 0);
   const next = usableScheduleDate(schedule?.next_run);
   if (next && next >= startOfToday) return next;
@@ -1552,6 +1562,9 @@ function App() {
 
   // Timezone settings state
   const [currentTimezone, setCurrentTimezone] = useState('UTC');
+  // 'UTC' above is a placeholder until /settings/timezone answers.
+  const [timezoneKnown, setTimezoneKnown] = useState(false);
+  scheduleZone = timezoneKnown ? currentTimezone : null;
   const [availableTimezones, setAvailableTimezones] = useState([]);
   const [timezoneLoading, setTimezoneLoading] = useState(false);
   const [timezoneSaving, setTimezoneSaving] = useState(false);
@@ -2876,6 +2889,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       const data = await safeJson(res);
       if (data && data.timezone) {
         setCurrentTimezone(data.timezone);
+        setTimezoneKnown(true);
       }
     } catch (e) {
       console.error('Load timezone error:', e);
@@ -2898,7 +2912,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   }, []);
 
-  const saveTimezone = async (tz) => {
+  // `announce: false` for callers that show their own result (the timezone notice).
+  const saveTimezone = async (tz, { announce = true } = {}) => {
     setTimezoneSaving(true);
     try {
       const res = await fetch(apiUrl('/settings/timezone'), {
@@ -2911,10 +2926,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         throw new Error(data?.detail || `HTTP ${res.status}`);
       }
       setCurrentTimezone(tz);
-      alert('Timezone updated successfully!');
+      setTimezoneKnown(true);
+      // The server worked out every schedule's next run again on the new clock.
+      fetchData();
+      if (announce) alert('Timezone updated successfully!');
+      else showAlert(`Schedules now run on ${tz} time.`, 'success');
+      return true;
     } catch (e) {
       console.error('Save timezone error:', e);
-      alert('Failed to update timezone: ' + (e?.message || e));
+      if (announce) alert('Failed to update timezone: ' + (e?.message || e));
+      else showAlert('Could not change the timezone: ' + (e?.message || e), 'error');
+      return false;
     } finally {
       setTimezoneSaving(false);
     }
@@ -3270,7 +3292,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // Countdown timer for next scheduled event
   useEffect(() => {
     const computeCountdown = () => {
-      const now = new Date();
+      const now = scheduleNow();
       let nearest = null;
       let nearestName = null;
       let nearestCatId = null;
@@ -3314,7 +3336,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     computeCountdown();
     const countdownInterval = setInterval(computeCountdown, 15000);
     return () => clearInterval(countdownInterval);
-  }, [schedules]);
+    // The timezone moves scheduleNow(), which computeCountdown reads.
+  }, [schedules, currentTimezone, timezoneKnown]);
 
   useEffect(() => {
     fetchData();
@@ -7350,7 +7373,7 @@ const DashboardTiles = {
     const detail = tile.detail || 'detailed';
     const size = tile.size || dashLayout?.sizes?.whats_next || DEFAULT_SIZES.whats_next;
     const maxRows = detail === 'compact' ? 3 : ({ sm: 4, md: 8, lg: 20 }[size] || 8);
-    const now = new Date();
+    const now = scheduleNow();
     const upcoming = (schedules || [])
       .filter(s => s.is_active)
       .map(s => {
@@ -9946,6 +9969,9 @@ const DashboardTiles = {
           </button>
           }
         </div>
+        {timezoneKnown && (
+          <TimezoneNotice timeZone={currentTimezone} now={dashboardNow} onUse={zone => saveTimezone(zone, { announce: false })} />
+        )}
       </>
     );
   };
@@ -19246,7 +19272,7 @@ const DashboardTiles = {
       const date = upcomingScheduleDate(schedule);
       if (schedule.recurrence_error) return 'Needs repair';
       if (!date) return 'No upcoming window';
-      const today = new Date();
+      const today = scheduleNow();
       const sameDay = date.toDateString() === today.toDateString();
       return sameDay
         ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -19338,6 +19364,9 @@ const DashboardTiles = {
 
     return (
       <div className="nx-command-center">
+        {timezoneKnown && (
+          <TimezoneNotice timeZone={currentTimezone} now={dashboardNow} onUse={zone => saveTimezone(zone, { announce: false })} />
+        )}
         <section className="nx-summary-strip" aria-label="Schedule summary">
           <div><span>Total schedules</span><strong>{schedules.length}</strong></div>
           <div className="is-success"><span>Enabled</span><strong>{schedules.filter(schedule => schedule.is_active).length}</strong></div>
@@ -19779,7 +19808,8 @@ const DashboardTiles = {
       syncCalendarDate(nextDate);
     };
 
-    const today = new Date();
+    // Schedule blocks are drawn on NeXroll's clock, so "today" and the now line are too.
+    const today = scheduleNow(dashboardNow);
     const weekStart = startOfWeek(calendarDay);
     const weekDaysView = Array.from({ length: 7 }, (_, index) => new Date(
       weekStart.getFullYear(),
@@ -19858,7 +19888,8 @@ const DashboardTiles = {
 
     const renderDayColumn = (day, { compact = false } = {}) => {
       const spans = withColumns(scheduleSpansForDay(day).filter(span => !span.allDay));
-      const isToday = dateKey(day) === dateKey(dashboardNow);
+      const isToday = dateKey(day) === dateKey(today);
+      const nowMinutes = (today.getHours() * 60) + today.getMinutes();
       return (
         <div
           className={`nx-cal-daycol${compact ? ' is-openable' : ''}`}
@@ -19871,8 +19902,8 @@ const DashboardTiles = {
           {isToday && (
             <div
               className="nx-cal-now"
-              style={{ top: pct((dashboardNow.getHours() * 60) + dashboardNow.getMinutes()) }}
-              title={`Now - ${formatGapTime((dashboardNow.getHours() * 60) + dashboardNow.getMinutes())}`}
+              style={{ top: pct(nowMinutes) }}
+              title={`Now - ${formatGapTime(nowMinutes)}`}
             />
           )}
           {spans.map((span, index) => (
@@ -20111,6 +20142,9 @@ const DashboardTiles = {
 
     return (
       <div className="nx-schedule-draft nx-draft-calendar-page">
+        {timezoneKnown && (
+          <TimezoneNotice timeZone={currentTimezone} now={dashboardNow} onUse={zone => saveTimezone(zone, { announce: false })} />
+        )}
         <div className="nx-draft-calendar-toolbar">
           <div>
             <button type="button" className="nx-draft-btn square" onClick={() => navigateCalendar(-1)} aria-label={`Previous ${calendarMode}`}><ChevronLeft size={13} /></button>

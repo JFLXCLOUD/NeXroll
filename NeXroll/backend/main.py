@@ -19366,13 +19366,30 @@ async def set_timezone(request: Request, db: Session = Depends(get_db)):
     
     try:
         setting = db.query(models.Setting).first()
+        previous = getattr(setting, "timezone", None) if setting else None
         if not setting:
             setting = models.Setting(plex_url=None, plex_token=None, timezone=tz)
             db.add(setting)
         else:
             setting.timezone = tz
-        
+
         db.commit()
+        # Next runs are wall-clock times on this clock: work them out again, or
+        # the pages keep showing the old clock's until each schedule next fires
+        # (issue #50). _calculate_next_run reads the zone just committed.
+        if (previous or "UTC") != tz:
+            for schedule in db.query(models.Schedule).all():
+                _refresh_schedule_next_run(schedule)
+            db.commit()
+            msg = f"Timezone changed from {previous or 'UTC'} to {tz}; schedule next runs recalculated"
+            _file_log(msg)
+            log_event('INFO', 'system', msg, source='set_timezone')
+            # Other schedules may be running on the new clock: pick the winner
+            # now rather than at the next tick, as saving a schedule does.
+            try:
+                scheduler.trigger_immediate_check()
+            except Exception as e:
+                _file_log(f"Scheduler check after a timezone change failed: {e}")
         return {"timezone": tz, "message": "Timezone updated successfully"}
     except Exception as e:
         db.rollback()

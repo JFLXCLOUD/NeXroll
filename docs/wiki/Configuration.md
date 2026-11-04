@@ -39,6 +39,8 @@ Set your local timezone to ensure schedules activate at the correct times.
 
 **Important**: Schedules use this timezone for start/end times. If prerolls aren't activating when expected, check this setting first.
 
+Until a timezone is picked NeXroll uses UTC. The setup wizard asks on its first screen, starting from your browser's timezone. When NeXroll's timezone runs on a different clock from the device you're using, the Dashboard, My Schedules and the Schedule Calendar say so, with the time on both clocks and a **Use** button that switches NeXroll to your device's timezone (or **Keep** to hide the notice in that browser). Changing the timezone works out every schedule's next run again on the new clock straight away. The calendar's "now" line and the dashboard's next schedule follow NeXroll's clock, the one schedules run on.
+
 ### Confirmation Dialogs
 
 Control whether NeXroll asks for confirmation before deleting items.

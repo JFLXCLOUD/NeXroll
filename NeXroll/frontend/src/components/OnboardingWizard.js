@@ -5,6 +5,7 @@ import {
   FolderSync, ArrowRight, Plus, X, Box, HelpCircle, FolderOpen
 } from 'lucide-react';
 import { FindPlexFolder, PlexFolderPicker, StatusIcon, statusText } from './PlexPathTools';
+import { suggestedTimeZone } from '../utils/timezones';
 
 /**
  * NeXroll v2 — First-run Onboarding Wizard
@@ -91,6 +92,30 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
   // needs path mappings, and with it connected NeXroll can ask Plex directly.
   const [plexReady, setPlexReady] = useState(false);
   const [pickerRow, setPickerRow] = useState(null);
+
+  // Timezone. Schedules run on NeXroll's clock, which stays on UTC until
+  // someone picks a zone, and nothing used to ask (issue #50: a Central-time
+  // install ran every schedule six hours early). A fresh install still on UTC
+  // starts from this browser's zone.
+  const [tzList, setTzList] = useState([]);
+  const [tzServer, setTzServer] = useState(null);
+  const [tzPicked, setTzPicked] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [current, list] = await Promise.all([
+          fetch(apiUrl('/settings/timezone'), { credentials: 'include' }).then(r => (r.ok ? r.json() : null)),
+          fetch(apiUrl('/settings/timezones'), { credentials: 'include' }).then(r => (r.ok ? r.json() : null)),
+        ]);
+        if (cancelled) return;
+        if (list && Array.isArray(list.timezones)) setTzList(list.timezones);
+        if (current && current.timezone) setTzServer(current.timezone);
+      } catch { /* the step works without it; Settings has the same choice */ }
+    })();
+    return () => { cancelled = true; };
+  }, [apiUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -397,6 +422,25 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
 
   const isRerun = !!(install && install.is_rerun);
   const accountExists = !!(install && install.users_exist);
+  const tzSuggested = suggestedTimeZone(tzList);
+  const tzChoice = tzPicked
+    || (!isRerun && tzServer === 'UTC' && tzSuggested ? tzSuggested : tzServer);
+
+  // Saved on the way out of Welcome and when the wizard closes, so skipping
+  // setup still keeps the zone shown on the first screen.
+  const saveTimezoneChoice = async () => {
+    if (!tzChoice || tzChoice === tzServer) return;
+    try {
+      const res = await fetch(apiUrl('/settings/timezone'), {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: tzChoice }),
+      });
+      if (res.ok) setTzServer(tzChoice);
+    } catch { /* Settings, General has the same choice */ }
+  };
+  const startSetup = () => { saveTimezoneChoice(); next(); };
+
   const summaryItems = [
     { label: 'Media server', done: !!(serverResult && serverResult.ok) || plexOAuth.status === 'connected' || !!(install && install.has_server),
       detail: (serverResult && serverResult.ok) || plexOAuth.status === 'connected' || (install && install.has_server)
@@ -406,6 +450,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     { label: 'NeX-Up', done: !!(nexupResult && nexupResult.ok), detail: (nexupResult && nexupResult.ok) ? 'Connected' : 'Optional, skipped' },
     { label: 'Storage', done: !!(storageResult && storageResult.ok), detail: (storageResult && storageResult.ok) ? 'Custom folder saved' : 'Using the default folder' },
     { label: 'Account', done: accountExists || !!(acctResult && acctResult.ok), detail: accountExists || (acctResult && acctResult.ok) ? 'Ready' : 'No login required' },
+    ...(tzChoice ? [{ label: 'Timezone', done: true, detail: `Schedules run on ${tzChoice} time` }] : []),
   ];
 
   const isDockerInstall = !!(installInfo && installInfo.is_docker);
@@ -504,6 +549,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
 
   const completeOnboarding = async () => {
     setFinishing(true);
+    await saveTimezoneChoice();
     try {
       await fetch(apiUrl('/onboarding/complete'), { method: 'POST', credentials: 'include' });
     } catch { /* best effort */ }
@@ -603,6 +649,25 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             <p style={{ color: sub, lineHeight: 1.6, margin: '0 auto', maxWidth: '460px', fontSize: '0.85rem' }}>
               Every step is optional, and you can reopen this wizard later from Settings, System.
             </p>
+            {tzList.length > 0 && tzChoice && (
+              <div style={{ textAlign: 'left', maxWidth: '360px', margin: '1.25rem auto 0' }}>
+                <label htmlFor="nx-wizard-timezone" style={labelStyle}>Your timezone</label>
+                <select
+                  id="nx-wizard-timezone"
+                  value={tzChoice}
+                  onChange={(e) => setTzPicked(e.target.value)}
+                  style={inputStyle}
+                >
+                  {tzList.map((tz) => (
+                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                  ))}
+                </select>
+                <p style={{ color: sub, fontSize: '0.78rem', margin: '0.35rem 0 0', lineHeight: 1.5 }}>
+                  Schedules start and stop on this clock.
+                  {tzSuggested && tzChoice === tzSuggested && !isRerun ? ' Taken from this browser.' : ''}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -1203,7 +1268,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               {stepIdx !== 0 && (
                 <button type="button" style={ghostBtn} onClick={next}>Skip</button>
               )}
-              <button type="button" style={primaryBtn} onClick={next}>
+              <button type="button" style={primaryBtn} onClick={stepIdx === 0 ? startSetup : next}>
                 {stepIdx === 0 ? 'Get started' : 'Next'} <ChevronRight size={16} />
               </button>
             </div>

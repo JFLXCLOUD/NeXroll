@@ -113,11 +113,11 @@ If you can't access the web interface due to authentication:
 
 ### Schedules Running at Wrong Time
 
-**Cause:** Timezone mismatch (especially in Docker)
+**Cause:** NeXroll's timezone setting is not your timezone. Schedules run on the timezone in **Settings > General > Timezone**, which is UTC until someone picks one. A schedule set for 10 PM then starts at 10 PM UTC: 4 PM in Chicago, 5 PM in New York (winter). The Dashboard and Schedules pages show a notice when this setting differs from your device's timezone.
 
-**Solution:**
+**Solution:** Set **Settings > General > Timezone** to your timezone, or press **Use** on the notice. Next runs are recalculated straight away.
 
-Set the `TZ` environment variable:
+Docker's `TZ` variable doesn't change which clock schedules use, but it does set the timestamps in logs. Set it too:
 
 ```yaml
 environment:
@@ -140,7 +140,7 @@ Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 1. **Check Enabled toggle**: Must be ON
 2. **Verify date range**: Current date must be within range
 3. **Check time range**: If set, current time must be within range
-4. **Verify timezone**: See above
+4. **Verify timezone**: Settings > General > Timezone (see above)
 5. **Check priority/conflicts**: Higher-priority exclusive schedules may override
 
 ### Prerolls Not Updating

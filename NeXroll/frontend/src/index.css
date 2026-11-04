@@ -6976,6 +6976,26 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 
 /* Schedules / approved Command Center production layout. */
 .nx-command-center { display: flex; flex-direction: column; gap: 12px; }
+
+/* NeXroll's timezone differs from this device's (components/TimezoneNotice.js). */
+.nx-tz-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning-color) 40%, transparent);
+  color: var(--text-color);
+}
+.nx-dash-page .nx-tz-notice { margin-top: 12px; }
+.nx-draft-calendar-page .nx-tz-notice { margin-bottom: 12px; }
+.nx-tz-notice > svg { color: var(--warning-color); flex-shrink: 0; }
+.nx-tz-notice-text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 280px; min-width: 0; }
+.nx-tz-notice-text strong { font-size: 0.9rem; }
+.nx-tz-notice-text span { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.45; }
+.nx-tz-notice-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .nx-route-summary {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
