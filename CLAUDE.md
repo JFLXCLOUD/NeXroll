@@ -61,7 +61,6 @@ rebuild leaves a ~1.4GB dangling image that accumulates inside the fixed-size do
 | `Dockerfile` | Multi-stage build: Python 3.12-slim + FFmpeg + Deno |
 | `entrypoint.sh` | PUID/PGID user setup, drops privileges via gosu |
 | `docker-compose.yml` | Reference compose for standalone deploy |
-| `nexroll-unraid-template.xml` | Unraid CA template (points to fork's GHCR image) |
 | `NeXroll/backend/main.py` | FastAPI app — all API routes |
 | `Plugins/` | Plugin system for extensibility |
 
