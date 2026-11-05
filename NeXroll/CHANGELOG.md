@@ -1,5 +1,33 @@
 ﻿# Changelog
 
+## [2.4.0] - 11-05-2026
+
+> Windows installs can now install updates from Settings > System, or on their own at an hour you pick. Also: setup asks for your timezone and NeXroll says when it differs from your device's, and with login on NeXroll names Jellyfin and Emby plugins that connect without an API key.
+
+### Upgrading
+
+- **Windows: install 2.4.0 by hand.** It is the first version that can update itself; from then on, **Settings > System > Install Update** installs new versions.
+- **Docker: `:2.3` stays on 2.3.0.** Use `:2.4`, `:2` or `latest` for this release. Docker installs update the same way as before.
+- **With login on, give each Jellyfin and Emby plugin an API key** if NeXroll says it has none. Plugins still work without one for now; a later version will require it. No plugin update is needed.
+- **No settings to change.** Automatic updates stay off until you turn them on.
+
+### Added
+
+- **Install Update (Windows).** **Settings > System > Install Update** backs up the database, downloads the release from GitHub, checks it against GitHub's SHA-256, installs it and restarts NeXroll the way it was running. **Automatic Updates** (off by default) do the same at an hour you pick, once a release is as old as you choose (3 days by default), and wait while something is playing.
+- **Plugins without an API key are named while login is on,** on the Jellyfin or Emby page under Connect and in System health. **Give it a key** saves one into the plugin and keeps its other settings.
+
+### Changed
+
+- **The frontend's build tools are updated to patched releases** (security advisories in build-time packages).
+
+### Fixed
+
+- **Emby: saving the plugin from the Connect page reset its Movies/Episodes, Max Intros and timeout settings,** and a plugin without an API key showed as missing.
+
+### Issues resolved
+
+- [#50](https://github.com/JFLXCLOUD/NeXroll/issues/50): Schedules ran hours off on an install whose timezone was never set (still UTC). Setup now asks for it, and the Dashboard and Schedules pages offer to switch when NeXroll's timezone differs from your device's.
+
 ## [2.3.0] - 11-02-2026
 
 > A security update: with login on, a read-only API key could change anything and download the full backup, and NeXroll could be made to send your Plex token to another address. Also: more than one Radarr and Sonarr in NeX-Up, Community Prerolls on Typical Nerds' new servers, better Community matching, and upload progress in Add Prerolls.
