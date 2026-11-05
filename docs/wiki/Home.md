@@ -13,6 +13,12 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.4.0
+
+- **Install updates from the web UI on Windows.** Settings > System > Install Update backs up the database, checks the download against GitHub and restarts NeXroll; Automatic Updates can do it at an hour you pick. Install 2.4.0 by hand once. See [Install Update](Configuration#install-update-windows).
+- **Setup asks for your timezone,** and the Dashboard and Schedules pages say when NeXroll's differs from your device's. See [Timezone](Configuration#timezone).
+- **Plugins without an API key are named while login is on,** with **Give it a key** on the Connect page. A later version will require the key. See [Authentication](Configuration#usernamepassword-authentication).
+
 ## What's New in v2.3.0
 
 - **Security fixes.** With login on, read-only API keys can no longer make changes, backups fetched with a key leave out your keys, and preroll videos need a login. The Plex probe sends your token only to your own Plex server, and restores and Community downloads can no longer be pointed elsewhere. See [Authentication](Configuration#authentication).
