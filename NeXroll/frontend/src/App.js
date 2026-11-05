@@ -14,6 +14,8 @@ import { youtubeThumbnail, youtubeVideoId } from './utils/youtube';
 import { compareVersions, normalizeVersionString, parseSemver } from './utils/versions';
 import { wallClock } from './utils/timezones';
 import TimezoneNotice from './components/TimezoneNotice';
+import KeylessPluginNotice from './components/KeylessPluginNotice';
+import { keylessPlugins, pluginClientCount, pluginSeen } from './utils/pluginClients';
 import { installRunFromReply, installRunLost, isInstallRunActive } from './utils/selfUpdate';
 import useHealthSummary from './hooks/useHealthSummary';
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, Suspense } from 'react';
@@ -378,6 +380,7 @@ const HEALTH_CHECK_ACTIONS = {
   conflicts: { tab: 'schedules/conflicts', label: 'Resolve conflicts' },
   library: { tab: 'library/add', label: 'Add prerolls' },
   community_index: { tab: 'community-prerolls', label: 'Refresh index' },
+  plugin_keys: { tab: 'connect', label: 'Give plugin a key' },
 };
 
 const getPrimaryHealthAction = (summary) => {
@@ -4390,15 +4393,21 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // Jellyfin's plugin instructions - the wrong server's, for a problem
     // Jellyfin did not have.
     const needsPlugin = connected.find(id => {
-      if (id === 'jellyfin') return !(jellyfinServerInfo?.plugin_clients?.length > 0);
-      if (id === 'emby') return !(embyServerInfo?.plugin_clients?.length > 0);
+      if (id === 'jellyfin') return !pluginSeen(jellyfinServerInfo);
+      if (id === 'emby') return !pluginSeen(embyServerInfo);
       return false;
     });
-    const target = needsPlugin || connected[0];
+    // With login on, a plugin connecting without an API key needs one (the
+    // dashboard's "Give plugin a key" lands here).
+    const needsKey = authStatus.auth_enabled && connected.find(id => (
+      (id === 'jellyfin' && keylessPlugins(jellyfinServerInfo).length > 0)
+      || (id === 'emby' && keylessPlugins(embyServerInfo).length > 0)
+    ));
+    const target = needsPlugin || needsKey || connected[0];
     if (target && target !== activeServer) {
       setActiveServer(target);
     }
-  }, [plexStatus, jellyfinStatus, embyStatus, jellyfinServerInfo, embyServerInfo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [plexStatus, jellyfinStatus, embyStatus, jellyfinServerInfo, embyServerInfo, authStatus.auth_enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply to every connected server, not whichever one happened to be first.
   // Plex needs an explicit push; Jellyfin and Emby read the active category
@@ -8852,12 +8861,13 @@ const DashboardTiles = {
       const realPathMappingCount = pathMappings.filter(mapping => (mapping.local || '').trim() && (mapping.plex || '').trim()).length;
       // Count plugin clients across every plugin-based server that is connected,
       // not just whichever one happens to be first in the list.
-      const pluginClientCount =
-        (connectedServers.includes('jellyfin') ? (jellyfinServerInfo?.plugin_clients?.length || 0) : 0)
-        + (connectedServers.includes('emby') ? (embyServerInfo?.plugin_clients?.length || 0) : 0);
+      // Plugins without an API key count too: they play prerolls.
+      const pluginClients =
+        (connectedServers.includes('jellyfin') ? pluginClientCount(jellyfinServerInfo) : 0)
+        + (connectedServers.includes('emby') ? pluginClientCount(embyServerInfo) : 0);
       const usesPlugin = connectedServers.includes('jellyfin') || connectedServers.includes('emby');
       const thirdTile = usesPlugin
-        ? { label: 'Plugin clients', value: pluginClientCount, tone: pluginClientCount ? 'success' : '' }
+        ? { label: 'Plugin clients', value: pluginClients, tone: pluginClients ? 'success' : '' }
         : { label: 'Path mappings', value: realPathMappingCount, tone: realPathMappingCount ? 'success' : '' };
       items = [
         { label: connectedServers.length > 1 ? 'Servers' : 'Active server', value: activeLabel,
@@ -21653,6 +21663,8 @@ const DashboardTiles = {
       .then(data => {
         setJellyfinPluginConfiguring(false);
         if (data.success) {
+          // The plugin has a key now; the server dropped it from keyless_plugins.
+          setJellyfinServerInfo(prev => (prev ? { ...prev, keyless_plugins: [] } : prev));
           alert('Plugin configured successfully! Jellyfin will now use NeXroll for prerolls.');
           handleDetectJellyfinPlugin(); // refresh plugin info
         } else {
@@ -21759,6 +21771,10 @@ const DashboardTiles = {
       return;
     }
     setEmbyPluginConfiguring(true);
+    // The Emby panel has no fields for these, and the server writes the whole
+    // plugin configuration: send what the plugin has, or each save put them
+    // back to their defaults.
+    const current = embyPluginInfo?.config || {};
     fetch(apiUrl('emby/plugin/configure'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -21766,6 +21782,10 @@ const DashboardTiles = {
         nexroll_url: embyPluginNexrollUrl,
         path_prefix_from: embyPluginPathFrom,
         path_prefix_to: embyPluginPathTo,
+        enable_for_movies: current.EnableForMovies ?? true,
+        enable_for_episodes: current.EnableForEpisodes ?? true,
+        max_intros: Number(current.MaxIntros) || 0,
+        timeout_seconds: Number(current.TimeoutSeconds) || 5,
       })
     })
       .then(res => {
@@ -21775,6 +21795,7 @@ const DashboardTiles = {
       .then(data => {
         setEmbyPluginConfiguring(false);
         if (data.success) {
+          setEmbyServerInfo(prev => (prev ? { ...prev, keyless_plugins: [] } : prev));
           alert('Plugin configured successfully! Emby will now use NeXroll for prerolls.');
           handleDetectEmbyPlugin();
         } else {
@@ -33519,15 +33540,32 @@ const DashboardTiles = {
         </div>
       )}
 
+      <KeylessPluginNotice
+        server="Jellyfin"
+        plugins={keylessPlugins(jellyfinServerInfo)}
+        loginOn={authStatus.auth_enabled}
+        onGiveKey={connected && jellyfinPluginInfo?.detected && jellyfinPluginNexrollUrl ? handleConfigureJellyfinPlugin : undefined}
+        giving={jellyfinPluginConfiguring}
+        onOpenApiKeys={() => setActiveTab('settings/apikeys')}
+      />
+
       {/* Plugin clients (when present) */}
-      {jellyfinServerInfo?.plugin_clients?.length > 0 && (
+      {pluginSeen(jellyfinServerInfo) && (
         <div className="nx-notice accent" style={{ marginBottom: '1rem' }}>
           <strong style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 91%, #000)' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
-          {jellyfinServerInfo.plugin_clients.map((client, idx) => (
+          {(jellyfinServerInfo.plugin_clients || []).map((client, idx) => (
             <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
               {client.server_name || 'Jellyfin'} {client.server_version ? `(v${client.server_version})` : ''}
               <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
                 via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
+              </span>
+            </div>
+          ))}
+          {keylessPlugins(jellyfinServerInfo).map((client, idx) => (
+            <div key={`keyless-${idx}`} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+              {client.server_name || client.address || 'Jellyfin'} {client.plugin_version ? `(v${client.plugin_version})` : ''}
+              <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                without an API key — last seen {client.last_seen ? new Date(client.last_seen).toLocaleString() : 'N/A'}
               </span>
             </div>
           ))}
@@ -33878,10 +33916,20 @@ const DashboardTiles = {
         </div>
       )}
 
+      <KeylessPluginNotice
+        server="Emby"
+        plugins={keylessPlugins(embyServerInfo)}
+        loginOn={authStatus.auth_enabled}
+        onGiveKey={connected && embyPluginInfo?.detected && embyPluginNexrollUrl ? handleConfigureEmbyPlugin : undefined}
+        giving={embyPluginConfiguring}
+        onOpenApiKeys={() => setActiveTab('settings/apikeys')}
+      />
+
       {/* Emby needs the plugin before anything plays, and nothing in the app
           used to say so - a user could connect Emby successfully, build a
-          schedule, and never see a preroll, with no indication why. */}
-      {connected && !(embyServerInfo?.plugin_clients?.length > 0) && (
+          schedule, and never see a preroll, with no indication why. A plugin
+          without an API key counts: it plays prerolls. */}
+      {connected && !pluginSeen(embyServerInfo) && (
         <div className="nx-notice warn" style={{ marginBottom: '1rem' }}>
           <strong>Prerolls will not play yet — the plugin is missing</strong>
           <p style={{ margin: '0.5rem 0 0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
@@ -33930,14 +33978,22 @@ const DashboardTiles = {
       )}
 
       {/* Plugin clients (when present) */}
-      {embyServerInfo?.plugin_clients?.length > 0 && (
+      {pluginSeen(embyServerInfo) && (
         <div className="nx-notice accent" style={{ marginBottom: '1rem' }}>
           <strong style={{ color: 'color-mix(in srgb, var(--nx-sec-library) 91%, #000)' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
-          {embyServerInfo.plugin_clients.map((client, idx) => (
+          {(embyServerInfo.plugin_clients || []).map((client, idx) => (
             <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
               {client.server_name || 'Emby'} {client.server_version ? `(v${client.server_version})` : ''}
               <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
                 via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
+              </span>
+            </div>
+          ))}
+          {keylessPlugins(embyServerInfo).map((client, idx) => (
+            <div key={`keyless-${idx}`} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+              {client.server_name || client.address || 'Emby'} {client.plugin_version ? `(v${client.plugin_version})` : ''}
+              <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                without an API key — last seen {client.last_seen ? new Date(client.last_seen).toLocaleString() : 'N/A'}
               </span>
             </div>
           ))}
@@ -34225,7 +34281,7 @@ const DashboardTiles = {
           // never played; say what is actually missing instead.
           embyServerInfo?.connection_type === 'plugin'
             ? 'via Plugin (API Key)'
-            : embyServerInfo?.plugin_clients?.length > 0
+            : pluginSeen(embyServerInfo)
               ? 'Plugin connected'
               : embyServerInfo?.connection_type === 'direct'
                 ? 'Connected — plugin not detected'

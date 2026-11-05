@@ -899,7 +899,12 @@ GET /system/health/summary?conflicts=2
 
 Composite health score behind the dashboard's **System health** tile. Scores the
 install out of 100 across the scheduler, media server, preroll library, storage,
-schedule conflicts, and community index age.
+schedule conflicts, and community index age. With login on, a `plugin_keys`
+check (`warn`, 5 points) names Jellyfin/Emby plugins that asked
+`/plugin/intros` for prerolls without an API key in the last week; it is left
+out otherwise. `GET /jellyfin/status` and `GET /emby/status` list those plugins
+in `keyless_plugins` (`server_name`, `address`, `plugin_version`, `last_seen`,
+`requests`); a plugin leaves the list when it connects with a key.
 
 A check that could not be measured is reported as `unknown` and costs no points,
 so a fresh install does not open on an alarming score. Any check in `error`

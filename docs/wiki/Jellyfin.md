@@ -111,6 +111,8 @@ You can also configure the plugin directly in Jellyfin:
 7. Toggle **Enable for Movies** / **Enable for Episodes**
 8. Click **Save**
 
+The API key is optional for now. With **Require Login** on, NeXroll names a plugin that connects without one on **Connect → Jellyfin** and in **System health**, and **Give it a key** there saves a key into the plugin for you. A later version will require the key. See [Configuration](Configuration#usernamepassword-authentication).
+
 ## Step 4: Test Playback
 
 1. Play any movie in Jellyfin

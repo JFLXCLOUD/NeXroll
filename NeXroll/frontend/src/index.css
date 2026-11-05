@@ -6996,6 +6996,14 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 .nx-tz-notice-text strong { font-size: 0.9rem; }
 .nx-tz-notice-text span { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.45; }
 .nx-tz-notice-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* A Jellyfin/Emby plugin connects without an API key while login is on
+   (components/KeylessPluginNotice.js). */
+.nx-keyless-notice > strong > svg { color: var(--warning-color); }
+.nx-keyless-text { margin: 0.5rem 0; font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; }
+.nx-keyless-list,
+.nx-keyless-steps { margin: 0.5rem 0; padding-left: 1.25rem; font-size: 0.9rem; line-height: 1.7; }
+.nx-keyless-foot { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--text-secondary); }
 .nx-route-summary {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

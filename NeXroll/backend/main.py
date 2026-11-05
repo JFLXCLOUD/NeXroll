@@ -118,6 +118,7 @@ from backend import community_catalog
 from backend import community_match
 from backend import community_servers
 from backend import self_update
+from backend import keyless_plugins
 from backend.shuffle_bag import shuffle_bag_sample
 from backend.sequence_utils import representative_category_id
 from backend.backup_utils import (
@@ -16440,6 +16441,17 @@ def system_health_summary(conflicts: Optional[int] = None, db: Session = Depends
             "Unable to check the media server connection; retry or review Connections",
             "Check unavailable"))
 
+    # Jellyfin/Emby plugins asking for prerolls without an API key while login
+    # is on. Left out otherwise.
+    try:
+        keys_check = health_summary.plugin_keys_check(
+            bool(getattr(db.query(models.Setting).first(), "auth_enabled", False)),
+            keyless_plugins.current())
+        if keys_check:
+            checks.append(keys_check)
+    except Exception:
+        pass
+
     # Whether Plex could open the prerolls it was last given. Plex-only:
     # Jellyfin and Emby download prerolls from NeXroll and never need a path.
     try:
@@ -27145,6 +27157,14 @@ def connect_jellyfin(request: JellyfinConnectRequest, db: Session = Depends(get_
 
 @app.get("/jellyfin/status")
 def get_jellyfin_status(db: Session = Depends(get_db)):
+    out = _jellyfin_connection_status(db)
+    # Plugins asking for prerolls without an API key (the Connect page warns
+    # when login is on; see keyless_plugins).
+    out["keyless_plugins"] = keyless_plugins.current("Jellyfin")
+    return out
+
+
+def _jellyfin_connection_status(db: Session):
     """
     Return Jellyfin connection status without throwing 500s.
     Always returns 200 with a JSON object. Logs internal errors where applicable.
@@ -27326,9 +27346,14 @@ def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
 
 
 def _plugin_has_checked_in(server_type: str) -> bool:
-    """Whether a plugin of this server type has ever reached /plugin/intros."""
+    """Whether a plugin of this server type has ever reached /plugin/intros.
+
+    A plugin set up without an API key counts too: it works, and repointing a
+    working plugin is the mistake should_repair avoids.
+    """
     want = (server_type or "").lower()
-    return any((c.get("server_type") or "").lower() == want for c in PLUGIN_CLIENTS.values())
+    return (any((c.get("server_type") or "").lower() == want for c in PLUGIN_CLIENTS.values())
+            or keyless_plugins.seen(server_type))
 
 
 def _auto_repair_plugin_url(server_type: str, config: dict, suggested_url: str,
@@ -27468,6 +27493,7 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
             raise HTTPException(status_code=502, detail=detail)
 
         log_event('INFO', 'jellyfin', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_jellyfin_plugin')
+        keyless_plugins.forget_type("Jellyfin")
 
         return {
             "success": True,
@@ -27709,6 +27735,12 @@ def connect_emby(request: EmbyConnectRequest, db: Session = Depends(get_db)):
 
 @app.get("/emby/status")
 def get_emby_status(db: Session = Depends(get_db)):
+    out = _emby_connection_status(db)
+    out["keyless_plugins"] = keyless_plugins.current("Emby")
+    return out
+
+
+def _emby_connection_status(db: Session):
     """Return Emby connection status. Always returns 200.
     Includes plugin client connections (Emby servers connected via API key)."""
     try:
@@ -28006,6 +28038,7 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
                                        f"Check that your Emby API key has admin privileges and the plugin supports remote configuration.")
 
         log_event('INFO', 'emby', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_emby_plugin')
+        keyless_plugins.forget_type("Emby")
 
         return {
             "success": True,
@@ -31177,14 +31210,25 @@ def plugin_get_intros(
     """
     # Optional API key auth — allow unauthenticated for backwards compatibility
     api_key_value = request.headers.get("X-Api-Key") or request.query_params.get("api_key")
-    if api_key_value:
+    server_type = request.headers.get("X-Plugin-Server-Type", "unknown")
+    server_name = request.headers.get("X-Plugin-Server-Name", "")
+    server_version = request.headers.get("X-Plugin-Server-Version", "")
+    client_address = request.client.host if request.client else ""
+    if not api_key_value:
+        # Still answered, so prerolls keep playing; with login on, the Connect
+        # page and the health tile ask for a key (keyless_plugins).
+        first_seen = keyless_plugins.note(server_type, server_name, server_version, client_address)
+        if first_seen and getattr(db.query(models.Setting).first(), "auth_enabled", False):
+            log_event("WARNING", "plugin",
+                      f"{keyless_plugins.describe(first_seen)} asks for prerolls without an API key "
+                      "while login is on. Give it a key on the Connect page.",
+                      source="plugin_get_intros", db=db)
+    else:
         key_record = validate_api_key(api_key_value, "read", db)
         if not key_record:
             raise HTTPException(status_code=401, detail="Invalid or expired API key")
+        keyless_plugins.forget(server_type, server_name, client_address)
         # Track plugin client
-        server_type = request.headers.get("X-Plugin-Server-Type", "unknown")
-        server_name = request.headers.get("X-Plugin-Server-Name", "")
-        server_version = request.headers.get("X-Plugin-Server-Version", "")
         PLUGIN_CLIENTS[key_record.name] = {
             "api_key_name": key_record.name,
             "api_key_id": key_record.id,
@@ -31275,6 +31319,7 @@ def plugin_health(
         if key_record:
             authenticated = True
             key_name = key_record.name
+            keyless_plugins.forget(srv_type, srv_name, request.client.host if request.client else "")
             PLUGIN_CLIENTS[key_record.name] = {
                 "api_key_name": key_record.name,
                 "api_key_id": key_record.id,
@@ -31406,6 +31451,7 @@ def plugin_register(request: Request, db: Session = Depends(get_db)):
     server_type = request.headers.get("X-Plugin-Server-Type", "unknown")
     server_name = request.headers.get("X-Plugin-Server-Name", "")
     server_version = request.headers.get("X-Plugin-Server-Version", "")
+    keyless_plugins.forget(server_type, server_name, request.client.host if request.client else "")
 
     PLUGIN_CLIENTS[key_record.name] = {
         "api_key_name": key_record.name,

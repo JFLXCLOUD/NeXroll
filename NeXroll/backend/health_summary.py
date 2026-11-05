@@ -33,6 +33,9 @@ DEFAULT_WEIGHTS = {
     # Only present when Plex is configured. A preroll Plex cannot open plays
     # nothing, so this weighs close to the media server itself.
     "plex_paths": 20,
+    # Only present with login on and a plugin connecting without an API key.
+    # Prerolls still play, so it costs little.
+    "plugin_keys": 10,
 }
 
 # Fraction of a check's weight deducted at each status.
@@ -179,3 +182,24 @@ def media_server_check(servers) -> dict:
     names = [s["name"] for s in servers]
     return make_check("media_server", "Media server", OK, "",
                       f"{names[0]} connected" if len(names) == 1 else " and ".join(names))
+
+
+def plugin_keys_check(login_on: bool, keyless: list) -> Optional[dict]:
+    """Jellyfin/Emby plugins asking for prerolls without an API key.
+
+    ``keyless`` is keyless_plugins.current(). Only a problem with login on:
+    with login off anyone on the network can use NeXroll anyway, and a key
+    adds nothing. None means leave the check out.
+    """
+    if not login_on or not keyless:
+        return None
+    first = keyless[0]
+    where = first.get("server_name") or first.get("address") or ""
+    lead = f"The {first.get('server_type') or 'media server'} plugin" + (f" on {where}" if where else "")
+    if len(keyless) == 1:
+        detail = f"{lead} connects without an API key; give it one on the Connect page"
+    else:
+        detail = f"{len(keyless)} plugins connect without an API key; give them one on the Connect page"
+    count = len(keyless)
+    return make_check("plugin_keys", "Plugin API keys", WARN, detail,
+                      f"{count} without a key")

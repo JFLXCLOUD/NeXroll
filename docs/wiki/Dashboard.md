@@ -11,7 +11,7 @@ Everything on it is a **tile**. You choose which tiles appear, how big they are,
 The two tiles that matter most on a normal day:
 
 - **Current & next schedule** — what is active right now, how it plays (single preroll, shuffled category, or a sequence), and what takes over next.
-- **System health** — one score covering the scheduler, your media server connection, storage, and schedule conflicts. If something needs attention, it says so here with a link straight to the fix.
+- **System health** — one score covering the scheduler, your media server connection, storage, and schedule conflicts. With login on, it also names any Jellyfin or Emby plugin that connects without an API key. If something needs attention, it says so here with a link straight to the fix.
 
 Connection health confirms NeXroll can reach the server. It does not prove the media server can open a preroll file or that a client played it; see [Path Mappings](Path-Mappings) if playback still fails.
 

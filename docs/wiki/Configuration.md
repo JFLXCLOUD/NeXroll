@@ -140,6 +140,8 @@ Enable login-based access control:
 
 With login on, everything except the sign-in screen needs a login or an API key, including the preroll videos and thumbnails the Library plays. The Jellyfin and Emby plugins keep working: they use their own endpoints, with the plugin's API key when one is set.
 
+A plugin without an API key still gets its prerolls, but then anyone who can reach NeXroll can ask for them the same way. While login is on, the Jellyfin or Emby page under **Connect** and **System health** on the dashboard name each plugin that connects without a key. When NeXroll is connected to that server, **Give it a key** creates a key and saves it in the plugin's settings; otherwise create one under **Settings → API Keys** (Read Only is enough) and paste it into the plugin's settings. A later version will require the key.
+
 ### Security Features
 
 | Feature | Description |

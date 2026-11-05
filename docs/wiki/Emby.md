@@ -101,6 +101,8 @@ You can also configure the plugin directly in Emby:
 6. Toggle **Enable for Movies** / **Enable for Episodes**
 7. Click **Save**
 
+The API key is optional for now. With **Require Login** on, NeXroll names a plugin that connects without one on **Connect → Emby** and in **System health**, and **Give it a key** there saves a key into the plugin for you, keeping the plugin's other settings. A later version will require the key. See [Configuration](Configuration#usernamepassword-authentication).
+
 ## Step 4: Enable Cinema Mode
 
 Emby's Cinema Mode is what actually plays intros before content. The NeXroll plugin hooks into this system.
