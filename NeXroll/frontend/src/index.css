@@ -1691,6 +1691,13 @@ body.dark .nx-chip.nx-status.ok {
   color: color-mix(in srgb, var(--success-color) 68%, var(--text-color));
 }
 
+/* A schedule in its window with nothing to play (Upcoming schedules tile). */
+.nx-chip.nx-status.warn {
+  background: color-mix(in srgb, var(--warning-color) 18%, transparent);
+  border-color: color-mix(in srgb, var(--warning-color) 50%, transparent);
+  color: color-mix(in srgb, var(--warning-color) 70%, var(--text-color));
+}
+
 body.light .nx-chip.nx-status.bad {
   background: color-mix(in srgb, var(--error-color) 15%, transparent);
   border-color: color-mix(in srgb, var(--error-color) 45%, transparent);
@@ -7420,6 +7427,25 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
 }
 .nx-comm-bulk-failed strong { color: var(--text-color); }
 @media (prefers-reduced-motion: reduce) { .nx-comm-bulk-fill { transition: none; } }
+/* Docked under the results and held at the bottom of the screen while the
+   list scrolls, like the Library's bulk dock. Opaque: rows pass under it. */
+.nx-comm-bulkbar.is-docked {
+  position: sticky; bottom: 12px; z-index: 8;
+  margin: 0.6rem 0 0;
+  border-color: color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
+  background: color-mix(in srgb, var(--accent-color) 8%, var(--card-bg));
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .22);
+}
+.nx-comm-bulkbar.is-docked + .nx-comm-bulk-failed { margin: 0.6rem 0 0; }
+/* One row on a desktop: the category picker took a whole line of its own. */
+.nx-comm-bulkbar.is-docked > select { flex: 0 1 240px; width: auto; min-width: 150px; margin: 0; }
+.nx-comm-bulkbar.is-docked > .nx-category-create { flex: 1 1 320px; min-width: 0; }
+@media (max-width: 600px) {
+  .nx-comm-bulkbar.is-docked { bottom: 8px; gap: 8px; padding: 0.5rem 0.6rem; }
+  .nx-comm-bulkbar.is-docked > select { flex: 1 1 100%; }
+  /* Keep the dock short on a phone: the count, the picker and the buttons. */
+  .nx-comm-bulkbar.is-docked .nx-comm-bulk-status span { display: none; }
+}
 .nx-community-browser .nx-comm-row { cursor: default; }
 .nx-community-browser.has-inspector .nx-comm-row { cursor: pointer; }
 .nx-community-browser .nx-comm-row.is-selected { background: color-mix(in srgb, var(--nx-section-accent) 9%, var(--raised-bg)); box-shadow: inset 3px 0 var(--nx-section-accent); }
@@ -7664,6 +7690,10 @@ body.dark .nx-customize .nx-tilerow { background: rgba(255, 255, 255, 0.014); bo
   .nx-content-dashboard .nx-focus-library,
   .nx-content-dashboard .nx-focus-actions,
   .nx-content-dashboard .nx-focus-storage { min-height: 0; }
+  /* Stack Currently showing above Up next. The two-column rule above
+     outranked the generic phone rule, so on phones both halves were squeezed
+     side by side under a down arrow. */
+  .nx-content-dashboard .nx-schedule-glance { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 }
 
 /* ====================================================================

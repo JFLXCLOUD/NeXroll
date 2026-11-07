@@ -194,7 +194,9 @@ class SkipOnServersTests(RotationHarness):
         self.set_filler(filler_type="sequence", filler_sequence_id=seq_id)
         self.run_minutes(0)
         self.assertEqual(self.state()[0], f"sequence:{seq_id}", "Jellyfin never got the filler")
-        self.assertEqual(FakePlex.writes, [], "Plex keeps its list when there is nothing for it")
+        # Nothing to play means nothing plays (JB, November 6): Plex used to
+        # keep the previous list here.
+        self.assertEqual(FakePlex.writes, [""], "Plex gets an empty list when there is nothing for it")
 
 
 class FillerPrerollTests(RotationHarness):

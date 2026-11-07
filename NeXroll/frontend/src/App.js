@@ -196,6 +196,28 @@ const NEXROLL_WIKI_URL = 'https://github.com/JFLXCLOUD/NeXroll/wiki';
 let scheduleZone = null;
 const scheduleNow = (date = new Date()) => wallClock(scheduleZone, date);
 
+// An API error's detail as text. FastAPI sends a string, or an object with a
+// message (the Plex path check, the playback guard); alerts used to show the
+// object as "[object Object]".
+const apiDetailText = (detail, fallback) =>
+  (typeof detail === 'string' && detail) || detail?.message || fallback;
+
+// The apply endpoints answer 409 with detail.code "playback" while Plex plays
+// the prerolls of a movie that just started, and take ?force=true to apply
+// anyway (changing the list then makes Plex skip the next preroll).
+const isPlaybackHold = (status, data) => status === 409 && data?.detail?.code === 'playback';
+
+// How a schedule in its window is doing, from now_showing.schedule_states:
+// badge text and chip tone, and the order rows are listed in.
+const WINDOW_STATE_BADGES = {
+  playing: ['Playing', 'ok'],
+  blending: ['In blend', 'ok'],
+  no_prerolls: ['No prerolls', 'warn'],
+  outranked: ['Outranked', ''],
+  not_blending: ['Not in blend', ''],
+};
+const WINDOW_STATE_ORDER = { playing: 0, blending: 1, no_prerolls: 2, outranked: 3, not_blending: 4 };
+
 // Monthly schedules deliberately store start_date as this sentinel; their real
 // dates live in recurrence_pattern. It must never be shown as a run date.
 const SCHEDULE_DATE_SENTINEL_YEAR = 2000;
@@ -1154,6 +1176,9 @@ function App() {
   const [highlightRescanAction, setHighlightRescanAction] = useState(null);
   const [activeCategory, setActiveCategory] = useState(null);
   const [appliedSequence, setAppliedSequence] = useState(null); // Manually applied sequence info
+  // What the Current & next schedule tile says, worked out by the backend
+  // with the scheduler's own rules (backend/now_showing.py).
+  const [nowShowing, setNowShowing] = useState(null);
   const [currentPrerollPreview, setCurrentPrerollPreview] = useState(null); // {prerolls: [...], index: 0} for preview modal
   const [previewError, setPreviewError] = useState(null); // { code } when the current preview clip can't be played
   const dashboardVideoRef = useRef(null);
@@ -3201,6 +3226,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setFfmpegInfo(ffmpeg || null);
         setSystemDependencies(sysDeps || null);
         // Set active category
+        if (!activeCat?.__error) setNowShowing(activeCat?.now_showing || null);
         if (activeCat?.__error) {
           setActiveCategory(null);
           setAppliedSequence(null);
@@ -4235,17 +4261,23 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const handleApplyCategoryToPlex = async (categoryId, categoryName) => {
     const message = `Apply category "${categoryName}" to Plex?\n\nThis will send ALL prerolls from this category to Plex.`;
     if (!await showConfirm(message, { title: 'Apply to Plex', type: 'info', confirmText: 'Apply' })) return;
-    
-    fetch(apiUrl(`categories/${categoryId}/apply-to-plex`), { method: 'POST' })
-      .then(res => {
-        if (!res.ok) {
-          return res.json().then(err => {
-            throw new Error(err.detail || 'Failed to apply category to Plex');
-          });
-        }
-        return res.json();
-      })
+
+    const post = async (force) => {
+      const res = await fetch(apiUrl(`categories/${categoryId}/apply-to-plex${force ? '?force=true' : ''}`), { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      return { res, data };
+    };
+    (async () => {
+      let { res, data } = await post(false);
+      if (isPlaybackHold(res.status, data)) {
+        if (!await showConfirm(data.detail.message, { title: 'Plex is playing prerolls', type: 'warning', confirmText: 'Apply anyway' })) return null;
+        ({ res, data } = await post(true));
+      }
+      if (!res.ok) throw new Error(apiDetailText(data?.detail, 'Failed to apply category to Plex'));
+      return data;
+    })()
       .then(data => {
+        if (!data) return;
         let successMessage = `Category applied to Plex!\n\nPrerolls applied (${data.preroll_count} total):`;
         if (data.prerolls && data.prerolls.length > 0) {
           data.prerolls.forEach((preroll, index) => {
@@ -5701,6 +5733,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
             if (rs.new_prerolls) parts.push(`${rs.new_prerolls} new file${rs.new_prerolls === 1 ? '' : 's'} found`);
             if (rs.missing_files) parts.push(`${rs.missing_files} file${rs.missing_files === 1 ? '' : 's'} still missing`);
             if (parts.length) msg += ` Scan: ${parts.join(', ')}.`;
+          }
+          if (data?.api_keys_restored) {
+            msg += ` ${data.api_keys_restored} API key${data.api_keys_restored === 1 ? '' : 's'} restored.`;
+          }
+          if (data?.auth_left_off) {
+            // A Database Backup holds no user accounts, so sign-in stays off.
+            msg += ' Sign-in was on in the backup but is left off: this install has no accounts. '
+              + 'Create one under Settings, then turn on Require Login.';
           }
           showAlert(msg + ' Refreshing data...', 'success');
           setBackupFile(null);
@@ -7232,14 +7272,28 @@ const DashboardTiles = {
 
   now_showing: () => {
     const detail = dashLayout?.tiles?.now_showing?.detail || 'detailed';
+    // The backend works out what is showing with the scheduler's own rules
+    // (backend/now_showing.py). Piecing it together here from the active
+    // category got blends, empty categories, playback mode, disabled prerolls,
+    // sequences and fallbacks wrong (production, November 6). The fallback
+    // below only covers a backend that does not send now_showing.
+    const ns = nowShowing;
     const seq = appliedSequence;
     const cat = activeCategory
       ? categories.find(c => c.id === (activeCategory.id ?? activeCategory))
       : null;
-    const title = activeCategory?.active_schedule_name || seq?.name || cat?.name || activeCategory?.name || null;
-    const subtitle = (seq?.name && seq.name !== title)
-      ? seq.name
-      : (cat?.name || activeCategory?.name || (seq ? 'Sequence' : 'No active category'));
+    const title = ns
+      ? ns.title
+      : (activeCategory?.active_schedule_name || seq?.name || cat?.name || activeCategory?.name || null);
+    const subtitle = ns
+      ? (ns.subtitle || '')
+      : ((seq?.name && seq.name !== title)
+        ? seq.name
+        : (cat?.name || activeCategory?.name || (seq ? 'Sequence' : 'No active category')));
+    const warnings = ns?.warnings || [];
+    const until = ns?.until
+      ? new Date(ns.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : null;
     const running = !!schedulerStatus?.running;
     const waiting = schedulerStatus?.waiting_for_playback || null;
     const waitedFor = (() => {
@@ -7251,18 +7305,23 @@ const DashboardTiles = {
       const rest = minutes % 60;
       return rest ? `${hours}h ${rest}m` : `${hours}h`;
     })();
-    const count = cat ? prerolls.filter(p => prerollInCategory(p, cat.id)).length : null;
+    const count = ns
+      ? ns.preroll_count
+      : (cat ? prerolls.filter(p => prerollInCategory(p, cat.id)).length : null);
     // Playback mode, blend, and the "preview what's applied" action all moved
     // here from the retired "Currently Showing" tile, which rendered the same
     // active-schedule state this tile's left half already covers.
-    const mode = seq
-      ? (seq.via_schedule ? 'Sequence (scheduled)' : 'Sequence (manual)')
-      : activeCategory
-        ? ({ playlist: 'Sequential', single: 'Single file', sequence: 'Sequence' }[activeCategory.plex_mode] || 'Shuffle')
-        : null;
-    const blend = (activeCategory?.blend_schedules || []).length >= 2
-      ? activeCategory.blend_schedules.map(s => s.name).join(' + ')
-      : null;
+    const mode = ns
+      ? ns.mode
+      : seq
+        ? (seq.via_schedule ? 'Sequence (scheduled)' : 'Sequence (manual)')
+        : activeCategory
+          ? ({ playlist: 'Sequential', single: 'Single file', sequence: 'Sequence' }[activeCategory.plex_mode] || 'Shuffle')
+          : null;
+    const blendNames = ns
+      ? (ns.blend?.schedules || []).map(s => s.name)
+      : (activeCategory?.blend_schedules || []).map(s => s.name);
+    const blend = blendNames.length >= 2 ? blendNames.join(' + ') : null;
     const previewCurrent = async () => {
       try {
         const resp = await fetch(apiUrl('plex/current-preroll-details'));
@@ -7284,10 +7343,17 @@ const DashboardTiles = {
         showAlert('Failed to fetch current preroll details', 'error');
       }
     };
-    const next = nextScheduleCountdown;
-    const nextCategory = next?.categoryId != null
+    // Up next: the next schedule to start, and what happens when it does
+    // (takes over, joins the blend, or is kept off by a higher priority or an
+    // exclusive schedule). nextScheduleCountdown only knew the start time.
+    const upNext = ns ? ns.up_next : null;
+    const next = ns
+      ? (upNext ? { name: upNext.name, targetTime: upNext.at } : null)
+      : nextScheduleCountdown;
+    const nextCategory = !ns && next?.categoryId != null
       ? categories.find(c => c.id === next.categoryId)
       : null;
+    const nextSubtitle = ns ? upNext?.subtitle : nextCategory?.name;
     const nextWhen = next?.targetTime
       ? new Date(next.targetTime).toLocaleString(undefined, {
           month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
@@ -7335,17 +7401,29 @@ const DashboardTiles = {
                 </span>
               </p>
             )}
-            {detail === 'detailed' && (
+            {/* Shown at every detail level: each one means Plex is not
+                playing what the title says (an empty category, a blend
+                partner left out, a change Plex didn't take). */}
+            {warnings.map(text => (
+              <p className="nx-schedule-waiting" key={text}>
+                <AlertTriangle size={13} />
+                <span>{text}</span>
+              </p>
+            ))}
+            {detail === 'detailed' && (title || !ns) && (
               <div className="nx-schedule-facts">
-                <span>{mode || (seq ? 'Sequence' : 'Category')}</span>
+                {(mode || !ns) && <span>{mode || (seq ? 'Sequence' : 'Category')}</span>}
                 {count != null && <span>{count} preroll{count === 1 ? '' : 's'}</span>}
+                {ns?.exclusive && <span>Exclusive</span>}
                 {blend && <span>Blending {blend}</span>}
+                {blend && ns?.blend?.interval_minutes && <span>Picks again every {ns.blend.interval_minutes} min</span>}
+                {until && <span>Until {until}</span>}
                 {/* Both halves matter. is_filler is a property of the category
                     and stays true after Fallback Filler is switched off, so on
                     its own this badge kept claiming filler was running - which
                     on a seasonal setup reads as "Halloween content may still be
                     served in November". */}
-                {activeCategory?.is_filler && fillerSettings?.enabled && <span>Gap filler active</span>}
+                {!ns && activeCategory?.is_filler && fillerSettings?.enabled && <span>Gap filler active</span>}
                 {currentTimezone && <span>{currentTimezone}</span>}
               </div>
             )}
@@ -7357,11 +7435,19 @@ const DashboardTiles = {
               {nextWhen && <span>{nextWhen}</span>}
             </div>
             <h3>{next?.name || 'No upcoming schedule'}</h3>
-            <p>{nextCategory?.name || (next ? 'Scheduled activation' : 'Your schedule queue is clear.')}</p>
+            <p>{nextSubtitle || (next ? 'Scheduled activation' : 'Your schedule queue is clear.')}</p>
+            {upNext?.warning && (
+              <p className="nx-schedule-waiting">
+                <AlertTriangle size={13} />
+                <span>{upNext.warning}</span>
+              </p>
+            )}
             {detail === 'detailed' && next && (
               <div className="nx-schedule-facts">
                 <span>{nextWhen || 'Upcoming'}</span>
-                {nextCategory?.name && <span>{nextCategory.name}</span>}
+                {upNext?.note
+                  ? <span>{upNext.note}</span>
+                  : (nextSubtitle && !upNext?.warning && <span>{ns ? 'Takes over' : nextSubtitle}</span>)}
               </div>
             )}
           </section>
@@ -7383,6 +7469,10 @@ const DashboardTiles = {
     const size = tile.size || dashLayout?.sizes?.whats_next || DEFAULT_SIZES.whats_next;
     const maxRows = detail === 'compact' ? 3 : ({ sm: 4, md: 8, lg: 20 }[size] || 8);
     const now = scheduleNow();
+    // The backend's view of every schedule in its window (now_showing): which
+    // one plays, which blend, which are outranked or have nothing to play.
+    // "Active now" on all of them said nothing about which one Plex has.
+    const windowStates = nowShowing?.schedule_states || null;
     const upcoming = (schedules || [])
       .filter(s => s.is_active)
       .map(s => {
@@ -7411,9 +7501,11 @@ const DashboardTiles = {
         // A Yearly or Holiday end date belongs to an earlier occurrence (or is
         // the year-2000 placeholder); it is not when the schedule ends.
         const notFinished = isAnnualSchedule(s) || !end || end > now;
+        const windowState = windowStates ? windowStates[String(s.id)] || null : undefined;
         return {
           ...s,
-          isActiveNow: runsToday && withinWindow && notFinished,
+          windowState,
+          isActiveNow: windowStates ? !!windowState : (runsToday && withinWindow && notFinished),
           allDay,
           windowLabel: allDay
             ? 'All day'
@@ -7423,8 +7515,11 @@ const DashboardTiles = {
         };
       })
       .filter(s => isUpcomingSchedule(s, s.isActiveNow, now))
-      .sort((a, b) => (b.isActiveNow - a.isActiveNow) || (a.when - b.when))
+      .sort((a, b) => (b.isActiveNow - a.isActiveNow)
+        || ((WINDOW_STATE_ORDER[a.windowState] ?? 9) - (WINDOW_STATE_ORDER[b.windowState] ?? 9))
+        || (a.when - b.when))
       .slice(0, maxRows);
+    const firstUpcoming = upcoming.findIndex(s => !s.isActiveNow);
 
     return (
       <div className="card nx-focus-tile">
@@ -7448,7 +7543,9 @@ const DashboardTiles = {
             <div className="nx-focus-timeline">
               {upcoming.map((s, i) => {
                 const cat = categories.find(c => c.id === s.category_id);
-                const badge = s.isActiveNow ? 'Active now' : (i === 0 ? 'Next' : 'Upcoming');
+                const [badge, tone] = s.isActiveNow
+                  ? (WINDOW_STATE_BADGES[s.windowState] || ['Active now', 'ok'])
+                  : [i === firstUpcoming ? 'Next' : 'Upcoming', ''];
                 return (
                   <div className="nx-focus-timeline-row" key={s.id}>
                     <span className="nx-focus-when">
@@ -7472,7 +7569,7 @@ const DashboardTiles = {
                         <span className="nx-focus-window"> &middot; {s.windowLabel}</span>
                       </span>
                     </span>
-                    <span className={`nx-chip nx-status ${s.isActiveNow ? 'ok' : ''}`}>{badge}</span>
+                    <span className={`nx-chip nx-status ${tone}`}>{badge}</span>
                   </div>
                 );
               })}
@@ -7497,10 +7594,13 @@ const DashboardTiles = {
     // The concept reserves five concise service rows. When the API supplies
     // more, keep every operational issue and omit the redundant healthy
     // library count (already shown in the Library card) before truncating.
+    // Problems first (sort is stable, so each group keeps the API's order):
+    // the cut at five rows must never hide a problem behind healthy rows.
+    const isProblem = c => c.status === 'error' || c.status === 'warn';
     const visibleChecks = (allChecks.length > 5
       ? allChecks.filter(c => !(c.key === 'library' && c.status === 'ok'))
       : allChecks
-    ).slice(0, 5);
+    ).slice().sort((a, b) => isProblem(b) - isProblem(a)).slice(0, 5);
 
     return (
       <div className="card nx-focus-tile nx-focus-health">
@@ -7834,6 +7934,15 @@ const DashboardTiles = {
     // unlike the old next_run-based "Firing today", which stayed 0 because next_run
     // is only computed for monthly/yearly/holiday schedules.
     const lastApplied = (() => {
+      // The last list Plex actually took (scheduler or Apply). last_run is
+      // stamped even when an apply fails, and on every blend partner each
+      // minute, so it stays only as the fallback: no Plex, or nothing written
+      // since NeXroll started.
+      const real = schedulerStatus?.last_applied;
+      if (real?.at) {
+        const t = new Date(real.at);
+        if (!isNaN(t.getTime())) return { time: t, name: real.what };
+      }
       let best = null;
       for (const s of schedules) {
         if (!s.last_run) continue;
@@ -7843,6 +7952,14 @@ const DashboardTiles = {
       }
       return best;
     })();
+    // Same answer as the Current & next schedule tile (now_showing).
+    const nowLabel = nowShowing
+      ? nowShowing.title
+      : (activeCategory ? (activeCategory.active_schedule_name || activeCategory.name) : null);
+    const nowWarned = !!nowShowing?.warnings?.length;
+    const nextRow = nowShowing
+      ? (nowShowing.up_next ? { name: nowShowing.up_next.name, targetTime: nowShowing.up_next.at } : null)
+      : nextScheduleCountdown;
     const fmtLastApplied = (d) => {
       const n = new Date();
       const startToday = new Date(n.getFullYear(), n.getMonth(), n.getDate());
@@ -7895,26 +8012,27 @@ const DashboardTiles = {
         )}
         {/* "Now" beside "what's next": without it, the next-schedule name flipping
             from A to B at the moment A activates looked like A never applied. */}
-        {schedulerStatus.running && activeCategory && (activeCategory.active_schedule_name || activeCategory.name) && (
+        {schedulerStatus.running && nowLabel && (
           <div className="nx-tile-row">
             <span className="nx-tile-row-k">
               <Play size={14} /> Now
             </span>
-            <span className="nx-tile-row-v" style={{ color: 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))' }}>
-              {activeCategory.active_schedule_name || activeCategory.name}
+            <span className="nx-tile-row-v" style={{ color: nowWarned ? 'var(--warning-color)' : 'var(--success-color, color-mix(in srgb, var(--success-color) 76%, #000))' }}
+              title={nowWarned ? nowShowing.warnings[0] : undefined}>
+              {nowLabel}
             </span>
           </div>
         )}
-        {schedulerStatus.running && nextScheduleCountdown && (
+        {schedulerStatus.running && nextRow && (
           <div className="nx-tile-row">
             <span className="nx-tile-row-k">
               <ArrowRight size={14} /> Next
             </span>
-            <span className="nx-tile-row-v">
-              <span style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)', fontWeight: 600 }}>{nextScheduleCountdown.name}</span>
-              {nextScheduleCountdown.targetTime && (
+            <span className="nx-tile-row-v" title={nowShowing?.up_next?.note || undefined}>
+              <span style={{ color: 'color-mix(in srgb, var(--nx-sec-connect) 87%, #000)', fontWeight: 600 }}>{nextRow.name}</span>
+              {nextRow.targetTime && (
                 <span style={{ color: 'var(--text-secondary, #888)', marginLeft: '0.35rem' }}>
-                  {new Date(nextScheduleCountdown.targetTime).toLocaleString([], {
+                  {new Date(nextRow.targetTime).toLocaleString([], {
                     month: 'short', day: 'numeric',
                     hour: '2-digit', minute: '2-digit'
                   })}
@@ -7923,7 +8041,7 @@ const DashboardTiles = {
             </span>
           </div>
         )}
-        {schedulerStatus.running && !nextScheduleCountdown && (
+        {schedulerStatus.running && !nextRow && (
           <div className="nx-tile-row">
             <span className="nx-tile-row-k">
               <ArrowRight size={14} /> Next
@@ -35269,8 +35387,15 @@ const DashboardTiles = {
                       e.stopPropagation();
                       setApplyingSequenceId(sequence.id);
                       try {
-                        const resp = await fetch(apiUrl(`sequences/${sequence.id}/apply`), { method: 'POST' });
-                        const data = await resp.json();
+                        const apply = async (force) => {
+                          const r = await fetch(apiUrl(`sequences/${sequence.id}/apply${force ? '?force=true' : ''}`), { method: 'POST' });
+                          return { resp: r, data: await r.json().catch(() => ({})) };
+                        };
+                        let { resp, data } = await apply(false);
+                        if (isPlaybackHold(resp.status, data)) {
+                          if (!await showConfirm(data.detail.message, { title: 'Plex is playing prerolls', type: 'warning', confirmText: 'Apply anyway' })) return;
+                          ({ resp, data } = await apply(true));
+                        }
                         if (resp.ok && data.success) {
                           showAlert(`Applied "${data.sequence_name}" (${data.preroll_count} prerolls) to ${data.applied_to.join(', ')}`, 'success');
                           // Refresh active category to reflect applied sequence
@@ -35279,9 +35404,10 @@ const DashboardTiles = {
                             const catData = await catResp.json();
                             setActiveCategory(catData?.active_category || null);
                             setAppliedSequence(catData?.applied_sequence || null);
+                            setNowShowing(catData?.now_showing || null);
                           } catch {}
                         } else {
-                          showAlert(data.detail || 'Failed to apply sequence', 'error');
+                          showAlert(apiDetailText(data.detail, 'Failed to apply sequence'), 'error');
                         }
                       } catch (err) {
                         showAlert('Failed to apply sequence to server', 'error');
@@ -36744,77 +36870,6 @@ const DashboardTiles = {
                 </div>
               </div>
 
-              {(communitySelectedCount > 0 || communityBulk) && (
-                <div className="nx-comm-bulkbar">
-                  {communityBulk ? (
-                    <>
-                      <div className="nx-comm-bulk-status">
-                        <strong>
-                          {communityBulk.finished
-                            ? (communityBulk.cancelled ? 'Bulk download stopped' : 'Bulk download finished')
-                            : `Downloading ${communityBulk.done + 1} of ${communityBulk.total}`}
-                        </strong>
-                        <span>
-                          {communityBulk.finished
-                            ? `${communityBulk.done - communityBulk.failed.length} added${communityBulk.failed.length ? `, ${communityBulk.failed.length} failed` : ''}`
-                            : communityBulk.waiting
-                              ? `Pausing ${communityBulk.waiting}s between downloads to go easy on the community server`
-                              : (communityBulk.current || 'Starting…')}
-                        </span>
-                      </div>
-                      <div className="nx-comm-bulk-track" aria-hidden="true">
-                        <div className="nx-comm-bulk-fill" style={{ width: `${Math.round((communityBulk.done / Math.max(1, communityBulk.total)) * 100)}%` }} />
-                      </div>
-                      {communityBulk.finished ? (
-                        <button type="button" className="button button-secondary" onClick={() => setCommunityBulk(null)}>Done</button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="button button-secondary"
-                          onClick={() => { communityBulkCancelRef.current = true; }}
-                        >
-                          Stop
-                        </button>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <div className="nx-comm-bulk-status">
-                        <strong>{communitySelectedCount} selected</strong>
-                        <span>
-                          Downloads run one at a time{communityBulkGap > 0 ? `, ${communityBulkGap}s apart` : ''}
-                          {communitySearchResults.some(p => p.versions && communitySelectedIds.includes(p.id)) && (
-                            getConnectedServers().length
-                              ? `. Prerolls with several versions get the ${describeServers(getConnectedServers())} version${getConnectedServers().length > 1 ? 's' : ''}.`
-                              : '. Prerolls with several versions get the first one listed.'
-                          )}
-                        </span>
-                      </div>
-                      <CategorySelect
-                        className="nx-community-select"
-                        categories={categories}
-                        value={communityBulkCategory}
-                        onChange={setCommunityBulkCategory}
-                        onCreateCategory={createCategoryInline}
-                        emptyLabel="No category"
-                        title="Category for every preroll in this batch"
-                      />
-                      <button type="button" className="button button-secondary" onClick={() => setCommunitySelectedIds([])}>Clear</button>
-                      <button type="button" className="button" onClick={runCommunityBulkDownload}>
-                        <Download size={14} /> Download {communitySelectedCount}
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-              {communityBulk && communityBulk.finished && communityBulk.failed.length > 0 && (
-                <ul className="nx-comm-bulk-failed">
-                  {communityBulk.failed.map((f, i) => (
-                    <li key={i}><strong>{f.title}</strong> — {f.message}</li>
-                  ))}
-                </ul>
-              )}
-
             <div className="nx-comm-results">
               {communitySearchResults.map(preroll => {
                 const downloaded = isPrerollAlreadyDownloaded(preroll);
@@ -36920,6 +36975,80 @@ const DashboardTiles = {
                 );
               })}
             </div>
+              {/* Docked under the list and kept on screen while you scroll, like the
+                  Library's bulk dock. It used to sit above the list, so with 50 results
+                  a page the category picker and Download button were out of sight while
+                  you ticked rows further down. */}
+              {(communitySelectedCount > 0 || communityBulk) && (
+                <div className="nx-comm-bulkbar is-docked" role="region" aria-label="Selected community prerolls">
+                  {communityBulk ? (
+                    <>
+                      <div className="nx-comm-bulk-status">
+                        <strong>
+                          {communityBulk.finished
+                            ? (communityBulk.cancelled ? 'Bulk download stopped' : 'Bulk download finished')
+                            : `Downloading ${communityBulk.done + 1} of ${communityBulk.total}`}
+                        </strong>
+                        <span>
+                          {communityBulk.finished
+                            ? `${communityBulk.done - communityBulk.failed.length} added${communityBulk.failed.length ? `, ${communityBulk.failed.length} failed` : ''}`
+                            : communityBulk.waiting
+                              ? `Pausing ${communityBulk.waiting}s between downloads to go easy on the community server`
+                              : (communityBulk.current || 'Starting…')}
+                        </span>
+                      </div>
+                      <div className="nx-comm-bulk-track" aria-hidden="true">
+                        <div className="nx-comm-bulk-fill" style={{ width: `${Math.round((communityBulk.done / Math.max(1, communityBulk.total)) * 100)}%` }} />
+                      </div>
+                      {communityBulk.finished ? (
+                        <button type="button" className="button button-secondary" onClick={() => setCommunityBulk(null)}>Done</button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => { communityBulkCancelRef.current = true; }}
+                        >
+                          Stop
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="nx-comm-bulk-status">
+                        <strong>{communitySelectedCount} selected</strong>
+                        <span>
+                          Downloads run one at a time{communityBulkGap > 0 ? `, ${communityBulkGap}s apart` : ''}
+                          {communitySearchResults.some(p => p.versions && communitySelectedIds.includes(p.id)) && (
+                            getConnectedServers().length
+                              ? `. Prerolls with several versions get the ${describeServers(getConnectedServers())} version${getConnectedServers().length > 1 ? 's' : ''}.`
+                              : '. Prerolls with several versions get the first one listed.'
+                          )}
+                        </span>
+                      </div>
+                      <CategorySelect
+                        className="nx-community-select"
+                        categories={categories}
+                        value={communityBulkCategory}
+                        onChange={setCommunityBulkCategory}
+                        onCreateCategory={createCategoryInline}
+                        emptyLabel="No category"
+                        title="Category for every preroll in this batch"
+                      />
+                      <button type="button" className="button button-secondary" onClick={() => setCommunitySelectedIds([])}>Clear</button>
+                      <button type="button" className="button" onClick={runCommunityBulkDownload}>
+                        <Download size={14} /> Download {communitySelectedCount}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              {communityBulk && communityBulk.finished && communityBulk.failed.length > 0 && (
+                <ul className="nx-comm-bulk-failed">
+                  {communityBulk.failed.map((f, i) => (
+                    <li key={i}><strong>{f.title}</strong> — {f.message}</li>
+                  ))}
+                </ul>
+              )}
             {communityTotalResults > communityPageLimit && (() => {
               const pageSize = communityPageLimit || 50;
               const pageCount = Math.max(1, Math.ceil(communityTotalResults / pageSize));

@@ -200,7 +200,9 @@ class CategoryApplyAcrossServersTests(MultiServerFixture):
         self.assertFalse(result)
         self.assertFalse(result.configured)
 
-    def test_empty_category_applies_nowhere(self):
+    def test_an_empty_category_plays_nothing_everywhere(self):
+        # JB, November 6: nothing to play means nothing plays. Plex used to be
+        # left on its previous list (the last schedule's prerolls, all day).
         self._configure(plex_url="http://plex:32400", plex_token="t",
                         jellyfin_url="http://jellyfin:8096")
         with self.Session() as db:
@@ -209,12 +211,14 @@ class CategoryApplyAcrossServersTests(MultiServerFixture):
             db.commit()
             empty_id = empty.id
         connector = MagicMock()
-        with patch.object(scheduler_module, "PlexConnector", return_value=connector):
+        connector.set_preroll.return_value = True
+        with patch.object(scheduler_module, "PlexConnector", return_value=connector), \
+                patch.object(self.scheduler, "_defer_preroll_write", return_value=False):
             with self.Session() as db:
                 result = self.scheduler._apply_category_to_plex(empty_id, db)
 
-        self.assertFalse(result)
-        connector.set_preroll.assert_not_called()
+        self.assertTrue(result.plex and result.plugin)
+        connector.set_preroll.assert_called_once_with("")
 
 
 class ClearAcrossServersTests(MultiServerFixture):

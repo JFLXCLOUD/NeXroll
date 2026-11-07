@@ -378,14 +378,16 @@ def _inside(path: str, root: str) -> bool:
 def remove_row(db, row, storage: Optional[str]) -> None:
     """Forget a library trailer. A downloaded file inside NeXroll's library
     folder is deleted with it; anything else - a trailer next to the movie -
-    is never touched."""
-    if row.source == "download" and row.local_path and storage and _inside(row.local_path, library_dir(storage)):
-        try:
-            if os.path.isfile(row.local_path):
-                os.remove(row.local_path)
-        except OSError:
-            pass
+    is never touched.
+
+    The file goes now, or once Plex's preroll list no longer has it: a
+    rotation or cleanup used to delete a trailer Plex was about to play."""
+    path = row.local_path
+    owned = row.source == "download" and path and storage and _inside(path, library_dir(storage))
     db.delete(row)
+    if owned:
+        from backend.scheduler import scheduler
+        scheduler.retire_trailer_files([path], "Library", db=db)
 
 
 def eligible_library_trailers(db) -> list:

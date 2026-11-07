@@ -98,7 +98,9 @@ def test_a_withheld_apply_names_the_first_missing_file():
 
 def sequence_apply(plex, paths):
     fn = route("apply_sequence_to_server", HTTPException=HTTPException, path_mapping=path_mapping,
-               PlexConnector=Mock(return_value=plex), _file_log=lambda *a, **k: None, log_event=lambda *a, **k: None)
+               PlexConnector=Mock(return_value=plex), _file_log=lambda *a, **k: None, log_event=lambda *a, **k: None,
+               # Nothing is playing; and the scheduler only records the write.
+               _refuse_write_during_prerolls=lambda *a, **k: None, scheduler=Mock())
     fn.__globals__["resolve_sequence_paths"] = lambda *a, **k: list(paths)
     fn.__globals__["playback_context"] = lambda *a, **k: None
     return fn

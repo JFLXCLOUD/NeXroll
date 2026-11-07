@@ -36,6 +36,9 @@ DEFAULT_WEIGHTS = {
     # Only present with login on and a plugin connecting without an API key.
     # Prerolls still play, so it costs little.
     "plugin_keys": 10,
+    # Only present when what is showing has a problem (a schedule with no
+    # prerolls, a blend partner left out, Plex not taking a change).
+    "showing": 15,
 }
 
 # Fraction of a check's weight deducted at each status.
@@ -182,6 +185,19 @@ def media_server_check(servers) -> dict:
     names = [s["name"] for s in servers]
     return make_check("media_server", "Media server", OK, "",
                       f"{names[0]} connected" if len(names) == 1 else " and ".join(names))
+
+
+def showing_check(showing: Optional[dict]) -> Optional[dict]:
+    """A problem with what is showing, from now_showing.describe().
+
+    On production (November 6) the Thanksgiving schedule won with an empty
+    category and Plex kept the night before's list all day while health read
+    healthy. None means leave the check out.
+    """
+    if not showing or not showing.get("warnings"):
+        return None
+    return make_check("showing", "Now showing", WARN, showing["warnings"][0],
+                      showing.get("problem") or showing.get("title") or "Needs a look")
 
 
 def plugin_keys_check(login_on: bool, keyless: list) -> Optional[dict]:

@@ -417,7 +417,11 @@ class PlexConnector:
                 print(f"INFO: Plex path check skipped ({e}); writing the preroll unchecked")
         try:
             path_len = len(preroll_path)
-            path_count = preroll_path.count(';') + 1 if preroll_path else 0
+            # Random lists use ';' and in-order lists (sequences) use ',', so
+            # count whichever this one uses; ';' alone logged "~1 paths" for
+            # every sequence.
+            delim = ';' if ';' in (preroll_path or '') else ','
+            path_count = preroll_path.count(delim) + 1 if preroll_path else 0
             print(f"Attempting to set Plex preroll ({path_len} chars, ~{path_count} paths)")
 
             # Warn if the combined preroll string is excessively long

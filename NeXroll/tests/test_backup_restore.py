@@ -33,6 +33,7 @@ FUNCTIONS = {
     'backup_database', 'restore_database', '_export_settings', '_restore_settings', '_stamp_backup_taken',
     '_export_credentials', '_restore_credentials', '_remap_ignored_conflicts', '_snapshot_sqlite',
     '_fit_restored_database_to_this_install', '_backup_may_include_credentials', '_paths_equal',
+    '_restore_api_keys', '_manual_trailer_entries', '_relink_relocated_prerolls', '_is_within_directory',
 }
 CONSTANT_PREFIXES = ('_SETTINGS_', '_BACKUP_CREDENTIALS')
 
@@ -73,7 +74,7 @@ def load(secrets, prerolls_dir='.'):
         PREROLLS_DIR=str(prerolls_dir), data_dir=str(prerolls_dir),
         _generate_thumbnail_for_preroll=lambda *a: None, _scanner_exclude_trees=lambda db: [],
         _load_ignored_path_keys=lambda db: set(), _set_last_scan_stats=lambda stats: None,
-        Session=object, Depends=None, Request=object,
+        Session=object, Depends=None, Request=object, or_=__import__('sqlalchemy').or_,
     )
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), '<main-backup>', 'exec'), env)
     return env
@@ -293,3 +294,96 @@ def test_a_json_restore_skips_brand_assets_that_are_not_on_this_machine(tmp_path
     assert report['skipped_paths'] == [r'nexup_dynamic_preroll_custom_logo_path=D:\gone\logo.png']
     assert db.query(models.Setting).first().nexup_dynamic_preroll_custom_logo_path is None
     db.close()
+
+
+# -- November 6 review --------------------------------------------------------
+
+def test_sign_in_is_not_switched_on_for_an_install_with_no_accounts(source, tmp_path):
+    # A Database Backup holds no user accounts. Restoring "sign-in on" onto a
+    # fresh install left nobody able to sign in, and the first person to
+    # register became its admin.
+    setting = source.query(models.Setting).first()
+    setting.auth_enabled = True
+    source.commit()
+    backup = json.loads(json.dumps(load(FakeSecrets())['backup_database'](db=source), default=str))
+
+    fresh = session(tmp_path / 'fresh.db')
+    result = load(FakeSecrets())['restore_database'](backup, db=fresh)
+    assert result['auth_left_off'] is True
+    assert not fresh.query(models.Setting).first().auth_enabled
+
+    with_account = session(tmp_path / 'with-account.db')
+    with_account.add(models.User(username='jb', password_hash='x', role='admin'))
+    with_account.commit()
+    result = load(FakeSecrets())['restore_database'](backup, db=with_account)
+    assert result['auth_left_off'] is False
+    assert with_account.query(models.Setting).first().auth_enabled
+
+
+def test_api_keys_travel_as_hashes_to_the_ui_only_and_are_added_by_hash(source, tmp_path):
+    source.add_all([
+        models.APIKey(name='Home Assistant', key_hash='hash-ha', key_prefix='nx_ha123', permissions='full'),
+        models.APIKey(name='Jellyfin plugin', key_hash='hash-jf', key_prefix='nx_jf456', permissions='read',
+                      expires_at=datetime.datetime(2027, 1, 1)),
+    ])
+    source.commit()
+    env = load(FakeSecrets())
+    ui = json.loads(json.dumps(env['backup_database'](
+        request=SimpleNamespace(headers={}, query_params={}), db=source), default=str))
+    assert [(k['name'], k['key_hash']) for k in ui['api_keys']] == [('Home Assistant', 'hash-ha'),
+                                                                   ('Jellyfin plugin', 'hash-jf')]
+    keyed = env['backup_database'](request=SimpleNamespace(headers={'X-Api-Key': 'nx_full'}, query_params={}),
+                                   db=source)
+    assert keyed['api_keys'] == []
+
+    target = session(tmp_path / 'target.db')
+    target.add(models.APIKey(name='Already here', key_hash='hash-ha', key_prefix='nx_ha123', permissions='full',
+                             is_active=False))
+    target.add(models.APIKey(name='Target only', key_hash='hash-t', key_prefix='nx_t7890', permissions='read'))
+    target.commit()
+    result = load(FakeSecrets())['restore_database'](ui, db=target)
+    assert result['api_keys_restored'] == 1
+    keys = {k.key_hash: k for k in target.query(models.APIKey).all()}
+    assert set(keys) == {'hash-ha', 'hash-jf', 'hash-t'}
+    assert keys['hash-ha'].name == 'Already here' and keys['hash-ha'].is_active is False  # left alone
+    assert keys['hash-jf'].permissions == 'read' and keys['hash-jf'].expires_at == datetime.datetime(2027, 1, 1)
+
+
+def test_the_auto_update_attempt_stays_with_its_install(source):
+    setting = source.query(models.Setting).first()
+    setting.update_auto_last_attempt = '2.4.0@2026-11-05'
+    setting.update_auto_install = True
+    source.commit()
+    exported = load(FakeSecrets())['backup_database'](db=source)['settings']
+    assert 'update_auto_last_attempt' not in exported
+    assert exported['update_auto_install'] is True
+
+
+def test_trailers_added_by_hand_are_in_the_system_backup_and_relinked_after(tmp_path):
+    env = load(FakeSecrets())
+    nexup = tmp_path / 'NeXup'
+    (nexup / 'movies').mkdir(parents=True)
+    manual = nexup / 'movies' / 'Fan_Edit_trailer.mp4'
+    synced = nexup / 'movies' / 'Dune_1234_trailer.mp4'
+    for f in (manual, synced):
+        f.write_bytes(b'x')
+    db = session(tmp_path / 'source.db')
+    db.add_all([
+        models.ComingSoonTrailer(title='Fan Edit', radarr_movie_id=0, local_path=str(manual), status='downloaded'),
+        models.ComingSoonTrailer(title='Dune', radarr_movie_id=1234, local_path=str(synced), status='downloaded'),
+    ])
+    db.commit()
+    entries = env['_manual_trailer_entries'](db, str(nexup))
+    assert entries == [(str(manual), 'nexup/movies/Fan_Edit_trailer.mp4')]
+
+    # Restored on another machine: the row names the old machine's path, the
+    # file came back under this install's NeX-Up folder.
+    restored_root = tmp_path / 'new' / 'NeXup'
+    (restored_root / 'movies').mkdir(parents=True)
+    (restored_root / 'movies' / 'Fan_Edit_trailer.mp4').write_bytes(b'x')
+    trailer = db.query(models.ComingSoonTrailer).filter_by(title='Fan Edit').one()
+    trailer.local_path = r'C:\ProgramData\NeXroll\NeXup\movies\Fan_Edit_trailer.mp4'
+    db.commit()
+    assert env['_relink_relocated_prerolls'](db, str(restored_root)) == 1
+    assert db.query(models.ComingSoonTrailer).filter_by(title='Fan Edit').one().local_path == str(
+        restored_root / 'movies' / 'Fan_Edit_trailer.mp4')

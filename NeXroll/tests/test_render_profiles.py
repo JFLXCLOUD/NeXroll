@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from backend.dynamic_preroll import (
@@ -58,6 +59,12 @@ def test_dynamic_text_colors_and_audio_modes_use_safe_values():
     assert resolve_dynamic_audio_mode('surprise') == 'none'
 
 
+def written(command):
+    """The file ffmpeg was told to write: generators render to a hidden name
+    and swap it in, so this is not the name the caller asked for."""
+    return next(Path(arg) for arg in reversed(command) if str(arg).endswith('.mp4'))
+
+
 def test_generate_from_image_applies_selected_render_profile(tmp_path, monkeypatch):
     generator = DynamicPrerollGenerator.__new__(DynamicPrerollGenerator)
     generator.output_dir = tmp_path
@@ -67,7 +74,7 @@ def test_generate_from_image_applies_selected_render_profile(tmp_path, monkeypat
 
     def fake_run(command, **_kwargs):
         captured['command'] = command
-        (tmp_path / 'studio.mp4').write_bytes(b'video')
+        written(command).write_bytes(b'video')
         return SimpleNamespace(returncode=0, stdout='', stderr='')
 
     monkeypatch.setattr('backend.dynamic_preroll.subprocess.run', fake_run)
@@ -106,7 +113,7 @@ def test_generate_from_video_preserves_browser_motion_and_normalizes_output(tmp_
 
     def fake_run(command, **_kwargs):
         captured['command'] = command
-        (tmp_path / 'motion.mp4').write_bytes(b'video')
+        written(command).write_bytes(b'video')
         return SimpleNamespace(returncode=0, stdout='', stderr='')
 
     monkeypatch.setattr('backend.dynamic_preroll.subprocess.run', fake_run)
@@ -147,7 +154,7 @@ def test_generate_from_video_loops_and_fades_selected_soundtrack(tmp_path, monke
 
     def fake_run(command, **_kwargs):
         captured['command'] = command
-        (tmp_path / 'motion-with-audio.mp4').write_bytes(b'video')
+        written(command).write_bytes(b'video')
         return SimpleNamespace(returncode=0, stdout='', stderr='')
 
     monkeypatch.setattr('backend.dynamic_preroll.subprocess.run', fake_run)

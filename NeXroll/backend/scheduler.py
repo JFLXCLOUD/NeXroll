@@ -161,18 +161,6 @@ def _plugin_channel(setting) -> Optional[bool]:
     return None
 
 
-def _nothing_for_plex(db) -> "ApplyResult":
-    """The result when a sequence has nothing for Plex to play.
-
-    Plex keeps its current list. Jellyfin and Emby still take the change: they
-    resolve the sequence themselves when playback starts, for the item that is
-    starting, so an empty answer for Plex says nothing about them.
-    """
-    setting = db.query(models.Setting).first()
-    return ApplyResult(plex=False if setting and getattr(setting, "plex_url", None) else None,
-                       plugin=_plugin_channel(setting), reason="the sequence has nothing to play")
-
-
 def _generated_preroll_path(storage: str, template: str, theme: str) -> str:
     """Where a generated preroll lives when the block names no filename.
 
@@ -791,6 +779,22 @@ def ensure_trailer_prerolls(db) -> int:
     return created
 
 
+def drop_trailer_prerolls(db, path) -> int:
+    """Delete the preroll rows for a trailer file that is being removed.
+
+    ensure_trailer_prerolls() gives each downloaded trailer a preroll in its
+    trailer category. Removing the trailer when its movie arrived left that
+    preroll behind, so a schedule on the category kept sending Plex a file
+    that was gone. The caller commits.
+    """
+    if not path:
+        return 0
+    rows = db.query(models.Preroll).filter(models.Preroll.path == path).all()
+    for row in rows:
+        db.delete(row)
+    return len(rows)
+
+
 def prerolls_for_category_query(db, category_id):
     """
     Single source of truth for "which prerolls are eligible for this category."
@@ -824,6 +828,61 @@ def prerolls_for_category_query(db, category_id):
         )
         .distinct()
     )
+
+
+def _priority(schedule) -> int:
+    value = getattr(schedule, "priority", 5)
+    return 5 if value is None else value
+
+
+def select_schedules(active):
+    """Which of the schedules in their window plays, as the scheduler decides.
+
+    Returns ``(kind, winner, blend)``:
+
+    - ``("exclusive", s, [])``: an exclusive schedule wins outright (highest
+      priority, then earliest end, then lowest id);
+    - ``("blend", None, [s, ...])``: no exclusive one, and two or more with
+      blend on; they take turns, one per rotation interval;
+    - ``("priority", s, [])``: otherwise the highest priority wins (then
+      earliest end, earliest start, lowest id);
+    - ``("none", None, [])``: nothing is in its window.
+
+    The dashboard asks the same question for now and for the next schedule's
+    start, so it says what the scheduler will do rather than guessing.
+    """
+    if not active:
+        return "none", None, []
+    exclusive = [s for s in active if getattr(s, "exclusive", False)]
+    if exclusive:
+        exclusive.sort(key=lambda s: (-_priority(s), s.end_date or datetime.datetime.max, s.id))
+        return "exclusive", exclusive[0], []
+    blend = [s for s in active if getattr(s, "blend_enabled", False)]
+    if len(blend) >= 2:
+        return "blend", None, blend
+    ranked = sorted(active, key=lambda s: (-_priority(s), s.end_date or datetime.datetime.max,
+                                           s.start_date or datetime.datetime.min, s.id))
+    return "priority", ranked[0], []
+
+
+def category_preroll_count(db, category_id) -> int:
+    """Enabled prerolls in a category: what a schedule on it can play."""
+    if not category_id:
+        return 0
+    return prerolls_for_category_query(db, category_id).count()
+
+
+def schedule_can_play(db, schedule) -> bool:
+    """Whether a schedule has anything to give a media server.
+
+    A category with no enabled prerolls can't be applied, so Plex keeps the
+    list it had. Sequences decide at apply time (a conditional one may play
+    nothing on purpose), so they count as playable here.
+    """
+    if _has_valid_sequence(schedule):
+        return True
+    category_id = getattr(schedule, "category_id", None)
+    return bool(category_id) and prerolls_for_category_query(db, category_id).first() is not None
 
 
 def resolve_category_sequence_block(
@@ -913,6 +972,10 @@ class Scheduler:
         self._blend_rotated_at: Optional[datetime.datetime] = None
         # (blend key, schedule id) picked but not yet taken by Plex.
         self._blend_pending: Optional[tuple] = None
+        # Blend last announced in app.log, and the partners last reported as
+        # left out (no prerolls), so neither is logged again every minute.
+        self._blend_announced: Optional[str] = None
+        self._blend_skipped_logged: Optional[tuple] = None
         # Clear When Inactive emptied Jellyfin/Emby's state but the playback
         # guard (or a failure) kept Plex's list; retried each tick.
         self._plex_clear_pending: bool = False
@@ -929,6 +992,23 @@ class Scheduler:
         self._session_probe_at: Optional[datetime.datetime] = None
         self._session_probe_count: Optional[int] = None
         self._session_probe_ttl_seconds: float = 15.0
+        # Later looks before a write (_confirm_nothing_playing), and the probe
+        # time of a look that already finished a series, so it isn't repeated.
+        self._confirm_probe_offsets: tuple = self._CONFIRM_PROBE_OFFSETS
+        self._probe_confirmed_at: Optional[datetime.datetime] = None
+        self._sleep = time.sleep
+        # A rewrite of Plex's list asked for by request_plex_refresh(), and why.
+        self._refresh_reason: Optional[str] = None
+        self._refresh_requested_at: Optional[datetime.datetime] = None
+        # The last list Plex took ({"at", "what"}) and the files from it found
+        # gone (_check_listed_files acts once per set).
+        self._last_plex_write: Optional[dict] = None
+        self._missing_listed: frozenset = frozenset()
+        # Plex has the empty list NeXroll last gave it (nothing to play), so a
+        # clear doesn't write it again every rotation; and the empty category
+        # last reported, so that warning isn't repeated every check.
+        self._plex_list_empty: bool = False
+        self._empty_category_logged: Optional[int] = None
         # Video sessions by key -> when NeXroll first saw them. A rewrite waits
         # only for sessions seen within the window (see _count_sessions_in_preroll_window).
         self._session_first_seen: dict = {}
@@ -991,18 +1071,29 @@ class Scheduler:
         if self.thread:
             self.thread.join()
 
-    def trigger_immediate_check(self) -> None:
+    def trigger_immediate_check(self, wait_seconds: float = 2.0) -> None:
         """
         Run a single scheduler tick right now, outside the normal 60-second loop.
         Useful after operations that invalidate the current applied state — e.g. a
         category was deleted, a schedule was toggled, settings changed — so the
         dashboard and Plex reflect the new winner without waiting up to a minute.
         Safe to call from any request handler; failures are logged but do not raise.
+
+        The tick runs in its own thread and the caller waits up to
+        ``wait_seconds``: a tick that writes Plex looks at its sessions again
+        over 7 seconds first (_confirm_nothing_playing), and saving a schedule
+        shouldn't hang on that. A tick with nothing to write is done well
+        within the wait, as before.
         """
-        try:
-            self._check_and_execute_schedules()
-        except Exception as e:
-            _scheduler_log(f"trigger_immediate_check failed: {e}", level="ERROR")
+        def run():
+            try:
+                self._check_and_execute_schedules()
+            except Exception as e:
+                _scheduler_log(f"trigger_immediate_check failed: {e}", level="ERROR")
+
+        worker = threading.Thread(target=run, name="nexroll-immediate-check", daemon=True)
+        worker.start()
+        worker.join(wait_seconds)
 
     def _run_scheduler(self):
         """Main scheduler loop - runs based on SCHEDULER_INTERVAL (default 60s)"""
@@ -1043,6 +1134,16 @@ class Scheduler:
                 self._maybe_cleanup_trailers()
             except Exception as e:
                 _scheduler_log(f"Trailer retention cleanup error: {e}", level="ERROR")
+            try:
+                # Delete removed trailer files once Plex's list has moved on
+                self._purge_retired_files()
+            except Exception as e:
+                _scheduler_log(f"Removed trailer cleanup error: {e}", level="ERROR")
+            try:
+                # A file in Plex's list was renamed, moved or deleted
+                self._check_listed_files()
+            except Exception as e:
+                _scheduler_log(f"Listed file check error: {e}", level="ERROR")
             # NOTE: automatic preroll-folder scanning runs in its OWN dedicated
             # thread (_run_autoscan_loop), NOT here. The scan walks the disk and
             # may spawn ffmpeg for thumbnails; keeping it off the scheduler loop
@@ -1170,7 +1271,7 @@ class Scheduler:
                 return  # 0 = keep forever
             cutoff = now - datetime.timedelta(days=days)
             removed = 0
-            skipped_in_use = 0
+            expired_paths = []
             for model in (models.ComingSoonTrailer, models.ComingSoonTVTrailer):
                 # Anchor retention on the LATER of download time and release date,
                 # so a still-upcoming movie's trailer is never reaped before the
@@ -1191,23 +1292,19 @@ class Scheduler:
                     or_(model.release_date == None, model.release_date < cutoff),  # noqa: E711
                 ).all()
                 for t in old:
-                    # Never delete a file that is sitting in the preroll list
-                    # Plex is currently serving. The path would stay in Plex's
-                    # preference with nothing behind it, and Plex would hang the
-                    # next time it tried to play that entry.
-                    if t.local_path and os.path.abspath(t.local_path) in self._applied_local_paths:
-                        skipped_in_use += 1
-                        continue
-                    if t.local_path and os.path.exists(t.local_path):
-                        try:
-                            os.remove(t.local_path)
-                        except Exception:
-                            pass
+                    # The rows go now, so nothing picks the trailer again; a
+                    # file Plex's list still holds is kept until the list moves
+                    # on (retire_trailer_files). Skipping such trailers instead
+                    # kept their rows, so a rotation could pick them again.
+                    if t.local_path:
+                        expired_paths.append(t.local_path)
+                        drop_trailer_prerolls(db, t.local_path)
                     db.delete(t)
                     removed += 1
             if removed:
                 db.commit()
                 _scheduler_log(f"NeX-Up trailer retention: removed {removed} trailer(s) older than {days} day(s)")
+                self.retire_trailer_files(expired_paths, "expired", db=db)
             else:
                 # Logged at debug so a pass that reaps nothing is still visible.
                 # Previously this job wrote nothing at all when it found nothing,
@@ -1215,11 +1312,6 @@ class Scheduler:
                 _scheduler_log(
                     f"NeX-Up trailer retention: nothing past the {days}-day window",
                     level="DEBUG"
-                )
-            if skipped_in_use:
-                _scheduler_log(
-                    f"NeX-Up trailer retention: kept {skipped_in_use} expired trailer(s) "
-                    f"still in the active preroll list; they will go on a later pass"
                 )
         except Exception as e:
             try:
@@ -1588,17 +1680,20 @@ class Scheduler:
         existing_ids = {t.radarr_movie_id for t in db.query(models.ComingSoonTrailer).all()}
         
         # Clean up expired/downloaded movies
+        # The file may be in Plex's list right now (a movie that arrived this
+        # evening); retire_trailer_files keeps it until the list moves on.
         downloaded_movies = {m['id'] for m in all_movies if m.get('hasFile', False)}
+        arrived_paths = []
         for trailer in db.query(models.ComingSoonTrailer).all():
             if trailer.radarr_movie_id in downloaded_movies:
-                if trailer.local_path and os.path.exists(trailer.local_path):
-                    try:
-                        os.remove(trailer.local_path)
-                    except:
-                        pass
+                if trailer.local_path:
+                    arrived_paths.append(trailer.local_path)
+                    drop_trailer_prerolls(db, trailer.local_path)
                 db.delete(trailer)
                 _scheduler_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}'")
         db.commit()
+        if arrived_paths:
+            self.retire_trailer_files(arrived_paths, "arrived", db=db)
         
         # Download new trailers
         current_count = db.query(models.ComingSoonTrailer).count()
@@ -1745,7 +1840,8 @@ class Scheduler:
         today = datetime.datetime.now().date()
         grace_period_days = 5  # Keep trailer for 5 days after air date
         expired_count = 0
-        
+        expired_paths = []
+
         for trailer in existing_trailers:
             should_expire = False
             expire_reason = ""
@@ -1768,27 +1864,20 @@ class Scheduler:
             
             if should_expire:
                 _scheduler_log(f"NeX-Up Sonarr auto-sync: Expiring trailer for '{trailer.title}' S{trailer.season_number} - {expire_reason}")
-                
-                # Delete trailer file
-                if trailer.local_path and os.path.exists(trailer.local_path):
-                    try:
-                        os.remove(trailer.local_path)
-                    except Exception as e:
-                        _scheduler_log(f"NeX-Up Sonarr auto-sync: Failed to delete file: {e}", level="ERROR")
-                
-                # Also remove from prerolls if it exists
-                preroll = db.query(models.Preroll).filter(
-                    models.Preroll.path == trailer.local_path
-                ).first()
-                if preroll:
-                    db.delete(preroll)
-                
+
+                # The file goes after the rows (retire_trailer_files), kept
+                # while Plex's list still has it.
+                if trailer.local_path:
+                    expired_paths.append(trailer.local_path)
+                    drop_trailer_prerolls(db, trailer.local_path)
+
                 db.delete(trailer)
                 expired_count += 1
-        
+
         if expired_count > 0:
             db.commit()
             _scheduler_log(f"NeX-Up Sonarr auto-sync: Expired {expired_count} TV trailers")
+            self.retire_trailer_files(expired_paths, "expired", db=db)
         
         # ========================================
         # DOWNLOAD: Get new trailers
@@ -2152,6 +2241,56 @@ class Scheduler:
                 past = True
         return {"rating_key": rating_key, "offset": offset, "past_prerolls": past}
 
+    # When NeXroll looks at Plex's sessions again before a write, in seconds
+    # after the look that saw nothing. Plex reports nothing for about 2 s
+    # between two items of one playback, and a playback that was only just
+    # started may take a few seconds to show. Looks 3 and 7 s on can't all land
+    # in gaps unless the items between them run about a second; with a single
+    # second look 5 s on, a 3-second bumper could line both up.
+    _CONFIRM_PROBE_OFFSETS = (3.0, 7.0)
+
+    def _confirm_nothing_playing(self, setting) -> Optional[int]:
+        """Look at Plex's sessions again, twice, before writing.
+
+        NeXroll only looks when it has a change to make, and the gap grace only
+        covers a playback it has already seen. So a look that landed in the
+        ~2 s between the Coming Soon grid and the first trailer of a playback
+        NeXroll had never seen found nothing playing, the write went through,
+        and Plex failed to play that trailer (user report and log, November 5:
+        a blend of two trailer sequences rewrote the list every 3 minutes and
+        no write was ever held). A playback a later look sees counts from then
+        and holds the write as usual.
+
+        Returns the blocking count from the last look (None if Plex couldn't
+        be asked, which the caller treats as nothing playing, as before).
+        """
+        offsets = self._confirm_probe_offsets
+        if not offsets:
+            return 0
+        first_at = self._session_probe_at
+        if first_at is not None and first_at == self._probe_confirmed_at:
+            return 0  # this cached look already was the last of the series
+        if first_at is None or (datetime.datetime.now() - first_at).total_seconds() > offsets[0]:
+            # The look that saw nothing is too old to start from; take a fresh one.
+            self._session_probe_at = None
+            count = self._plex_blocking_session_count(setting)
+            if count != 0:
+                return count
+            first_at = self._session_probe_at or datetime.datetime.now()
+        for offset in offsets:
+            wait = offset - (datetime.datetime.now() - first_at).total_seconds()
+            if wait > 0:
+                self._sleep(wait)
+            self._session_probe_at = None
+            count = self._plex_blocking_session_count(setting)
+            if count != 0:
+                if count:
+                    _scheduler_verbose(f"Playback guard: a later look found {count} playback(s) starting; "
+                                       f"holding the write")
+                return count
+        self._probe_confirmed_at = self._session_probe_at
+        return 0
+
     def _playback_guard_minutes(self, setting) -> int:
         """The configured guard window in minutes; 0 means the guard is off."""
         return normalize_playback_guard_minutes(getattr(setting, "playback_guard_minutes", None))
@@ -2191,6 +2330,8 @@ class Scheduler:
             self._session_probe_at = None  # the cached count used the old window
 
         count = self._plex_blocking_session_count(setting)
+        if count == 0:
+            count = self._confirm_nothing_playing(setting)
         if not count:
             if self._deferred_write_since is not None:
                 waited = (datetime.datetime.now() - self._deferred_write_since).total_seconds()
@@ -2236,6 +2377,191 @@ class Scheduler:
             "context": self._deferred_write_context,
             "window_minutes": int(self._preroll_window_seconds // 60),
         }
+
+    def plex_behind(self, setting) -> bool:
+        """Whether Plex hasn't taken what the settings say is showing.
+
+        The dashboard reads the recorded state, which is set even when Plex
+        refused the change (so Jellyfin/Emby and the user still see the
+        schedule that won). This says when Plex is still on an older list.
+        False while the playback guard holds a write: the dashboard explains
+        that wait separately. Sequence-only schedules aren't tracked here.
+        """
+        if setting is None or self._deferred_write_since is not None:
+            return False
+        schedule_id = getattr(setting, "active_schedule_id", None)
+        filler = getattr(setting, "filler_active", None)
+        if filler:
+            return self._filler_key != filler
+        if self._plex_pending is not None and self._plex_pending == (
+                schedule_id, getattr(setting, "active_category", None)):
+            return True
+        if self._blend_pending is not None and self._blend_pending[1] == schedule_id:
+            return True
+        return False
+
+    def _note_plex_write(self, local_paths, what: str) -> None:
+        """Record a list Plex took: the files in it (local paths), and what it was.
+
+        Every write that succeeds comes through here, so _applied_local_paths
+        is the list Plex has (retention, removed files and the gone-file check
+        rely on it) and the Scheduler tile's "Last applied" names a real write.
+        It used to read schedules' last_run, which is stamped even when an
+        apply fails and on every blend partner each tick.
+        """
+        self._applied_local_paths = {os.path.abspath(p) for p in (local_paths or []) if p}
+        self._plex_list_empty = not self._applied_local_paths
+        if self._applied_local_paths:
+            self._empty_category_logged = None
+        try:
+            at = _localized_now()
+        except Exception:
+            at = datetime.datetime.now()
+        self._last_plex_write = {"at": at.isoformat(), "what": what}
+
+    def last_plex_write(self) -> Optional[dict]:
+        """When Plex last took a preroll list from the scheduler, and what it was."""
+        return dict(self._last_plex_write) if self._last_plex_write else None
+
+    def playback_blocks_manual_write(self, setting) -> int:
+        """Plex playbacks a manual apply would disturb right now (0 if none).
+
+        Apply buttons and the external API wrote Plex at once, so applying a
+        category while someone sat in their prerolls made Plex skip the next
+        one. They write now or not at all (nothing queues them), so this looks
+        the way the scheduler does, later looks included, without recording a
+        deferral the dashboard would report. 0 when the guard is off or Plex
+        can't be asked.
+        """
+        if os.environ.get("NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES") == "1":
+            return 0
+        minutes = self._playback_guard_minutes(setting)
+        if minutes == 0 or not getattr(setting, "plex_url", None):
+            return 0
+        if self._preroll_window_seconds != minutes * 60.0:
+            self._preroll_window_seconds = minutes * 60.0
+            self._session_probe_at = None
+        count = self._plex_blocking_session_count(setting)
+        if count == 0:
+            count = self._confirm_nothing_playing(setting)
+        return count or 0
+
+    def _check_listed_files(self) -> None:
+        """Rewrite Plex's list when a file in it has gone.
+
+        Renaming a preroll or moving it to another category's folder, replacing
+        or converting its video, the Trash, Remove Missing, a moved NeX-Up
+        folder or a file deleted outside NeXroll all leave the old path in the
+        list Plex was given, and Plex fails when it reaches that entry. The
+        five-minute verification put category schedules right; a fixed
+        sequence or a filler was never rewritten. Acts once per set of missing
+        files: if the library still lists them, the rewrite can't drop them.
+        """
+        listed = self._applied_local_paths
+        if not listed:
+            return
+        # One look per folder first. A folder that is gone is most likely
+        # storage that is offline (a network share), not a moved file; a
+        # rewrite can't help then, and on an offline share every file check
+        # can take seconds, which would stall this loop.
+        by_folder = {}
+        for path in listed:
+            by_folder.setdefault(os.path.dirname(path), []).append(path)
+        missing = frozenset(
+            path
+            for folder, paths in by_folder.items() if os.path.isdir(folder)
+            for path in paths if not os.path.exists(path)
+        )
+        if not missing or missing == self._missing_listed:
+            if not missing:
+                self._missing_listed = frozenset()
+            return
+        self._missing_listed = missing
+        names = ", ".join(sorted(os.path.basename(p) for p in missing)[:3])
+        more = f" and {len(missing) - 3} more" if len(missing) > 3 else ""
+        _scheduler_log(f"{len(missing)} file(s) in Plex's preroll list are gone ({names}{more}); "
+                       f"giving Plex a new list")
+        self.request_plex_refresh("a listed preroll was moved or deleted")
+
+    def retire_trailer_files(self, paths, reason: str = "removed", db=None) -> dict:
+        """Delete trailer files, keeping any that Plex's list may still hold.
+
+        Call after the trailer's rows are deleted and committed. A kept file
+        stays on disk until Plex's list no longer has it: the next tick rewrites
+        the list from the database (request_plex_refresh) and the loop deletes
+        the file once Plex has the new one (_purge_retired_files). See
+        backend/retired_files.py.
+        """
+        from backend import retired_files
+        own = db is None
+        db = db or SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            result = retired_files.retire(paths, setting)
+            if result["kept"]:
+                names = ", ".join(os.path.basename(p) for p in result["kept"][:3])
+                more = f" and {len(result['kept']) - 3} more" if len(result["kept"]) > 3 else ""
+                _scheduler_log(f"Kept {len(result['kept'])} {reason} trailer file(s) Plex's preroll list still has "
+                               f"({names}{more}); they are deleted once Plex has the new list")
+                # The caller's session: it may still hold the uncommitted delete.
+                self.request_plex_refresh(f"{reason} trailer", db=db)
+        finally:
+            if own:
+                db.close()
+        return result
+
+    def request_plex_refresh(self, reason: str, db=None) -> None:
+        """Rewrite Plex's preroll list from the database on the next tick.
+
+        Whatever is showing (a category, a sequence, a blend, filler or the
+        fallback) is written again, through the playback guard as usual.
+
+        Deliberately lock-free: the Library Trailers sync calls this from the
+        event loop, and a tick can hold the lock for seconds. A tick running
+        now may clear these marks with a list it built before the rows went;
+        _purge_retired_files then sees Plex still has the file and asks again.
+        """
+        own = db is None
+        db = db or SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            schedule_id = getattr(setting, "active_schedule_id", None) if setting else None
+            category_id = getattr(setting, "active_category", None) if setting else None
+        finally:
+            if own:
+                db.close()
+        self._refresh_reason = reason
+        self._refresh_requested_at = datetime.datetime.now()
+        if category_id:
+            self._plex_pending = (schedule_id, category_id)  # category, fallback
+        if schedule_id:
+            self._last_rotation_time.pop(schedule_id, None)  # sequences
+        if self._blend_key:
+            self._blend_pending = (self._blend_key, schedule_id)
+            self._blend_rotated_at = None
+        self._filler_key = None
+
+    # How often a kept file that Plex's list still holds asks for another
+    # rewrite, should the first one not have taken it out.
+    _RETIRED_REFRESH_SECONDS = 600
+
+    def _purge_retired_files(self) -> None:
+        """Delete kept trailer files once Plex's list no longer has them."""
+        from backend import retired_files
+        if not retired_files.pending():
+            return
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            result = retired_files.purge(setting, lambda paths: retired_files.referenced_paths(db, paths))
+        finally:
+            db.close()
+        if result["deleted"]:
+            _scheduler_log(f"Deleted {len(result['deleted'])} removed trailer file(s) now that Plex has a new list")
+        if result["held"] and self._deferred_write_since is None:
+            asked = self._refresh_requested_at
+            if asked is None or (datetime.datetime.now() - asked).total_seconds() >= self._RETIRED_REFRESH_SECONDS:
+                self.request_plex_refresh("removed trailer")
 
     def _log_apply_outcome(self, failure_message: str, subject: str, level: str = "ERROR") -> None:
         """Report an apply that did not happen, saying which of the two it was.
@@ -2368,72 +2694,57 @@ class Scheduler:
             fallback_needs_apply = False
 
             if active:
-                # STEP 1: Check for EXCLUSIVE schedules first
-                # Exclusive schedules override everything - they win exclusively (no blending)
-                exclusive_schedules = [s for s in active if getattr(s, "exclusive", False)]
-                
-                if exclusive_schedules:
-                    # Multiple exclusive schedules: highest priority wins, then earliest end, then lowest id
-                    def _exclusive_sort_key(s):
-                        priority = getattr(s, "priority", 5)
-                        if priority is None:
-                            priority = 5
-                        end = s.end_date if s.end_date else datetime.datetime.max
-                        return (-priority, end, s.id)  # Negative priority so higher values sort first
-                    exclusive_schedules.sort(key=_exclusive_sort_key)
-                    chosen_schedule = exclusive_schedules[0]
+                # Exclusive wins outright; else two or more blend schedules take
+                # turns; else the highest priority wins (select_schedules).
+                kind, chosen_schedule, blend_schedules = select_schedules(active)
+                if kind != "blend":
+                    self._blend_announced = None
+
+                if kind == "exclusive":
                     desired_category_id = chosen_schedule.category_id
                     priority = getattr(chosen_schedule, "priority", 5)
-                    
+
                     state_key = f"exclusive:{chosen_schedule.id}:{desired_category_id}"
                     if self._last_logged_state != state_key:
                         _scheduler_log(f"EXCLUSIVE: '{chosen_schedule.name}' (Priority {priority}) wins exclusively over {len(active)-1} other schedule(s)")
                         self._last_logged_state = state_key
                         self._last_logged_time = now
-                    
+
                     # Store fallback from winning exclusive schedule
                     current_fallback_id = getattr(chosen_schedule, "fallback_category_id", None)
                     stored_fallback = getattr(setting, "last_schedule_fallback", None)
                     if stored_fallback != current_fallback_id:
                         setting.last_schedule_fallback = current_fallback_id
                         db.commit()
-                    
+
                     # Skip to normal apply logic (below the blend section)
                 else:
-                    # STEP 2: Check for blend mode (only non-exclusive schedules)
-                    blend_schedules = [s for s in active if getattr(s, "blend_enabled", False)]
-                    
                     # Log blend mode eligibility check
-                    if blend_schedules:
-                        blend_names = [f"'{s.name}'" for s in blend_schedules]
-                        _scheduler_verbose(f"Blend check: {len(blend_schedules)} schedule(s) with blend enabled: {', '.join(blend_names)}")
-                        if len(blend_schedules) == 1:
-                            _scheduler_verbose(f"Blend mode requires 2+ overlapping schedules with blend enabled. '{blend_schedules[0].name}' will use normal mode.")
-                    
-                    if len(blend_schedules) >= 2:
-                        # Multiple blendable schedules - use blend mode
-                        _scheduler_log(f"BLEND MODE ACTIVATED: {len(blend_schedules)} schedules blending together")
-                        for bs in blend_schedules:
-                            cat_name = bs.category.name if bs.category else f"Category {bs.category_id}"
-                            priority = getattr(bs, "priority", 5)
-                            _scheduler_log(f"  -> '{bs.name}' (Category: {cat_name}, Priority: {priority})")
+                    blend_candidates = [s for s in active if getattr(s, "blend_enabled", False)]
+                    if blend_candidates:
+                        blend_names = [f"'{s.name}'" for s in blend_candidates]
+                        _scheduler_verbose(f"Blend check: {len(blend_candidates)} schedule(s) with blend enabled: {', '.join(blend_names)}")
+                        if len(blend_candidates) == 1:
+                            _scheduler_verbose(f"Blend mode requires 2+ overlapping schedules with blend enabled. '{blend_candidates[0].name}' will use normal mode.")
+
+                    if kind == "blend":
+                        # Announced when the blend starts or its members change,
+                        # not every minute while it runs.
+                        announce_key = ",".join(str(s.id) for s in sorted(blend_schedules, key=lambda s: s.id))
+                        if self._blend_announced != announce_key:
+                            _scheduler_log(f"BLEND MODE ACTIVATED: {len(blend_schedules)} schedules blending together")
+                            for bs in blend_schedules:
+                                cat_name = bs.category.name if bs.category else f"Category {bs.category_id}"
+                                priority = getattr(bs, "priority", 5)
+                                _scheduler_log(f"  -> '{bs.name}' (Category: {cat_name}, Priority: {priority})")
+                            self._blend_announced = announce_key
 
                         self._apply_blend(blend_schedules, setting, db, now)
                         return  # Skip normal processing when in blend mode
 
-                    # STEP 3: No exclusive, no blend - use normal winner selection
-                    # Priority (highest wins), then earliest end date, then earliest start, then lowest id
-                    def _sort_key(s):
-                        priority = getattr(s, "priority", 5)
-                        if priority is None:
-                            priority = 5
-                        end = s.end_date if s.end_date else datetime.datetime.max
-                        start = s.start_date or datetime.datetime.min
-                        return (-priority, end, start, s.id)  # Negative priority so higher values sort first
-                    active.sort(key=_sort_key)
-                    chosen_schedule = active[0]
+                    # No exclusive, no blend: the highest priority won.
                     desired_category_id = chosen_schedule.category_id
-                
+
                 # Store the fallback for the WINNING schedule only
                 # This ensures that when a schedule wins, its fallback (or lack thereof) takes precedence
                 # even if other overlapping schedules have fallbacks defined
@@ -2760,7 +3071,16 @@ class Scheduler:
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                     db.commit()
                     if plex_retry and not (schedule_changed or filler_changed or fallback_needs_apply):
-                        reason = "held for playback"
+                        # Retried because Plex didn't take it: held for
+                        # playback, or it failed (an empty category, say).
+                        if self._deferred_write_since is not None:
+                            reason = "held for playback"
+                        elif self._refresh_reason:
+                            reason = f"Plex's list rewritten: {self._refresh_reason}"
+                        else:
+                            reason = "retrying"
+                        if _plex_took(applied_ok):
+                            self._refresh_reason = None
                     elif schedule_changed:
                         reason = "winner changed"
                     elif filler_changed:
@@ -2862,6 +3182,13 @@ class Scheduler:
         it. A pick Plex hasn't taken yet (held for playback) is kept and
         retried each tick, rather than picked afresh, so the plugin servers
         don't switch schedules every minute while Plex waits.
+
+        A schedule with nothing to play (a category with no enabled prerolls)
+        is left out of the pick. It used to be picked, fail, and be kept as
+        "held" and retried every tick, so the blend never moved on: on
+        production (November 6) an empty Thanksgiving kept Christmas off Plex
+        all day, and Plex went on playing the night before's list. A pick no
+        server took is now dropped, so the next tick picks again.
         """
         blend_key = ",".join(str(s.id) for s in sorted(blend_schedules, key=lambda s: s.id))
         for sched in blend_schedules:
@@ -2873,9 +3200,35 @@ class Scheduler:
             db.commit()
             return
 
+        playable = [s for s in blend_schedules if schedule_can_play(db, s)]
+        skipped = tuple(s.id for s in blend_schedules if s not in playable)
+        if self._blend_skipped_logged != (blend_key, skipped):
+            for s in blend_schedules:
+                if s.id in skipped:
+                    cat_name = s.category.name if s.category else f"category {s.category_id}"
+                    _scheduler_log(f"BLEND: '{s.name}' is left out: '{cat_name}' has no enabled prerolls",
+                                   level="WARNING")
+            self._blend_skipped_logged = (blend_key, skipped)
+        if not playable:
+            # Nothing to play, so nothing plays: Plex gets an empty list (once:
+            # an empty list isn't written again), and Jellyfin/Emby find no
+            # category prerolls in the blend either.
+            self._blend_pending = None
+            result = self._clear_plex_prerolls(db, "none of the blended schedules has prerolls",
+                                               what="Nothing to play (blend)")
+            if result:
+                setting.active_category = None
+                setting.active_schedule_id = None
+                setting.filler_active = None
+            db.commit()
+            if _plex_took(result):
+                self._blend_key = blend_key
+                self._blend_rotated_at = now
+            return
+
         pending = self._blend_pending
-        held = [s for s in blend_schedules if pending and pending == (blend_key, s.id)]
-        chosen = held[0] if held else random.choice(blend_schedules)
+        held = [s for s in playable if pending and pending == (blend_key, s.id)]
+        chosen = held[0] if held else random.choice(playable)
         has_sequence = _has_valid_sequence(chosen)
         unchanged = (not held
                      and self._blend_key == blend_key
@@ -2909,7 +3262,11 @@ class Scheduler:
             what = "sequence" if has_sequence else "category"
             _scheduler_log(f"{kind}: Applied {what} '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
         else:
-            self._blend_pending = (blend_key, chosen.id)
+            # Keep a pick Jellyfin/Emby took, or one the playback guard holds,
+            # so it lands on Plex instead of being swapped every minute. A pick
+            # nothing took is dropped and the next tick picks again.
+            held_or_taken = bool(applied_ok) or self._deferred_write_since is not None
+            self._blend_pending = (blend_key, chosen.id) if held_or_taken else None
             self._log_apply_outcome(f"{kind}: Failed to apply '{chosen.name}'", f"blended schedule '{chosen.name}'",
                                     level="WARNING")
 
@@ -3100,7 +3457,11 @@ class Scheduler:
                         f"VERIFICATION: Failed to reapply prerolls to Plex — "
                         f"{getattr(result, 'describe', lambda: 'no detail')()}",
                         "the verified prerolls", level="WARNING")
-            
+            elif not self._applied_local_paths:
+                # Plex already has this list; after a restart nothing had
+                # recorded it, and the gone-file check needs to know it.
+                self._applied_local_paths = {os.path.abspath(p) for p in preroll_paths_local}
+
             # Update last verification time
             self._last_verification_time = now
 
@@ -3278,8 +3639,17 @@ class Scheduler:
                     cat_name = cat.name
             except Exception:
                 pass
-            _scheduler_log(f"No prerolls found for category_id={category_id} (name='{cat_name}'). Ensure prerolls are assigned to this category.", level="ERROR")
-            return ApplyResult(reason=f"category '{cat_name}' has no enabled prerolls")
+            # Nothing to play, so nothing plays: Plex gets an empty list, as
+            # Jellyfin and Emby already get nothing. This used to fail and
+            # leave Plex's list alone, so the previous schedule's prerolls
+            # played all day (production, November 6). The 5-minute
+            # verification re-applies the category once it has prerolls.
+            if self._empty_category_logged != category_id:
+                _scheduler_log(f"Category '{cat_name}' has no enabled prerolls; no prerolls play until it has some",
+                               level="WARNING")
+                self._empty_category_logged = category_id
+            return self._clear_plex_prerolls(db, f"category '{cat_name}' has no enabled prerolls",
+                                             what=f"Nothing to play ({cat_name})")
 
         # Build combined path string for Plex multi-preroll format
         # Determine delimiter from schedule settings (not category)
@@ -3394,7 +3764,8 @@ class Scheduler:
         _scheduler_log(f"Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode_str}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
         if ok:
-            self._applied_local_paths = {os.path.abspath(p) for p in preroll_paths_local}
+            self._note_plex_write(preroll_paths_local,
+                                  getattr(schedule, "name", None) or _category_label(db, category_id).strip("'"))
         if ok:
             _scheduler_log(f"SUCCESS setting multi-preroll (mode={mode_str}): {_category_label(db, category_id)}, "
                            f"{len(prerolls)} prerolls", event=not self._routine_apply)
@@ -3419,10 +3790,17 @@ class Scheduler:
                     pass
         return ApplyResult(plex=ok, plugin=plugin)
 
-    def _clear_plex_prerolls(self, db: Session) -> bool:
+    def _clear_plex_prerolls(self, db: Session, why: str = "no active schedules, clear_when_inactive enabled",
+                             what: str = "Prerolls cleared") -> bool:
         """
         Clear the Plex preroll field (set to empty string).
-        Used when no schedules are active and clear_when_inactive is enabled.
+
+        Used when no schedules are active and clear_when_inactive is enabled,
+        and whenever what is showing has nothing to play (``why`` says which):
+        then nothing plays. Leaving Plex's list alone kept the previous
+        schedule's prerolls playing all day (production, November 6; JB:
+        "have it do nothing"). A list Plex already has empty from us is not
+        written again.
         """
         setting = db.query(models.Setting).first()
         plugin = _plugin_channel(setting)
@@ -3442,19 +3820,23 @@ class Scheduler:
 
         if not setting or not getattr(setting, "plex_url", None):
             if plugin:
-                _scheduler_log("Plex not configured; cleared active category for plugin-based server(s)")
+                _scheduler_log(f"Plex not configured; nothing plays on plugin-based server(s) ({why})")
                 return ApplyResult(plugin=True)
             _scheduler_log("No media server configured (missing Plex URL); cannot clear prerolls.", level="WARNING")
             return ApplyResult()
 
+        if self._plex_list_empty:
+            # Plex already has the empty list we gave it.
+            return ApplyResult(plex=True, plugin=plugin)
+
         connector = PlexConnector(setting.plex_url, setting.plex_token)
-        if self._defer_preroll_write(setting, "clearing prerolls (no active schedule)"):
+        if self._defer_preroll_write(setting, f"clearing prerolls ({why})"):
             return ApplyResult(plex=False, plugin=plugin)
-        _scheduler_log("Clearing Plex preroll field (no active schedules, clear_when_inactive enabled)…")
+        _scheduler_log(f"Clearing Plex preroll field ({why})…")
         ok = connector.set_preroll("")  # Empty string clears prerolls
         if ok:
-            _scheduler_log("SUCCESS clearing Plex preroll field (no active schedules, clear_when_inactive enabled).",
-                           event=True)
+            self._note_plex_write([], what)
+            _scheduler_log(f"SUCCESS clearing Plex preroll field ({why}).", event=True)
         else:
             _scheduler_log("FAIL clearing Plex preroll field.", level="WARNING")
         if ok:
@@ -3502,8 +3884,12 @@ class Scheduler:
         )
 
         if not paths and not has_trailer_policy(seq):
-            _scheduler_log("Sequence produced no preroll paths; aborting.")
-            return _nothing_for_plex(db)
+            # Nothing to play, so nothing plays (Plex gets an empty list); it
+            # used to keep the previous list. Jellyfin and Emby resolve the
+            # sequence themselves at playback, as before.
+            _scheduler_log(f"Sequence for '{schedule.name}' has nothing to play; no prerolls play")
+            return self._clear_plex_prerolls(db, f"sequence '{schedule.name}' has nothing to play",
+                                             what=f"Nothing to play ({schedule.name})")
 
         _scheduler_log(f"Sequence built {len(paths)} paths:")
         for i, p in enumerate(paths):
@@ -3601,7 +3987,7 @@ class Scheduler:
         _scheduler_log(f"Applying schedule sequence with {len(paths)} items (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
         if ok:
-            self._applied_local_paths = {os.path.abspath(p) for p in paths}
+            self._note_plex_write(paths, getattr(schedule, "name", None) or "Sequence")
         if ok:
             _scheduler_log(f"SUCCESS setting sequence preroll list: schedule '{getattr(schedule, 'name', '?')}', "
                            f"{len(paths)} items ({mode})", event=not self._routine_apply)
@@ -3740,7 +4126,8 @@ class Scheduler:
         _scheduler_log(f"BLEND: Sending blended playlist to Plex ({len(paths_plex)} prerolls, random mode)...")
         ok = connector.set_preroll(combined)
         if ok:
-            self._applied_local_paths = {os.path.abspath(p) for p in paths}
+            # final_paths: ``paths`` here is only the last schedule's share.
+            self._note_plex_write(final_paths, "Blend")
         if ok:
             _scheduler_log(f"BLEND: Blended preroll list applied successfully to Plex "
                            f"({len(schedules)} schedules, {len(paths_plex)} prerolls)", event=True)
@@ -3782,8 +4169,10 @@ class Scheduler:
             )
 
             if not paths and not has_trailer_policy(blocks):
-                _scheduler_log(f"Filler sequence '{saved_seq.name}' produced no preroll paths", level="WARNING")
-                return _nothing_for_plex(db)
+                _scheduler_log(f"Filler sequence '{saved_seq.name}' has nothing to play; no prerolls play",
+                               level="WARNING")
+                return self._clear_plex_prerolls(db, f"filler sequence '{saved_seq.name}' has nothing to play",
+                                                 what=f"Nothing to play (filler {saved_seq.name})")
             
             _scheduler_log(f"FILLER: Sequence built {len(paths)} paths")
             
@@ -3826,7 +4215,7 @@ class Scheduler:
             _scheduler_log(f"FILLER: Sending sequence to Plex ({len(paths_plex)} prerolls)...")
             ok = connector.set_preroll(combined)
             if ok:
-                self._applied_local_paths = {os.path.abspath(p) for p in paths}
+                self._note_plex_write(paths, f"Filler: {saved_seq.name}")
             if ok:
                 _scheduler_log(f"FILLER: Sequence '{saved_seq.name}' applied successfully")
             else:
@@ -3916,6 +4305,7 @@ class Scheduler:
             _scheduler_log(f"FILLER: Sending {label} to Plex...")
             ok = connector.set_preroll(plex_path)
             if ok:
+                self._note_plex_write([video_path], f"Filler: {label}")
                 _scheduler_log(f"FILLER: {label} applied successfully")
             else:
                 self._log_apply_outcome(

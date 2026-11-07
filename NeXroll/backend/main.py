@@ -119,6 +119,7 @@ from backend import community_match
 from backend import community_servers
 from backend import self_update
 from backend import keyless_plugins
+from backend import now_showing
 from backend.shuffle_bag import shuffle_bag_sample
 from backend.sequence_utils import representative_category_id
 from backend.backup_utils import (
@@ -2641,6 +2642,12 @@ def startup_event():
         configure_persistence(os.path.join(os.path.dirname(DB_PATH), "rotation_state.json"))
     except Exception as e:
         _file_log(f"Rotation state not loaded: {e}", level="WARNING")
+    # Trailer files kept until Plex's preroll list moves on (retired_files).
+    try:
+        from backend import retired_files
+        retired_files.configure(os.path.join(os.path.dirname(DB_PATH), "retired_trailers.json"))
+    except Exception as e:
+        _file_log(f"Removed trailer list not loaded: {e}", level="WARNING")
 
     # Ensure the database schema is up-to-date (adds missing columns to legacy DBs)
     try:
@@ -5526,42 +5533,79 @@ async def external_toggle_schedule(
     }
 
 
+def _refuse_write_during_prerolls(setting, force: bool = False) -> None:
+    """409 when a manual Plex write would cut into prerolls that are playing.
+
+    Apply on a category or sequence, and the external API, wrote Plex at once,
+    unlike the scheduler, which waits (Settings > General > Playback guard).
+    Plex reads its list as it plays, so a change mid-prerolls makes it skip the
+    next trailer. ``force`` writes anyway. Manual applies are not queued.
+    """
+    if force or not setting or not getattr(setting, "plex_url", None):
+        return
+    try:
+        count = scheduler.playback_blocks_manual_write(setting)
+    except Exception:
+        count = 0
+    if count:
+        raise HTTPException(status_code=409, detail={
+            "code": "playback",
+            "sessions": count,
+            "message": ("Plex is playing the prerolls of a movie that just started. Changing its list now "
+                        "would make it skip the next one. Try again once the movie has started, or apply anyway."),
+        })
+
+
 @app.post("/external/apply-category/{category_id}", tags=["External API"])
 async def external_apply_category(
     category_id: int,
+    force: bool = False,
     api_key_record: models.APIKey = Depends(require_api_key_full),
     db: Session = Depends(get_db)
 ):
     """
     Apply a category's prerolls to Plex immediately.
     Requires API key with FULL permissions.
+
+    Answers 409 (``detail.code`` "playback") while Plex is playing the
+    prerolls of a movie that just started; ``force=true`` applies anyway.
     """
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
-    
+
     setting = db.query(models.Setting).first()
     if not setting or not setting.plex_url:
         raise HTTPException(status_code=400, detail="Plex not configured")
-    
-    # Get prerolls for this category (m2m)
-    prerolls = db.query(models.Preroll).filter(
-        models.Preroll.categories.any(models.Category.id == category_id)
-    ).all()
+
+    # The category's enabled prerolls, as schedules play them (m2m and primary).
+    # Disabled ones used to be sent too.
+    prerolls = prerolls_for_category_query(db, category_id).all()
     if not prerolls:
         raise HTTPException(status_code=400, detail="Category has no prerolls")
-    
-    # Build preroll string
-    paths = [p.path for p in prerolls if p.path and os.path.exists(p.path)]
-    if not paths:
+
+    # Build preroll string. Paths go through the path mappings, as every other
+    # write does; raw local paths were sent before, which Plex can't open on a
+    # Docker install or wherever it sees the files under another path.
+    local_paths = [os.path.abspath(p.path) for p in prerolls if p.path and os.path.exists(p.path)]
+    if not local_paths:
         raise HTTPException(status_code=400, detail="No valid preroll files found")
-    
+    mappings = []
+    try:
+        raw = json.loads(setting.path_mappings) if getattr(setting, "path_mappings", None) else []
+        mappings = [m for m in raw if isinstance(m, dict) and m.get("local") and m.get("plex")]
+    except (TypeError, ValueError):
+        mappings = []
+    paths = [path_mapping.translate(p, mappings) for p in local_paths]
+
     plex_mode = getattr(category, "plex_mode", "shuffle")
     if plex_mode == "playlist":
         preroll_string = ",".join(paths)
     else:
         preroll_string = ";".join(paths)
-    
+
+    _refuse_write_during_prerolls(setting, force)
+
     # Apply to Plex
     try:
         connector = PlexConnector(setting.plex_url, setting.plex_token)
@@ -5572,6 +5616,7 @@ async def external_apply_category(
             if check and check["action"] == "withheld":
                 raise HTTPException(status_code=409, detail={"message": check["message"], "plex_path_check": check})
             raise HTTPException(status_code=502, detail="Plex did not accept the preroll setting")
+        scheduler._note_plex_write(local_paths, category.name)
 
         # Update active category
         setting.active_category = category_id
@@ -9678,11 +9723,11 @@ def transcode_preroll(preroll_id: int, request: TranscodeRequest, db: Session = 
         if not temp_output.exists():
             raise HTTPException(status_code=500, detail="Transcoding failed - output file not created")
         
-        # If replacing original, swap files
+        # If replacing original, swap files. One atomic replace: deleting the
+        # original first left a moment with no file at a path Plex may be about
+        # to play (and failed outright on Windows while Plex held it open).
         if request.replace_original and temp_output != final_output:
-            # Remove original and rename temp to original
-            original_path.unlink()
-            temp_output.rename(final_output)
+            os.replace(temp_output, final_output)
             _file_log(f"[TRANSCODE] Replaced original file")
         
         # Get new file size
@@ -11120,18 +11165,21 @@ def remove_preroll_from_category(category_id: int, preroll_id: int, db: Session 
     }
 
 @app.post("/categories/{category_id}/apply-to-plex")
-def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Session = Depends(get_db)):
-    """Apply a category's videos to Plex as the active preroll with optional rotation"""
+def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Session = Depends(get_db),
+                           force: bool = False):
+    """Apply a category's videos to Plex as the active preroll with optional rotation.
+
+    Answers 409 (``detail.code`` "playback") while Plex is playing the prerolls
+    of a movie that just started; ``force=true`` applies anyway.
+    """
     # Get the category
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    # Get all prerolls in this category (include primary and many-to-many)
-    prerolls = db.query(models.Preroll)\
-        .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id)\
-        .filter(or_(models.Preroll.category_id == category_id, models.preroll_categories.c.category_id == category_id))\
-        .distinct().all()
+    # The category's enabled prerolls (primary and many-to-many), as schedules
+    # play them. Disabled ones used to be sent too.
+    prerolls = prerolls_for_category_query(db, category_id).all()
     if not prerolls:
         raise HTTPException(status_code=404, detail="No prerolls found in this category")
 
@@ -11251,11 +11299,14 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
         print(f"  {i}. {preroll.filename}")
     print(f"Combined path: {multi_preroll_path}")
 
+    _refuse_write_during_prerolls(setting, force)
+
     # Attempt to set the multi-preroll in Plex
     success = False
 
     if connector.set_preroll(multi_preroll_path):
         success = True
+        scheduler._note_plex_write(preroll_paths_local, category.name)
         print("Successfully set multi-preroll using combined file paths")
     else:
         print("Failed to set multi-preroll")
@@ -11991,8 +12042,12 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to delete sequence: {str(e)}")
 
 @app.post("/sequences/{sequence_id}/apply")
-def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
-    """Apply a saved sequence's prerolls directly to the media server (Plex/Jellyfin/Emby)."""
+def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db), force: bool = False):
+    """Apply a saved sequence's prerolls directly to the media server (Plex/Jellyfin/Emby).
+
+    Answers 409 (``detail.code`` "playback") while Plex is playing the prerolls
+    of a movie that just started; ``force=true`` applies anyway.
+    """
     saved_seq = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
     if not saved_seq:
         raise HTTPException(status_code=404, detail="Sequence not found")
@@ -12036,6 +12091,9 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
     # Sequences are always playlist mode (ordered playback)
     preroll_string = ",".join(translated)
 
+    # Before anything is applied anywhere, so a refused apply changes nothing.
+    _refuse_write_during_prerolls(setting, force)
+
     applied_to = []
     plex_check = None
     plex_failed = False
@@ -12049,6 +12107,7 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
             connector = PlexConnector(setting.plex_url, setting.plex_token)
             if connector.set_preroll(preroll_string):
                 applied_to.append("plex")
+                scheduler._note_plex_write(paths, saved_seq.name)
             else:
                 plex_failed = True
                 _file_log("Plex did not take the sequence; see the Plex path check for the reason")
@@ -14461,7 +14520,15 @@ def get_scheduler_status():
         waiting = scheduler.deferred_write_state() if hasattr(scheduler, "deferred_write_state") else None
     except Exception:
         waiting = None
-    return {"running": running, "active_schedules": active, "waiting_for_playback": waiting}
+    # The last list Plex took, for the Scheduler tile's "Last applied". None
+    # until Plex takes one in this process (or without Plex): the tile then
+    # falls back to the schedules' last_run.
+    try:
+        last_applied = scheduler.last_plex_write()
+    except Exception:
+        last_applied = None
+    return {"running": running, "active_schedules": active, "waiting_for_playback": waiting,
+            "last_applied": last_applied}
 
 @app.get("/scheduler/active-schedule-ids")
 def get_active_schedule_ids():
@@ -15310,6 +15377,7 @@ def put_path_mappings(payload: PathMappingsPayload, merge: bool = False, db: Ses
     else:
         out = incoming
 
+    previous = getattr(setting, "path_mappings", None)
     try:
         setting.path_mappings = json.dumps(out)
         setting.updated_at = utcnow()
@@ -15318,6 +15386,16 @@ def put_path_mappings(payload: PathMappingsPayload, merge: bool = False, db: Ses
         db.rollback()
         log_event('ERROR', 'system', f'Failed to save path mappings: {e}', source='save_path_mappings')
         raise HTTPException(status_code=500, detail=f"Failed to save path mappings: {e}")
+
+    # Plex's list was written with the old mappings, usually the broken paths
+    # this save fixes. Category schedules were rewritten by the five-minute
+    # verification; a sequence or a filler kept the old paths. The next tick
+    # writes the list again (after any prerolls that are playing).
+    if previous != setting.path_mappings and getattr(setting, "plex_url", None):
+        try:
+            scheduler.request_plex_refresh("path mappings changed", db=db)
+        except Exception as e:
+            _file_log(f"Could not ask for a Plex rewrite after the path mapping change: {e}", level="WARNING")
 
     return {"saved": len(out), "mappings": out, "merge": merge}
 
@@ -16428,6 +16506,15 @@ def system_health_summary(conflicts: Optional[int] = None, db: Session = Depends
     except Exception:
         checks.append(health_summary.make_check("scheduler", "Scheduler", health_summary.UNKNOWN))
 
+    # What is showing has nothing to play, or Plex hasn't taken it. Left out
+    # when all is well.
+    try:
+        showing = health_summary.showing_check(now_showing.describe(db, scheduler, _localized_now(db)))
+        if showing:
+            checks.append(showing)
+    except Exception:
+        pass
+
     # Saved settings establish intent; only a live authenticated probe proves
     # connectivity. Resolve credentials from both legacy DB and secure storage.
     try:
@@ -16737,17 +16824,21 @@ def _relink_relocated_prerolls(db, search_root: str) -> int:
             by_name.setdefault(f, os.path.join(root, f))
 
     fixed = 0
-    for preroll in db.query(models.Preroll).all():
-        current = preroll.path
-        if not current or os.path.isfile(current):
-            continue
-        # os.path.basename cannot split a Windows path when running on Linux
-        # (or vice versa), so normalise both separators before taking the name.
-        leaf = str(current).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-        found = by_name.get(leaf)
-        if found:
-            preroll.path = found
-            fixed += 1
+    # NeX-Up trailer rows too: trailers added by hand are in the system backup,
+    # and kept the old machine's path, so the next sync dropped them as missing.
+    for model, column in ((models.Preroll, "path"), (models.ComingSoonTrailer, "local_path"),
+                          (models.ComingSoonTVTrailer, "local_path")):
+        for row in db.query(model).all():
+            current = getattr(row, column)
+            if not current or os.path.isfile(current):
+                continue
+            # os.path.basename cannot split a Windows path when running on Linux
+            # (or vice versa), so normalise both separators before taking the name.
+            leaf = str(current).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+            found = by_name.get(leaf)
+            if found:
+                setattr(row, column, found)
+                fixed += 1
     if fixed:
         try:
             db.commit()
@@ -16779,7 +16870,7 @@ _SETTINGS_BACKUP_SKIP = frozenset({
     "onboarding_complete", "onboarding_restart_requested",
     # Identity and "when did we last check" bookkeeping.
     "plex_client_id", "last_seen_version",
-    "update_last_check", "update_dismissed_version",
+    "update_last_check", "update_dismissed_version", "update_auto_last_attempt",
     "nexup_last_sync", "nexup_last_sonarr_sync",
 })
 
@@ -16848,7 +16939,7 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
 
     Returns a small report so the caller can tell the user what was skipped.
     """
-    report = {"applied": 0, "skipped_paths": [], "unknown_columns": 0}
+    report = {"applied": 0, "skipped_paths": [], "unknown_columns": 0, "auth_left_off": False}
     if not data:
         return report
 
@@ -16868,6 +16959,12 @@ def _restore_settings(db, data: dict, category_id_map: dict, sequence_id_map: di
             continue
         if name in _SETTINGS_SECRET_COLUMNS and not value:
             continue  # a backup made without keys keeps this install's
+        if name == "auth_enabled" and value and not db.query(models.User).count():
+            # A Database Backup carries no user accounts (a System Backup does).
+            # Turning sign-in on here left the install with no account to sign
+            # in as, and the first person to register became its admin.
+            report["auth_left_off"] = True
+            continue
 
         if name in _SETTINGS_CATEGORY_FKS:
             value = category_id_map.get(value) if value is not None else None
@@ -16944,6 +17041,48 @@ def _restore_credentials(data) -> list:
         except Exception as e:
             _file_log(f"restore: could not store {name}: {e}")
     return restored
+
+
+def _restore_api_keys(db, rows) -> int:
+    """Add the backup's External API keys that this install doesn't have.
+
+    Matched by hash: a key already here keeps its own last use and active
+    flag, and this install's other keys are kept. Returns how many were added.
+    """
+    if not isinstance(rows, list):
+        return 0
+
+    def _when(value):
+        if not value:
+            return None
+        try:
+            return datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(tzinfo=None)
+        except ValueError:
+            return None
+
+    have = {k.key_hash for k in db.query(models.APIKey).all()}
+    added = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key_hash, prefix = row.get("key_hash"), row.get("key_prefix")
+        if not key_hash or not prefix or key_hash in have:
+            continue
+        db.add(models.APIKey(
+            name=row.get("name") or "Restored key",
+            key_hash=key_hash,
+            key_prefix=str(prefix)[:8],
+            permissions=row.get("permissions") if row.get("permissions") in ("read", "full") else "read",
+            is_active=bool(row.get("is_active", True)),
+            description=row.get("description"),
+            expires_at=_when(row.get("expires_at")),
+            created_at=_when(row.get("created_at")) or utcnow(),
+        ))
+        have.add(key_hash)
+        added += 1
+    if added:
+        db.commit()
+    return added
 
 
 def _remap_ignored_conflicts(raw, schedule_id_map: dict) -> str:
@@ -17111,11 +17250,11 @@ def backup_database(request: Request = None, db: Session = Depends(get_db)):
     try:
         with_keys = _backup_may_include_credentials(request)
         data = {
-            # v5 adds media server credentials, schedule IDs (for remapping
-            # ignored conflicts) and sidebar favorites; v4 added settings,
-            # ignored paths and community templates; v3 added preroll IDs for
-            # safe reference remapping.
-            "schema_version": 5,
+            # v6 adds External API keys (as hashes); v5 adds media server
+            # credentials, schedule IDs (for remapping ignored conflicts) and
+            # sidebar favorites; v4 added settings, ignored paths and community
+            # templates; v3 added preroll IDs for safe reference remapping.
+            "schema_version": 6,
             "prerolls": [
                 {
                     "id": p.id,
@@ -17246,6 +17385,22 @@ def backup_database(request: Request = None, db: Session = Depends(get_db)):
                 for r in db.query(models.SonarrServer).order_by(models.SonarrServer.id).all()
             ],
             "credentials": _export_credentials() if with_keys else {},
+            # External API keys as NeXroll stores them: a hash and a prefix, never
+            # the key. Without them a restore onto a new install broke every
+            # integration and the Jellyfin/Emby plugin keys. Like the other
+            # credentials, only in a backup made from the UI.
+            "api_keys": [
+                {
+                    "name": k.name,
+                    "key_hash": k.key_hash,
+                    "key_prefix": k.key_prefix,
+                    "permissions": k.permissions,
+                    "is_active": k.is_active,
+                    "description": k.description,
+                    "expires_at": k.expires_at.isoformat() if k.expires_at else None,
+                    "created_at": k.created_at.isoformat() if k.created_at else None,
+                } for k in db.query(models.APIKey).order_by(models.APIKey.id).all()
+            ] if with_keys else [],
             "exported_at": utcnow().isoformat(),
             "exported_by_version": app_version,
         }
@@ -17280,6 +17435,24 @@ class _ZipDrainSink:
         out = bytes(self.buf)
         self.buf.clear()
         return out
+
+
+def _manual_trailer_entries(db, nexup_root: str) -> list:
+    """(file, archive name) for trailers added by hand and not linked to Radarr.
+
+    A system backup leaves downloaded trailers out because a sync fetches them
+    again. Nothing brings these back, and after a restore the sync dropped
+    their rows as files gone missing. Only files under the NeX-Up folder.
+    """
+    out = []
+    manual = db.query(models.ComingSoonTrailer).filter(
+        or_(models.ComingSoonTrailer.radarr_movie_id == 0, models.ComingSoonTrailer.radarr_movie_id.is_(None)),
+        models.ComingSoonTrailer.local_path.isnot(None)).all()
+    for trailer in manual:
+        fp = trailer.local_path
+        if fp and os.path.isfile(fp) and _is_within_directory(nexup_root, fp):
+            out.append((fp, "nexup/" + os.path.relpath(fp, nexup_root).replace(os.sep, "/")))
+    return out
 
 
 @app.post("/backup/files")
@@ -17372,6 +17545,15 @@ def backup_files(request: Request = None):
                         fp = os.path.join(root, f)
                         rel = os.path.relpath(fp, nexup_root)
                         entries.append((fp, "nexup/" + rel.replace(os.sep, "/")))
+            try:
+                _st = SessionLocal()
+                try:
+                    listed = {arc for _fp, arc in entries}
+                    entries.extend(e for e in _manual_trailer_entries(_st, nexup_root) if e[1] not in listed)
+                finally:
+                    _st.close()
+            except Exception as manual_err:
+                print(f"backup_files: manual trailers left out: {manual_err}")
 
         est_total = len(json_bytes)
         for fp, _arc in entries:
@@ -17843,6 +18025,12 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 print(f"RESTORE: {backup_key} restore failed (non-fatal): {server_err}")
 
         restored_credentials = _restore_credentials(backup_data.get("credentials"))
+        api_keys_restored = 0
+        try:
+            api_keys_restored = _restore_api_keys(db, backup_data.get("api_keys"))
+        except Exception as key_err:
+            db.rollback()
+            print(f"RESTORE: API keys restore failed (non-fatal): {key_err}")
 
         # Reconcile DB paths against actual on-disk files after restore. This is the
         # cross-platform migration fix: JSON backups carry absolute paths from the
@@ -17874,6 +18062,9 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
             "settings_restored": settings_report.get("applied", 0),
             "settings_paths_skipped": settings_report.get("skipped_paths", []),
             "credentials_restored": restored_credentials,
+            "api_keys_restored": api_keys_restored,
+            # Sign-in was on in the backup, but this install has no accounts.
+            "auth_left_off": settings_report.get("auth_left_off", False),
             "rescan": scan_stats,
         }
     except Exception as e:
@@ -19083,6 +19274,21 @@ def _schedule_has_sequence(schedule) -> bool:
 
 @app.get("/settings/active-category")
 def get_active_category(db: Session = Depends(get_db)):
+    """The applied category and sequence, plus what the dashboard should say.
+
+    ``now_showing`` (backend/now_showing.py) is what the Current & next
+    schedule tile renders: it reads the same state and rules as the scheduler.
+    It runs after the payload so it sees any stale pointer the payload cleared.
+    """
+    payload = _active_category_payload(db)
+    try:
+        payload["now_showing"] = now_showing.describe(db, scheduler, _localized_now(db))
+    except Exception as e:
+        _file_log(f"Could not describe what is showing: {e}", level="WARNING")
+    return payload
+
+
+def _active_category_payload(db: Session):
     """Get the currently applied category"""
     try:
         setting = db.query(models.Setting).first()
@@ -21076,20 +21282,17 @@ def delete_tv_trailer(trailer_id: int, db: Session = Depends(get_db)):
     if not trailer:
         raise HTTPException(status_code=404, detail="Trailer not found")
     
-    # Delete the file
-    if trailer.local_path and os.path.exists(trailer.local_path):
-        try:
-            os.remove(trailer.local_path)
-        except Exception as e:
-            _file_log(f"Failed to delete TV trailer file: {e}")
-    
     # Delete associated preroll (path-tolerant lookup)
     preroll = _find_preroll_for_trailer(db, trailer.local_path)
     if preroll:
         db.delete(preroll)
 
+    path = trailer.local_path
     db.delete(trailer)
     db.commit()
+    # The file goes now, or once Plex's preroll list no longer has it.
+    if path:
+        scheduler.retire_trailer_files([path], "deleted", db=db)
 
     return {"success": True, "message": "TV trailer deleted"}
 
@@ -21490,7 +21693,8 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     
     today = datetime.datetime.now().date()
     available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
-    
+    expired_paths = []
+
     for trailer in existing_trailers:
         should_expire = False
         expire_reason = ""
@@ -21522,16 +21726,12 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
         
         if should_expire:
             _file_log(f"Sonarr Sync: Expiring trailer for '{trailer.title}' S{trailer.season_number} - {expire_reason}")
-            
-            # Delete trailer file
-            if trailer.local_path and os.path.exists(trailer.local_path):
-                try:
-                    os.remove(trailer.local_path)
-                    _file_log(f"Sonarr Sync: Deleted trailer file: {trailer.local_path}")
-                except Exception as e:
-                    _file_log(f"Sonarr Sync: Failed to delete trailer file: {e}", level="ERROR")
-                    log_event('ERROR', 'nexup', f'Failed to delete expired TV trailer file: {e}', source='sync_sonarr_trailers', db=db)
-            
+
+            # The file goes after the commit below, kept while Plex's preroll
+            # list still has it (scheduler.retire_trailer_files).
+            if trailer.local_path:
+                expired_paths.append(trailer.local_path)
+
             # Also remove from prerolls if it exists
             preroll = db.query(models.Preroll).filter(
                 models.Preroll.path == trailer.local_path
@@ -21546,6 +21746,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     if results["expired"] > 0:
         db.commit()
         _file_log(f"Sonarr Sync: Expired {results['expired']} TV trailers")
+        scheduler.retire_trailer_files(expired_paths, "expired", db=db)
     
     # ========================================
     # DOWNLOAD: Get new trailers
@@ -23578,19 +23779,15 @@ def delete_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
     preroll_record = _find_preroll_for_trailer(db, trailer.local_path)
     if preroll_record:
         db.delete(preroll_record)
-    
-    # Delete the file
-    if trailer.local_path and os.path.exists(trailer.local_path):
-        try:
-            os.remove(trailer.local_path)
-        except Exception as e:
-            _file_log(f"Failed to delete trailer file: {e}")
-            log_event('WARNING', 'nexup', f'Failed to delete trailer file: {e}', source='delete_nexup_trailer', db=db)
-    
+
     title = trailer.title
+    path = trailer.local_path
     db.delete(trailer)
     db.commit()
-    
+    # The file goes now, or once Plex's preroll list no longer has it.
+    if path:
+        scheduler.retire_trailer_files([path], "deleted", db=db)
+
     _file_log(f"NeX-Up: Deleted trailer for '{title}'")
     
     return {"success": True, "message": f"Deleted trailer for {title}"}
@@ -23766,6 +23963,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
         
         # Check for movies that have been downloaded - respect "Available Now!" grace period
         available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+        expired_trailer_paths = []
         for trailer in existing:
             if trailer.radarr_movie_id in downloaded_movies:
                 # Mark downloaded_at if not already set
@@ -23777,12 +23975,10 @@ async def sync_nexup(db: Session = Depends(get_db)):
                 # Check if past the grace period
                 days_since = (utcnow() - trailer.downloaded_at).days
                 if days_since > available_days:
-                    # Delete trailer file
-                    if trailer.local_path and os.path.exists(trailer.local_path):
-                        try:
-                            os.remove(trailer.local_path)
-                        except:
-                            pass
+                    # The file goes after the rows (below), kept while Plex's
+                    # preroll list still has it.
+                    if trailer.local_path:
+                        expired_trailer_paths.append(trailer.local_path)
                     # Also clean up corresponding preroll record
                     if trailer.local_path:
                         expired_preroll = db.query(models.Preroll).filter(
@@ -23793,7 +23989,10 @@ async def sync_nexup(db: Session = Depends(get_db)):
                     db.delete(trailer)
                     results["expired"] += 1
                     _file_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}' (past {available_days}-day grace period)")
-        
+        if expired_trailer_paths:
+            db.commit()
+            scheduler.retire_trailer_files(expired_trailer_paths, "expired", db=db)
+
         # Parse upcoming movies from the already-fetched data
         include_unmonitored = getattr(setting, 'nexup_include_unmonitored_movies', False)
         release_date_preference = getattr(setting, 'nexup_release_date_preference', 'digital_first')
@@ -32011,6 +32210,14 @@ def _resolve_current_intros(db: Session, media_type: Optional[str] = None,
             mode = "shuffle"
             if cat and getattr(cat, "plex_mode", "shuffle") == "playlist":
                 mode = "sequential"
+            # The running schedule's Playback setting decides, as it does for
+            # Plex (comma or semicolon). Jellyfin and Emby read only the
+            # category's mode, which the UI can't change, so a schedule set to
+            # Sequential played shuffled there.
+            sched = (db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
+                     if active_sched_id else None)
+            if sched is not None and sched.category_id == category_id:
+                mode = "sequential" if getattr(sched, "playlist", False) else "shuffle"
             return {
                 "paths": [os.path.abspath(p.path) for p in prerolls],
                 "mode": mode,

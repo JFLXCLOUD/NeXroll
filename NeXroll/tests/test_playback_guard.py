@@ -75,6 +75,7 @@ class SessionProbeTests(unittest.TestCase):
 class DeferPrerollWriteTests(unittest.TestCase):
     def setUp(self):
         self.scheduler = Scheduler()
+        self.scheduler._sleep = lambda seconds: None  # the second look's pause
         self.setting = FakeSetting()
 
     def test_writes_are_deferred_while_something_is_playing(self):
@@ -182,6 +183,7 @@ class PlaybackProgressTests(unittest.TestCase):
     def setUp(self):
         self.scheduler = Scheduler()
         self.scheduler._session_probe_ttl_seconds = 0
+        self.scheduler._sleep = lambda seconds: None
         self.setting = FakeSetting()
 
     def defer(self, xml):
@@ -300,10 +302,85 @@ class GapsBetweenItemsTests(unittest.TestCase):
         self.assertEqual(self.count(container(item("clip", "70000", "500", 0)), 3700), 1)
 
 
+class SecondLookTests(unittest.TestCase):
+    """User report, November 6: "after the coming soon grid it failed to play
+    the 1st trailer". NeXroll only looks at Plex's sessions when it has a
+    change to make, and the gap grace only covers a playback it has seen, so
+    a look that landed in the ~2 s between the grid and the first trailer of
+    a playback it had never seen let a rotation through. The user's log (a
+    blend of two trailer sequences, rewritten every 3 minutes) has no held
+    write at all. It now looks again 3 and 7 seconds later before writing."""
+
+    def setUp(self):
+        self.scheduler = Scheduler()
+        self.pauses = []
+        self.scheduler._sleep = self.pauses.append
+        self.setting = FakeSetting()
+
+    def defer(self, *bodies):
+        replies = [response(content=b) for b in bodies]
+        with mock.patch("backend.scheduler.requests.get", side_effect=replies) as get:
+            result = self.scheduler._defer_preroll_write(self.setting, "rotation")
+        return result, get.call_count
+
+    def test_a_playback_between_its_grid_and_first_trailer_is_caught(self):
+        trailer = container(item("clip", "70001", "501", 0, session_id="never-seen"))
+        held, calls = self.defer(IDLE_XML, trailer)
+        self.assertTrue(held)
+        self.assertEqual(calls, 2)
+        self.assertEqual(len(self.pauses), 1)
+        self.assertGreater(self.pauses[0], 2)
+
+    def test_a_playback_only_the_third_look_sees_is_caught(self):
+        # Two gaps either side of a short bumper can hide a playback from two looks.
+        bumper_gap = IDLE_XML
+        trailer = container(item("clip", "70002", "502", 0, session_id="never-seen"))
+        held, calls = self.defer(IDLE_XML, bumper_gap, trailer)
+        self.assertTrue(held)
+        self.assertEqual(calls, 3)
+
+    def test_three_empty_looks_let_the_write_through(self):
+        held, calls = self.defer(IDLE_XML, IDLE_XML, IDLE_XML)
+        self.assertFalse(held)
+        self.assertEqual(calls, 3)
+        # Each wait is up to its offset from the first look; the stubbed sleep
+        # passes no time, so they read 3 and 7 (really 3, then 4 more).
+        self.assertEqual(len(self.pauses), 2)
+        self.assertAlmostEqual(self.pauses[0], 3, delta=0.1)
+        self.assertAlmostEqual(self.pauses[1], 7, delta=0.1)
+
+    def test_a_finished_series_of_looks_is_not_repeated_while_cached(self):
+        self.defer(IDLE_XML, IDLE_XML, IDLE_XML)
+        held, calls = self.defer(IDLE_XML)
+        self.assertFalse(held)
+        self.assertEqual(calls, 0, "the cached last look stands")
+        self.assertEqual(len(self.pauses), 2)
+
+    def test_an_old_empty_look_is_taken_again_before_the_pauses(self):
+        self.scheduler._session_probe_ttl_seconds = 60
+        self.scheduler._session_probe_at = datetime.datetime.now() - datetime.timedelta(seconds=30)
+        self.scheduler._session_probe_count = 0
+        self.scheduler._session_probe_blocking = 0
+        held, calls = self.defer(IDLE_XML, IDLE_XML, IDLE_XML)
+        self.assertFalse(held)
+        self.assertEqual(calls, 3)
+
+    def test_something_already_playing_needs_no_second_look(self):
+        held, calls = self.defer(SESSION_XML)
+        self.assertTrue(held)
+        self.assertEqual((calls, self.pauses), (1, []))
+
+    def test_an_unreachable_plex_is_not_asked_twice(self):
+        with mock.patch("backend.scheduler.requests.get", side_effect=OSError("down")) as get:
+            self.assertFalse(self.scheduler._defer_preroll_write(self.setting, "rotation"))
+        self.assertEqual((get.call_count, self.pauses), (1, []))
+
+
 class PlaybackGuardSettingTests(unittest.TestCase):
     def setUp(self):
         self.scheduler = Scheduler()
         self.scheduler._session_probe_ttl_seconds = 0
+        self.scheduler._sleep = lambda seconds: None
 
     def test_normalize(self):
         self.assertEqual(normalize_playback_guard_minutes(None), 20)
@@ -350,7 +427,8 @@ class PlaybackGuardSettingTests(unittest.TestCase):
             self.scheduler._session_first_seen["7"] -= datetime.timedelta(minutes=10)
             setting.playback_guard_minutes = 5
             self.assertFalse(self.scheduler._defer_preroll_write(setting, "rotation"))
-            self.assertEqual(get.call_count, 2)
+            # The new window's look, then the two later looks before writing.
+            self.assertEqual(get.call_count, 4)
 
 
 class TrailerRetentionGuardTests(unittest.TestCase):

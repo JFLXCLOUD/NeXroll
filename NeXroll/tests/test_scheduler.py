@@ -287,6 +287,7 @@ class DeferredWriteReportingTests(unittest.TestCase):
 
     def test_the_guard_records_and_clears_its_context(self):
         setting = SimpleNamespace()
+        self.scheduler._sleep = lambda seconds: None  # the second look's pause
 
         with patch.object(self.scheduler, "_plex_blocking_session_count", return_value=1):
             self.assertTrue(self.scheduler._defer_preroll_write(setting, "sequence schedule 32"))

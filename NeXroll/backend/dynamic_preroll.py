@@ -8,6 +8,7 @@ import re
 import subprocess
 import shutil
 import tempfile
+import time
 import logging
 import sys
 import math
@@ -1970,7 +1971,86 @@ class DynamicPrerollGenerator:
             except Exception:
                 pass
 
-    def generate_from_template(
+    # --- Writing generated videos ---------------------------------------
+    # Generated videos are played by Plex and downloaded by the Jellyfin and
+    # Emby plugins straight from this folder. ffmpeg -y wrote the target
+    # itself, so for the length of a render (tens of seconds) anyone opening
+    # it got a half-written video, and the Coming Soon list is re-rendered
+    # after every NeX-Up sync. Each public generator now renders to a hidden
+    # file beside the target (the folder scan skips dot-files) and swaps it in
+    # only once it is complete.
+
+    @staticmethod
+    def _staging_name(output_filename: str) -> str:
+        """The hidden render target for ``output_filename`` (same extension, so
+        ffmpeg picks the same container)."""
+        return f".rendering-{output_filename}"
+
+    def _publish_render(self, rendered: Optional[str], final_name: str) -> Optional[str]:
+        """Move a finished render over ``final_name`` in one step.
+
+        On Windows a file another program holds open can't be replaced; this
+        retries for a few seconds, then keeps the old video and reports
+        failure rather than leaving a broken one.
+        """
+        if not self.output_dir:
+            return rendered
+        final = Path(self.output_dir) / final_name
+        staging = Path(self.output_dir) / self._staging_name(final_name)
+        try:
+            if not rendered:
+                return None
+            source = Path(rendered)
+            if os.path.normcase(os.path.abspath(source)) != os.path.normcase(os.path.abspath(staging)):
+                return str(source)  # not our render (nothing to swap)
+            if not source.exists():
+                return None
+            for attempt in range(6):
+                try:
+                    os.replace(source, final)
+                    return str(final)
+                except PermissionError:
+                    if attempt == 5:
+                        raise
+                    time.sleep(0.5)
+        except Exception as exc:
+            logger.error(f"Could not put the new {final_name} in place: {exc}")
+            return None
+        finally:
+            try:
+                staging.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return None
+
+    def _render_staged(self, render: Callable[[str], Optional[str]], final_name: str) -> Optional[str]:
+        return self._publish_render(render(self._staging_name(final_name)), final_name)
+
+    def generate_from_template(self, template_id: str, *args, output_filename: Optional[str] = None,
+                               **kwargs) -> Optional[str]:
+        """Generate a preroll from a template (see _render_from_template)."""
+        final_name = output_filename or f"{template_id}_preroll.mp4"
+        return self._render_staged(
+            lambda name: self._render_from_template(template_id, *args, output_filename=name, **kwargs), final_name)
+
+    def generate_from_image(self, *args, output_filename: str = "preview_preroll.mp4", **kwargs) -> Optional[str]:
+        """Generate a preroll from a still image (see _render_from_image)."""
+        return self._render_staged(
+            lambda name: self._render_from_image(*args, output_filename=name, **kwargs), output_filename)
+
+    def generate_from_video(self, *args, output_filename: str = "preview_preroll.mp4", **kwargs) -> Optional[str]:
+        """Generate a preroll from a recorded clip (see _render_from_video)."""
+        return self._render_staged(
+            lambda name: self._render_from_video(*args, output_filename=name, **kwargs), output_filename)
+
+    def generate_coming_soon_list(self, *args, output_filename: str = "coming_soon_list.mp4",
+                                  **kwargs) -> Optional[str]:
+        """Generate a Coming Soon List video (see _render_coming_soon_list)."""
+        return self._render_staged(
+            lambda name: self._render_coming_soon_list(*args, output_filename=name, **kwargs), output_filename)
+
+
+    def _render_from_template(
         self,
         template_id: str,
         variables: Dict[str, str],
@@ -2070,7 +2150,7 @@ class DynamicPrerollGenerator:
             logger.error(f"Failed to delete {filename}: {e}")
         return False
     
-    def generate_from_image(
+    def _render_from_image(
         self,
         image_data: bytes,
         duration: float = 5.0,
@@ -2233,7 +2313,7 @@ class DynamicPrerollGenerator:
                 except:
                     pass
 
-    def generate_from_video(
+    def _render_from_video(
         self,
         video_data: bytes,
         duration: float = 5.0,
@@ -2489,7 +2569,7 @@ class DynamicPrerollGenerator:
         except Exception:
             return None
 
-    def generate_coming_soon_list(
+    def _render_coming_soon_list(
         self,
         items: List[Dict[str, Any]],
         server_name: str = "Your Server",
