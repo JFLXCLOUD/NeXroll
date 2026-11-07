@@ -25,6 +25,8 @@ If you picked a server that is no longer on the list (for example the USA server
 
 Downloads run one at a time, with a gap between them that Typical Nerds sets for each server on the list (so the slower home server can ask for a longer one). Without a setting, and on your own mirror, the gap is 5 seconds. The bulk download bar shows the gap in use.
 
+Tick the boxes of the prerolls you want (or **Select all** for the page) and the bulk download bar appears under the results. It stays at the bottom of the screen while you scroll, so the category picker and **Download** are always in reach, and it shows the progress while the batch downloads.
+
 ## Fair Use Policy
 
 Before you can search or download, you must accept the **Fair Use Policy**. This protects the Typical Nerds community from abuse (excessive scraping, rehosting, etc.). You'll see a one-time prompt on the Community Prerolls page — accept it to unlock search, browse, and downloads.

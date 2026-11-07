@@ -54,7 +54,11 @@ When a schedule is **Exclusive**, it takes complete control while it is active. 
 - Time-restricted content (mature content after 10pm)
 
 ### Blend Mode
-When two or more **Blend** schedules are active, NeXroll mixes them over time. About once a minute it picks one of them at random and plays its category or sequence, so across an evening each one gets turns. A blended sequence always plays whole; NeXroll never interleaves blocks from two sequences.
+When two or more **Blend** schedules are active, NeXroll mixes them over time. Every 3 minutes it picks one of them at random and plays its category or sequence, so across an evening each one gets turns. A blended sequence always plays whole; NeXroll never interleaves blocks from two sequences.
+
+A Blend schedule whose category has no enabled prerolls is left out of the picks, and the dashboard says so; the others take turns without it.
+
+A schedule that wins with nothing to play (its category has no enabled prerolls, or its sequence finds nothing) plays nothing: Plex gets an empty list and Jellyfin and Emby get no prerolls. A lower-priority schedule does not step in; switch the empty one off if you want it to. Up to 2.4.0, Plex kept playing whatever the previous schedule had given it.
 
 While two or more Blend schedules are active, Standard schedules that overlap them wait. A single active Blend schedule behaves like a Standard one.
 

@@ -66,6 +66,9 @@ Plex reads its preroll list as the prerolls play, so changing the list while som
 - A movie or episode whose position has moved on is playing the movie itself, so it stops holding the change within about a minute. A movie that was already under way when the change came up doesn't wait out the whole window.
 - Music and photos never hold a change.
 - Between two prerolls or trailers Plex briefly reports nothing playing; NeXroll keeps holding through that gap (up to 90 seconds) so the next trailer is still there.
+- When nothing seems to be playing, NeXroll looks again 3 and 7 seconds later before changing the list, so a movie that started a moment ago, or is between two of its prerolls, still holds the change.
+- **Apply to server now** on a category, **Apply** on a sequence and the external API check too. While a movie is in its prerolls they ask before writing; **Apply anyway** changes the list straight away.
+- When a file in the list Plex has is renamed, moved to another category's folder, sent to the Trash or deleted outside NeXroll, NeXroll gives Plex a new list within a minute (after any prerolls that are playing). Saving your path mappings does the same.
 - **Settings → General → Playback Guard** sets the longest a change waits on one movie: 5 to 60 minutes, 20 by default. Keep it longer than your longest preroll and trailer run.
 - **Off** applies changes right away, even mid-preroll.
 - The dashboard's Currently showing card says when a change is waiting.
@@ -318,6 +321,7 @@ Each schedule has these options (configured in the Schedules tab):
 |---------|-------------|
 | **Name** | Schedule display name |
 | **Category** | Which category's prerolls to use |
+| **Playback** | **Shuffle** picks from the category's prerolls at random; **Sequential** plays them all, in order. Plex, Jellyfin and Emby all follow it (up to 2.4.0, Jellyfin and Emby always shuffled) |
 | **Start/End Date** | When the schedule is active |
 | **Start/End Time** | Optional time restriction (24-hour format) |
 | **Exclusive** | When active, only this schedule's prerolls play |

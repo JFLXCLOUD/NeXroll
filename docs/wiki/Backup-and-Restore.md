@@ -25,14 +25,15 @@ A portable text file containing everything except the videos:
 - Sidebar favorites
 - **Every setting** — media server URLs, Radarr/Sonarr/TMDB keys, path mappings, dashboard layout, NeX-Up and Generator defaults, logging, filler, timezone, ignored conflicts
 - **Media server credentials** — the Plex token and the Jellyfin and Emby API keys. NeXroll keeps these in the system's secret store rather than its database, so they travel in their own section of the file. Backups made before 2.2.1 do not include them.
+- **NeXroll API keys** (after 2.4.0) — the way NeXroll stores them: a fingerprint and the first few characters, never the key itself, so nobody can use them from the file. Your scripts and the Jellyfin/Emby plugins keep working after a restore onto a new install. A restore adds the keys this install doesn't have and leaves its own alone.
 
 > **This file contains your server tokens and API keys.** Keep it somewhere private. Do not attach it to a public issue.
 
-A backup fetched with a NeXroll API key (from a script, rather than the Backup page) leaves out the Plex token and the Jellyfin, Emby, Radarr, Sonarr and TMDB keys (since 2.3.0). Restoring such a file keeps the keys the install already has.
+A backup fetched with a NeXroll API key (from a script, rather than the Backup page) leaves out the Plex token and the Jellyfin, Emby, Radarr, Sonarr and TMDB keys (since 2.3.0), and NeXroll's own API keys. Restoring such a file keeps the keys the install already has.
 
 ### What is deliberately excluded
 
-- **User accounts and NeXroll API keys.** Restoring logins from a portable file is a credential transfer decision NeXroll does not make for you. Recreate accounts under **Settings → Users**. Favorites that belong to a user account stay behind with it.
+- **User accounts.** Restoring logins from a portable file is a credential transfer decision NeXroll does not make for you. Recreate accounts under **Settings → Users**. If the backup had sign-in turned on and this install has no accounts yet, sign-in stays off (otherwise nobody could sign in, and the first person to register would become the admin); create an account, then turn on **Require Login**. Favorites that belong to a user account stay behind with it. A System Backup does carry accounts, because it holds the whole database.
 - **Logs, sessions and audit history.** Transient.
 - **Runtime state** — which schedule is active right now, last-sync timestamps, the onboarding flag. A restore should not drag the target install into a wizard or replay stale state.
 
@@ -56,20 +57,20 @@ Everything above, plus the content:
 - `database/nexroll_data.json` — the same JSON export as above (credentials included), as a cross-version fallback
 - `prerolls/` — every preroll video
 - `thumbnails/` — every preview image
-- `nexup/` — generated prerolls, Coming Soon lists, and uploaded brand assets (logos, audio)
+- `nexup/` — generated prerolls, Coming Soon lists, uploaded brand assets (logos, audio, backdrops), uploaded fonts, and trailers you added by hand without a Radarr link
 - `settings/settings.json`
 
 ### What is left out, and why
 
 **Downloaded movie and TV trailers.** NeX-Up re-downloads those on demand and they are usually the bulk of the folder. Including them would multiply the archive size for content that regenerates itself.
 
-Generated prerolls *are* included, because they cannot be recreated — they are your authored output.
+Generated prerolls *are* included, because they cannot be recreated — they are your authored output. So are trailers you added by hand without linking them to a Radarr movie (after 2.4.0): no sync can fetch those again.
 
 ### Restoring
 
 Choose **Restore System (.zip)**. NeXroll closes its database connections, replaces the database file, and writes the videos, thumbnails and generated content back into this install's own locations — not the paths baked into the archive. That is what makes a Windows backup restorable into Docker and vice versa.
 
-Because generated prerolls live outside the prerolls folder, their database paths are relinked by filename after the files land, so entries do not end up pointing at a drive that does not exist here. Uploaded Generator logos, soundtracks and backdrops are relinked the same way, and a preroll folder that does not exist on this machine is replaced by this install's own. The NeX-Up files always go into this install's own NeX-Up folder, and the restored settings point at it, so new NeX-Up downloads land beside the restored files. (Before 2.3.0 a NeX-Up folder named in the backup was used if it existed here.) The media server credentials are put into this machine's secret store.
+Because generated prerolls and hand-added trailers live outside the prerolls folder, their database paths are relinked by filename after the files land, so entries do not end up pointing at a drive that does not exist here. Uploaded Generator logos, soundtracks and backdrops are relinked the same way, and a preroll folder that does not exist on this machine is replaced by this install's own. The NeX-Up files always go into this install's own NeX-Up folder, and the restored settings point at it, so new NeX-Up downloads land beside the restored files. (Before 2.3.0 a NeX-Up folder named in the backup was used if it existed here.) The media server credentials are put into this machine's secret store.
 
 The archive is written to disk and unpacked a piece at a time, so a backup larger than the machine's memory restores fine.
 

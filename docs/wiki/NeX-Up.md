@@ -631,6 +631,8 @@ Changing the path afterwards moves the existing trailers into the new location a
 
 Trailers are removed automatically once the film enters your library, or once the retention window passes — whichever comes first. Set the window in days, or set it to `0` to keep trailers until you delete them yourself.
 
+A removed trailer leaves the list straight away and is never picked again, and its entry in the trailer category goes with it. If Plex's preroll list still has the file, the file itself stays on disk until NeXroll has given Plex a new list (after any movie that is in its prerolls), so Plex never reaches for a trailer that is gone. This applies to every removal: the movie arriving, retention, the Sonarr side, Library Trailers rotation and the Delete button.
+
 ### Download behaviour
 
 | Setting | What it controls |

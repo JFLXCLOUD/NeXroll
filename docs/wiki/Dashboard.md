@@ -15,6 +15,28 @@ The two tiles that matter most on a normal day:
 
 Connection health confirms NeXroll can reach the server. It does not prove the media server can open a preroll file or that a client played it; see [Path Mappings](Path-Mappings) if playback still fails.
 
+### What Current & next schedule tells you
+
+**Currently showing** names the schedule that won and its category (or *Sequence*), with:
+
+- **How it plays**: *Shuffle* or *Sequential* follows the schedule's own **Playback** setting; *Sequence* for a schedule with a sequence; *Single file* for a filler video.
+- **How many prerolls** it can play. Disabled prerolls are not counted, and a sequence shows no count.
+- **Exclusive** when an exclusive schedule is keeping the others off.
+- **Blends**: the schedule picked for now, which schedules are blending, and how often the pick changes (every 3 minutes).
+- **Outside your schedules**: *Fallback filler* or *Fallback category* when no schedule is running, *Applied by hand* (with the time it ends) after you apply a sequence yourself, *Passive mode*, or *Prerolls cleared* with Clear When Inactive on.
+
+An amber note appears whenever your server is not playing what the title says:
+
+- **"Thanksgiving has no enabled prerolls. No prerolls play until it has some."** The schedule won but its category is empty, so nothing plays before movies on any server: Plex gets an empty list. Add prerolls to the category (NeXroll picks them up within five minutes), or switch the schedule off so the next one takes over. Up to 2.4.0, Plex kept playing the previous schedule's prerolls instead.
+- **"… is left out of the blend"**: a blending schedule with no prerolls is skipped, and the others take turns without it.
+- **"Plex hasn't taken this change yet"**: Plex refused the change or could not be reached. NeXroll retries every minute.
+
+The same problem also shows in **System health** as a **Now showing** row.
+
+**Up next** is the next schedule to start, with what happens when it does: *Takes over*, *Joins the blend with …*, or *Won't play while … runs* when an exclusive or higher-priority schedule will still be running. A schedule with nothing to play is flagged before it starts.
+
+**Upcoming schedules** labels every schedule in its window: **Playing**, **In blend**, **No prerolls**, **Outranked** (another schedule won), or **Not in blend** (two or more others are blending and this one has blend off).
+
 ### Media-server health in 2.2.0
 
 System health checks each configured Plex, Jellyfin, and Emby connection with an authenticated request. Saved connection settings alone do not count as a healthy connection. The tile refreshes every **30 seconds** and when you return focus to the window.
@@ -47,13 +69,13 @@ The card is included in Essential and Operations presets and can be hidden, resi
 |---|---|
 | Current & next schedule | What is active now, how it plays, and what follows it |
 | Upcoming schedules | The full queue of what activates next |
-| System health | Scheduler, server, storage, conflicts |
+| System health | Scheduler, server, storage, conflicts, and what is showing when it has a problem |
 | Storage | Space used by content type |
 | Quick actions | Common maintenance commands |
 | Library | Prerolls, categories, and trailers |
 | Schedule counts | Enabled, disabled, and conflicts in detail |
 | Media servers | Plex, Jellyfin, and Emby connections in detail |
-| Scheduler | Run state, timezone, and last activation in detail |
+| Scheduler | Run state, timezone, and the last list Plex took (Last applied) |
 | Community prerolls | Matched and downloaded prerolls |
 | NeX-Up | Trailer sync status |
 | Library Trailers | Local trailers, downloads, storage, errors and Library Trailers sync |
@@ -95,7 +117,7 @@ The Quick actions tile collects the maintenance commands you would otherwise hun
 That tile depends on something that is not set up yet — most often a media server connection. Open [Connect](Connect) and finish the connection.
 
 **The dashboard shows a schedule that is not playing.**
-NeXroll shows what it has told the server to play. If the server is playing something else, the usual cause is a path the server cannot open — see [Path Mappings](Path-Mappings).
+Look for an amber note on Current & next schedule: an empty category, a blend partner left out, or a change Plex hasn't taken. Without a note, NeXroll gave the server that schedule's prerolls; if the server plays something else, the usual cause is a path the server cannot open — see [Path Mappings](Path-Mappings).
 
 **Upcoming schedules runs past the edge of its tile.**
 Fixed in 2.2.0-beta.5. Update if you are on an earlier build.

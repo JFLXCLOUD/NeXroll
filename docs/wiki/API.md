@@ -209,6 +209,8 @@ POST /external/apply-category/{category_id}
 
 Immediately applies a category to Plex. Requires **full access** API key.
 
+Only the category's enabled prerolls are sent, through your path mappings. While Plex is playing the prerolls of a movie that just started, the call answers **409** with `detail.code` `"playback"` and changes nothing, because changing the list then makes Plex skip the next preroll. Retry once the movie has started, or add `?force=true` to apply anyway.
+
 ---
 
 ## Categories
@@ -268,7 +270,7 @@ DELETE /categories/{id}
 POST /categories/{id}/apply-to-plex
 ```
 
-Immediately applies the category's prerolls to Plex.
+Immediately applies the category's enabled prerolls to Plex. Answers **409** (`detail.code` `"playback"`) while Plex is playing the prerolls of a movie that just started; `?force=true` applies anyway. `POST /sequences/{id}/apply` behaves the same way.
 
 ### Get Category Prerolls
 
