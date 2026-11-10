@@ -72,74 +72,42 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
     return errors;
   }
 
-  // Validate random block
+  // Category block (shuffled or in category order)
   if (blockType === 'random' || blockType === 'sequential') {
     if (!block.category_id) {
-      errors.push('Category block requires a category');
-    } else {
-      // Check if category exists
-      const categoryExists = categories.some((c) => c.id === block.category_id);
-      if (!categoryExists) {
-        errors.push(`Category ${block.category_id} not found`);
-      }
+      errors.push('Choose a category');
+    } else if (categories.length && !categories.some((c) => String(c.id) === String(block.category_id))) {
+      // (an empty list means the library hasn't loaded, not that all is gone)
+      errors.push('Its category no longer exists; choose another');
     }
 
+    // Count is optional for "in category order" blocks (defaults to 1)
     if (block.count === undefined || block.count === null) {
-      errors.push('Category block requires how many prerolls to play');
+      if (blockType === 'random') errors.push('Set how many prerolls to play');
     } else {
       const count = parseInt(block.count);
       if (isNaN(count) || count < 1) {
-        errors.push('Category block must play at least 1 preroll');
+        errors.push('Play at least 1 preroll');
       }
       if (count > 10) {
-        errors.push('Category block cannot play more than 10 prerolls');
-      }
-    }
-  }
-
-  // Validate sequential block (similar to random, but plays in order)
-  // Sequential blocks from imports may use category_name instead of category_id
-  if (blockType === 'sequential') {
-    // Accept either category_id or category_name (for imported sequences)
-    if (!block.category_id && !block.category_name) {
-      errors.push('Sequential block requires category_id or category_name');
-    } else if (block.category_id) {
-      // Check if category exists
-      const categoryExists = categories.some((c) => c.id === block.category_id);
-      if (!categoryExists) {
-        errors.push(`Category ${block.category_id} not found`);
-      }
-    }
-    // Note: category_name blocks will be resolved by backend during schedule execution
-
-    // Count is optional for sequential blocks (defaults to 1)
-    if (block.count !== undefined && block.count !== null) {
-      const count = parseInt(block.count);
-      if (isNaN(count) || count < 1) {
-        errors.push('Sequential block count must be at least 1');
-      }
-      if (count > 10) {
-        errors.push('Sequential block count cannot exceed 10');
+        errors.push('Play no more than 10 prerolls');
       }
     }
   }
 
   // Validate fixed block
   if (blockType === 'fixed') {
-    if (!block.preroll_ids) {
-      errors.push('Fixed block requires preroll_ids array');
-    } else if (!Array.isArray(block.preroll_ids)) {
-      errors.push('Fixed block preroll_ids must be an array');
-    } else if (block.preroll_ids.length === 0) {
-      errors.push('Fixed block must have at least one preroll');
+    if (!Array.isArray(block.preroll_ids) || block.preroll_ids.length === 0) {
+      errors.push('Choose at least one preroll');
     } else {
-      // Check if all prerolls exist
-      block.preroll_ids.forEach((id) => {
-        const prerollExists = prerolls.some((p) => p.id === id);
-        if (!prerollExists) {
-          errors.push(`Preroll ${id} not found`);
-        }
-      });
+      const missing = prerolls.length
+        ? block.preroll_ids.filter((id) => !prerolls.some((p) => String(p.id) === String(id))).length
+        : 0;
+      if (missing) {
+        errors.push(missing === 1
+          ? 'A selected preroll is no longer in the library'
+          : `${missing} selected prerolls are no longer in the library`);
+      }
     }
   }
 
@@ -187,7 +155,7 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
   // sequence that previewed correctly could not be saved.
   if (blockType === 'dynamic_preroll') {
     if (!block.filename && !(block.template && block.theme)) {
-      errors.push('Generated preroll block needs a generated item selected');
+      errors.push('Choose a generated item');
     }
   }
 
@@ -205,7 +173,14 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
     block.condition.rules.filter(rule => rule?.kind === 'server').forEach(rule => {
       if (!Array.isArray(rule.values) || !rule.values.length || rule.values.some(v => !['plex', 'jellyfin', 'emby'].includes(v))) errors.push('Choose at least one media server');
     });
-    // An empty tag or file path rule could never be met, so its block would never play.
+    // An empty genre, tag or file path rule could never be met, so its block
+    // would never play; the same goes for a time of day rule missing a time.
+    block.condition.rules.filter(rule => rule?.kind === 'genre').forEach(rule => {
+      if (!Array.isArray(rule.values) || !rule.values.some(v => String(v).trim())) errors.push('Choose at least one genre');
+    });
+    block.condition.rules.filter(rule => rule?.kind === 'time_window').forEach(rule => {
+      if (!rule.start || !rule.end) errors.push('Set both times for the time of day rule');
+    });
     block.condition.rules.filter(rule => rule?.kind === 'tag').forEach(rule => {
       if (!Array.isArray(rule.values) || !rule.values.some(v => String(v).trim())) errors.push('Add at least one tag');
     });
@@ -215,6 +190,15 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
   }
   return errors;
 };
+
+/**
+ * What each block still needs before the sequence can be saved, in the
+ * builder's own words: [{ index, problems: string[] }] for blocks with any.
+ */
+export const sequenceProblems = (sequence, categories = [], prerolls = []) =>
+  (Array.isArray(sequence) ? sequence : [])
+    .map((block, index) => ({ index, problems: [...new Set(validateBlock(block, categories, prerolls))] }))
+    .filter(entry => entry.problems.length > 0);
 
 /**
  * Sanitize a sequence for backend submission
@@ -445,6 +429,7 @@ export const sequenceHasUnsavedChanges = (blocks, name, description, saved) => {
 const sequenceValidatorExports = {
   validateSequence,
   validateBlock,
+  sequenceProblems,
   sanitizeSequence,
   parseSequence,
   stringifySequence,

@@ -70,7 +70,12 @@ export function estimateSequence(blocks = [], prerolls = []) {
         break;
       }
       case 'sequential': {
-        const pool = inCategory(prerolls, block.category_id);
+        // "In category order" plays the first `count` prerolls by id, as the
+        // scheduler does. The whole category used to be added up, so one
+        // preroll from a ten-preroll category was announced as ten.
+        const count = Math.max(1, Number(block.count) || 1);
+        const pool = inCategory(prerolls, block.category_id)
+          .slice().sort((a, b) => a.id - b.id).slice(0, count);
         pool.forEach(p => {
           const d = durationOf(prerolls, p.id);
           seconds += d.seconds;

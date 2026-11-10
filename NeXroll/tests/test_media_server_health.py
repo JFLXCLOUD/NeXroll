@@ -115,11 +115,16 @@ def test_summary_endpoint_uses_live_results_and_never_hides_probe_failure():
     exec(compile(ast.Module(body=[node], type_ignores=[]), '<health-route>', 'exec'), env)
     db = Mock()
     db.query.return_value.count.return_value = 1
+    health.reset_probe_cache()
     offline = [{'name': 'Jellyfin', 'status': 'error', 'detail': 'No connection to media server (Jellyfin)'}]
     with patch.object(health, 'check_media_servers', return_value=offline):
         summary = env['system_health_summary'](0, db)
     assert summary['status'] == 'degraded'
     assert summary['note'] == offline[0]['detail']
+    # Asked again within seconds, the probe's answer is reused.
+    with patch.object(health, 'check_media_servers', side_effect=RuntimeError('secret')):
+        assert env['system_health_summary'](0, db)['note'] == offline[0]['detail']
+    health.reset_probe_cache()
     with patch.object(health, 'check_media_servers', side_effect=RuntimeError('secret')):
         summary = env['system_health_summary'](0, db)
     assert summary['status'] == 'attention'

@@ -1,4 +1,4 @@
-import { sanitizeSequence } from './sequenceValidator';
+import { sanitizeSequence, sequenceProblems } from './sequenceValidator';
 
 describe('sanitizeSequence', () => {
   test('keeps a sequential block\'s category and count', () => {
@@ -110,5 +110,38 @@ describe('sequenceHasUnsavedChanges', () => {
     expect(sequenceHasUnsavedChanges([], '   ', '  ', null)).toBe(false);
     expect(sequenceHasUnsavedChanges([{ type: 'fixed', preroll_ids: [1] }], '', '', null)).toBe(true);
     expect(sequenceHasUnsavedChanges([], 'Named but empty', '', null)).toBe(true);
+  });
+});
+
+describe('sequenceProblems', () => {
+  const categories = [{ id: 6, name: 'Default' }];
+  const prerolls = [{ id: 1 }, { id: 2 }];
+
+  test('names what each block still needs, in plain words', () => {
+    const problems = sequenceProblems([
+      { type: 'random', category_id: 6, count: 1 },
+      { type: 'fixed', preroll_ids: [] },
+      { type: 'dynamic_preroll', filename: null },
+      { type: 'random', category_id: 6, count: 1, condition: { match: 'all', rules: [{ kind: 'genre', values: [] }] } },
+      { type: 'random', category_id: 6, count: 1, condition: { match: 'all', rules: [{ kind: 'time_window', start: '', end: '23:00' }] } },
+      { type: 'random', category_id: 99, count: 1 },
+      { type: 'fixed', preroll_ids: [1, 7] },
+    ], categories, prerolls);
+    expect(problems).toEqual([
+      { index: 1, problems: ['Choose at least one preroll'] },
+      { index: 2, problems: ['Choose a generated item'] },
+      { index: 3, problems: ['Choose at least one genre'] },
+      { index: 4, problems: ['Set both times for the time of day rule'] },
+      { index: 5, problems: ['Its category no longer exists; choose another'] },
+      { index: 6, problems: ['A selected preroll is no longer in the library'] },
+    ]);
+  });
+
+  test('a library that has not loaded yet is not read as everything deleted', () => {
+    expect(sequenceProblems([{ type: 'random', category_id: 6, count: 1 }, { type: 'fixed', preroll_ids: [1] }], [], [])).toEqual([]);
+  });
+
+  test('category ids match whether stored as numbers or text', () => {
+    expect(sequenceProblems([{ type: 'random', category_id: '6', count: 1 }], categories, prerolls)).toEqual([]);
   });
 });

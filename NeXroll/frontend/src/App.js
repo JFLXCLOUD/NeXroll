@@ -41,7 +41,7 @@ import NexUpApprovedPages from './components/NexUpApprovedPages';
 import { PlexPathCheck, FindPlexFolder, PlexFolderPicker, StatusIcon, statusText } from './components/PlexPathTools';
 import PluginPlayback from './components/PluginPlayback';
 import { captureDynamicPrerollFrame, drawThemeBackdropFrame, fontStackFor, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
-import { validateSequence, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount, sequenceHasUnsavedChanges } from './utils/sequenceValidator';
+import { validateSequence, sequenceProblems, stringifySequence, sanitizeSequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount, sequenceHasUnsavedChanges } from './utils/sequenceValidator';
 import { isUncategorized, prerollCategoryLabels, prerollInCategory } from './utils/prerollCategories';
 import { MAX_UPLOAD_BYTES, VIDEO_EXTENSIONS, fileKey, isFinished, isTooLarge, mergeFiles, pendingFiles, sendUpload } from './utils/uploadQueue';
 import {
@@ -960,6 +960,13 @@ function App() {
   const [cinemaTrailersLoading, setCinemaTrailersLoading] = useState(false);
   const [cinemaTrailersSaving, setCinemaTrailersSaving] = useState(null); // key currently saving
   const [prerolls, setPrerolls] = useState([]);
+  // False until the first load of prerolls, schedules and server status has
+  // come back, so tiles can say "Loading" instead of "Not connected" or "No
+  // prerolls uploaded" for the first few seconds.
+  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
+  const [libraryLoaded, setLibraryLoaded] = useState(false);
+  const earlyLibraryLoadRef = useRef(false);
+  const fullLoadDoneRef = useRef(false);
   // Preroll trash. Files deleted with "Also delete the video file from disk" are
   // moved to <prerolls>/.nexroll-trash rather than erased, and stay recoverable
   // until their retention window expires.
@@ -2257,15 +2264,29 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [sequenceLibrarySort, setSequenceLibrarySort] = useState('updated');
   const [selectedScheduleConflictId, setSelectedScheduleConflictId] = useState(null);
   const previousActiveTabRef = useRef(activeTab);
+  // The Sequence Builder works on one of two things, and they share
+  // sequenceBlocks: a library sequence (new or saved), or the sequence of the
+  // schedule being created or edited (opened from the schedule form's Content
+  // step). Mixing them up saved nameless copies, resumed edits of a schedule
+  // from "Create New", and let a saved draft overwrite the builder's work.
+  const [builderForSchedule, setBuilderForSchedule] = useState(false);
+  const builderScheduleSnapshotRef = useRef(null); // the form's blocks when the builder opened
+  const builderStashRef = useRef(null);            // an unsaved library sequence, kept while on other pages
+  const savingSequenceRef = useRef(false);
+  const [savingSequence, setSavingSequence] = useState(false);
+  // The blocks last seen on the builder page, to tell "the user walked away"
+  // from "something loaded other blocks and navigated" (a save, Use, an edit).
+  const builderBlocksRef = useRef(sequenceBlocks);
+  useEffect(() => {
+    if (activeTab === 'schedules/builder') builderBlocksRef.current = sequenceBlocks;
+  });
 
   useEffect(() => {
     const previousTab = previousActiveTabRef.current;
     previousActiveTabRef.current = activeTab;
-    // Navigating away from the schedule editor any other way (sidebar, breadcrumb)
-    // should discard the in-progress edit, same as closing the old edit modal did.
-    // 'schedules/builder' is excluded: the Content step sends advanced-mode edits
-    // there deliberately, and the user is expected to come back and finish.
-    if (previousTab === 'schedules/create' && activeTab !== 'schedules/create' && activeTab !== 'schedules/builder' && editingSchedule) {
+    const BUILDER = 'schedules/builder';
+    const FORM = 'schedules/create';
+    const discardScheduleEdit = () => {
       setEditingSchedule(null);
       setScheduleForm({
         name: '', type: 'monthly', start_date: '', end_date: '',
@@ -2278,13 +2299,92 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       setWeekDays([]);
       setSelectedMonths([]); setMonthDays([]);
       setTimeRange({ start: '', end: '' });
+    };
+    const returningFromBuilder = previousTab === BUILDER && activeTab === FORM && builderForSchedule;
+
+    // Navigating away from the schedule editor any other way (sidebar, breadcrumb)
+    // should discard the in-progress edit, same as closing the old edit modal did.
+    // 'schedules/builder' is excluded: the Content step sends advanced-mode edits
+    // there deliberately, and the user is expected to come back and finish.
+    if (previousTab === FORM && activeTab !== FORM && activeTab !== BUILDER && editingSchedule) {
+      discardScheduleEdit();
     }
+
+    // Entering the builder.
+    if (activeTab === BUILDER && previousTab !== BUILDER) {
+      if (previousTab === FORM && scheduleMode === 'advanced') {
+        // For the schedule: its blocks stay the form's, and Cancel puts them back.
+        builderScheduleSnapshotRef.current = sequenceBlocks;
+        setBuilderForSchedule(true);
+        setEditingSequenceId(null);
+        setEditingSequenceName('');
+        setEditingSequenceDescription('');
+        setScheduleBuilderSelectedIndex(0);
+      } else {
+        setBuilderForSchedule(false);
+        let blocksNow = sequenceBlocks;
+        if (previousTab === FORM) {
+          // A simple-mode schedule has no sequence to bring along.
+          if (editingSchedule) discardScheduleEdit();
+          else if (sequenceBlocks.length) setSequenceBlocks([]);
+          blocksNow = [];
+        }
+        // Pick an unsaved library sequence back up where it was left.
+        const stash = builderStashRef.current;
+        builderStashRef.current = null;
+        if (stash && blocksNow.length === 0 && editingSequenceId === null && !editingSequenceName.trim()) {
+          setSequenceBlocks(stash.blocks);
+          setEditingSequenceId(stash.id);
+          setEditingSequenceName(stash.name);
+          setEditingSequenceDescription(stash.description);
+          setScheduleBuilderSelectedIndex(0);
+          showAlert(`Picked up "${stash.name.trim() || 'Untitled Sequence'}" where you left it. It still has unsaved changes.`, 'info');
+        }
+      }
+    }
+
+    // Leaving the builder.
+    if (previousTab === BUILDER && activeTab !== BUILDER) {
+      if (builderForSchedule) {
+        setBuilderForSchedule(false);
+        builderScheduleSnapshotRef.current = null;
+        // Wandering off instead of going back to the form abandons an edit of
+        // an existing schedule, as leaving the form itself does. "Create New"
+        // used to open still editing that schedule.
+        if (activeTab !== FORM && editingSchedule) discardScheduleEdit();
+      } else if (sequenceBlocks === builderBlocksRef.current) {
+        // The user walked away (sidebar, search). An unsaved library sequence
+        // is set aside rather than left in the shared state, where the
+        // schedule form would pick it up and where it came back as a nameless
+        // copy of the sequence being edited.
+        if (sequenceBuilderIsDirty() && sequenceBlocks.length > 0) {
+          builderStashRef.current = {
+            blocks: sequenceBlocks, id: editingSequenceId,
+            name: editingSequenceName, description: editingSequenceDescription,
+          };
+          showAlert(`"${editingSequenceName.trim() || 'Untitled Sequence'}" isn't saved yet. It is kept in the Sequence Builder until you save or cancel it.`, 'info');
+        }
+        if (sequenceBlocks.length) setSequenceBlocks([]);
+        setEditingSequenceId(null);
+        setEditingSequenceName('');
+        setEditingSequenceDescription('');
+      } else {
+        // A save, Cancel, or something that loaded other blocks and navigated:
+        // those blocks belong to where we are going.
+        setEditingSequenceId(null);
+        setEditingSequenceName('');
+        setEditingSequenceDescription('');
+      }
+    }
+
     if (activeTab === 'schedules/calendar') setCalendarMode('week');
     if (activeTab === 'schedules/create') {
-      setScheduleCreateStep(1);
+      // Back from building this schedule's sequence: return to the Content
+      // step with the builder's blocks, not to step 1 or a saved draft.
+      setScheduleCreateStep(returningFromBuilder ? 3 : 1);
       // Editing an existing schedule already populated this state via
       // handleEditSchedule — never clobber it with an unrelated saved draft.
-      if (!editingSchedule) {
+      if (!editingSchedule && !returningFromBuilder) {
         try {
           const saved = localStorage.getItem('nx_schedule_draft');
           if (saved) {
@@ -2596,7 +2696,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   useEffect(() => {
     const origAlert = window.alert;
     window.alert = (message) => {
-      showAlert(message, 'info');
+      // With notifications turned off, info toasts are not shown. A plain
+      // alert() is nearly always a prompt the user must see ("Schedule name
+      // is required"), so those became silent: the button appeared to do
+      // nothing. Only success messages stay optional.
+      const text = typeof message === 'string' ? message : String(message ?? '');
+      const optional = /success|saved|updated|created|deleted|copied|applied|restored|complete/i.test(text);
+      showAlert(message, showNotifications || optional ? 'info' : 'warning');
     };
     return () => {
       window.alert = origAlert;
@@ -3166,6 +3272,25 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       .then(safeJson)
       .then(s => { if (s && !s.__error) setStorageBreakdown(s); })
       .catch(() => {});
+    // First load only: the library and schedules answer in a tenth of a second,
+    // but the batch below finishes with its slowest request (a media server
+    // check, or the dependency check at two seconds and more), and the whole
+    // dashboard sat empty until then. Show these as soon as they arrive.
+    if (!earlyLibraryLoadRef.current) {
+      earlyLibraryLoadRef.current = true;
+      Promise.all(['prerolls', 'schedules', 'categories', 'scheduler/status'].map(path => fetch(apiUrl(path)).then(safeJson)))
+        .then(([earlyPrerolls, earlySchedules, earlyCategories, earlyScheduler]) => {
+          if (![earlyPrerolls, earlySchedules, earlyCategories].every(Array.isArray)) return;
+          // The full batch may already have landed; it has the same data.
+          if (fullLoadDoneRef.current) return;
+          setPrerolls(earlyPrerolls);
+          setSchedules(earlySchedules);
+          setCategories(earlyCategories);
+          if (earlyScheduler && !earlyScheduler.__error && typeof earlyScheduler.running === 'boolean') setSchedulerStatus(earlyScheduler);
+          setLibraryLoaded(true);
+        })
+        .catch(() => {});
+    }
     // Always fetch all prerolls (no filter) for global state, filter in dashboard UI only
     return Promise.all([
       fetch(apiUrl('plex/status')),
@@ -3204,6 +3329,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           setEmbyPluginInfo(null);
         }
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
+        fullLoadDoneRef.current = true;
+        setInitialDataLoaded(true);
+        setLibraryLoaded(true);
         setSchedules(Array.isArray(schedules) ? schedules : []);
         setCategories(Array.isArray(categories) ? categories : []);
         setHolidayPresets(Array.isArray(holidays) ? holidays : []);
@@ -7216,9 +7344,20 @@ const persistDashLayout = React.useCallback(async (next) => {
 }, [saveDashLayoutToStorage]);
 
 // Auto-persist dashboard layout changes with debounce (500ms delay)
+// Only changes are saved. Every page load used to send the layout it had just
+// read straight back, and when the read failed (an error answer, not a network
+// drop) it sent this browser's defaults over the saved layout.
+const dashLayoutSavedRef = React.useRef(null);
 React.useEffect(() => {
   if (!dashLayoutReady) return undefined;
+  const current = JSON.stringify(dashLayout);
+  if (dashLayoutSavedRef.current === null) {
+    dashLayoutSavedRef.current = current; // as loaded
+    return undefined;
+  }
+  if (dashLayoutSavedRef.current === current) return undefined;
   const timer = setTimeout(() => {
+    dashLayoutSavedRef.current = current;
     persistDashLayout(dashLayout);
   }, 500);
   return () => clearTimeout(timer);
@@ -7359,6 +7498,23 @@ const DashboardTiles = {
           month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
         })
       : null;
+    // With nothing playing: how long until something does.
+    const idle = ns ? ns.kind === 'passive' : !title;
+    const untilNext = (() => {
+      if (!idle || !next?.targetTime) return null;
+      const minutes = Math.round((new Date(next.targetTime).getTime() - dashboardNow.getTime()) / 60000);
+      if (!Number.isFinite(minutes) || minutes <= 0) return null;
+      if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+      const hours = Math.round(minutes / 60);
+      if (hours < 36) return `${hours} hour${hours === 1 ? '' : 's'}`;
+      const days = Math.round(hours / 24);
+      return `${days} days`;
+    })();
+    // The Up next warning is about the schedule's content; offer the way there.
+    const nextSchedule = upNext?.id != null ? schedules.find(schedule => schedule.id === upNext.id) : null;
+    const nextWarningCategory = upNext?.warning && nextSchedule?.category_id != null
+      ? categories.find(category => category.id === nextSchedule.category_id)
+      : null;
 
     return (
       <div className="card nx-focus-tile nx-focus-schedule">
@@ -7390,6 +7546,12 @@ const DashboardTiles = {
             <p>{title ? subtitle : (waiting
               ? 'A preroll change is queued until a movie that just started is past its prerolls.'
               : 'No category or sequence is currently active.')}</p>
+            {untilNext && (
+              <p className="nx-schedule-idle">Nothing is scheduled for the next {untilNext}.</p>
+            )}
+            {idle && !next && libraryLoaded && (
+              <p className="nx-schedule-idle">No schedule is waiting to start. <button type="button" className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('schedules/create')}>Create one <ArrowRight size={12} /></button></p>
+            )}
             {waiting && (
               <p className="nx-schedule-waiting">
                 <Clock size={13} />
@@ -7439,7 +7601,21 @@ const DashboardTiles = {
             {upNext?.warning && (
               <p className="nx-schedule-waiting">
                 <AlertTriangle size={13} />
-                <span>{upNext.warning}</span>
+                <span>
+                  {upNext.warning}
+                  {(nextWarningCategory || nextSchedule) && (
+                    <span className="nx-schedule-warning-actions">
+                      {nextWarningCategory && (
+                        <button type="button" className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()}
+                          onClick={() => viewCategoryInLibrary(nextWarningCategory)}>Open {nextWarningCategory.name} <ArrowRight size={12} /></button>
+                      )}
+                      {nextSchedule && (
+                        <button type="button" className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()}
+                          onClick={() => handleEditSchedule(nextSchedule)}>Edit schedule <ArrowRight size={12} /></button>
+                      )}
+                    </span>
+                  )}
+                </span>
               </p>
             )}
             {detail === 'detailed' && next && (
@@ -7770,6 +7946,10 @@ const DashboardTiles = {
     const LABEL = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
     const s = connected[0] || null;
     const info = INFO[s];
+    // Set up but not answering, from the live health check.
+    const serverCheck = (healthSummary?.checks || []).find(check => check.key === 'media_server');
+    const unreachable = serverCheck && serverCheck.status === 'error' && /disconnected$/.test(String(serverCheck.value || ''))
+      ? serverCheck : null;
     return (
       <div className="card">
         <div className="nx-tile-head">
@@ -7829,6 +8009,17 @@ const DashboardTiles = {
               )}
             </div>
           </>
+        ) : unreachable ? (
+          // A server is set up but isn't answering. This used to read "Not
+          // connected / Connect to Plex, Jellyfin, or Emby", as if none were.
+          <>
+            <p className="nx-tile-status" style={{ color: 'var(--error-color)' }}>{unreachable.value}</p>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>
+              NeXroll can't reach it right now. Check that the server is running, or review its address in Connections.
+            </p>
+          </>
+        ) : !initialDataLoaded ? (
+          <p className="nx-tile-status" style={{ color: 'var(--text-secondary, #888)' }}>Checking...</p>
         ) : (
           <>
             <p className="nx-tile-status" style={{ color: 'var(--text-secondary, #888)' }}>Not connected</p>
@@ -7861,7 +8052,7 @@ const DashboardTiles = {
           {recentCount > 0 && <span>+{recentCount} this week</span>}
         </div>
         {detail === 'detailed' && <div className="nx-library-kpis">
-          <div><span>Categories</span><strong>{usedCats} / {totalCats}</strong></div>
+          <div title={`${usedCats} of your ${totalCats} categories have at least one preroll in them`}><span>Categories in use</span><strong>{usedCats} of {totalCats}</strong></div>
           <div><span>Movie trailers</span><strong>{nexupTrailers.length}</strong></div>
           <div><span>TV trailers</span><strong>{nexupTVTrailers.length}</strong></div>
         </div>}
@@ -8333,10 +8524,12 @@ const DashboardTiles = {
           </button>
         </div>
         {total === 0 ? (
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>No prerolls uploaded</p>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>{libraryLoaded ? 'No prerolls uploaded' : 'Loading...'}</p>
         ) : loaded === 0 ? (
           <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>
-            Resolution data not loaded — open Video Scaling to analyze the library.
+            {loadingVideoInfo
+              ? 'Reading your prerolls...'
+              : 'Resolution data not loaded — open Video Scaling to analyze the library.'}
           </p>
         ) : (
           <>
@@ -8795,20 +8988,30 @@ const DashboardTiles = {
                   setPreviewingSequence({ name: editingSequenceName || 'Sequence preview', blocks: sequenceBlocks });
                   setShowSequencePreviewModal(true);
                 }}><Play size={15} /> Preview</button>
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={discardSequenceEdits}
-                  title={editingSequenceId === null
-                    ? 'Leave the builder without saving this sequence'
-                    : 'Leave without saving, keeping the version in your library'}
-                ><X size={15} /> Cancel</button>
+                {builderForSchedule ? (
+                  <>
+                    <button type="button" className="button button-secondary" onClick={cancelScheduleSequenceEdits}
+                      title="Go back to the schedule without these changes"><X size={15} /> Cancel</button>
+                    <button type="button" className="button" onClick={returnToScheduleForm}
+                      title="Go back to the schedule with this sequence"><Check size={15} /> Back to schedule</button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={discardSequenceEdits}
+                    title={editingSequenceId === null
+                      ? 'Leave the builder without saving this sequence'
+                      : 'Leave without saving, keeping the version in your library'}
+                  ><X size={15} /> Cancel</button>
+                )}
               </>
             )}
             {activeTab === 'schedules/library' && (
               <>
                 <button type="button" className="button button-secondary" onClick={() => setShowSequenceImportModal(true)}><Upload size={15} /> Import</button>
                 <button type="button" className="button" onClick={() => {
+                  builderStashRef.current = null; // a new sequence, not the one set aside
                   setSequenceBlocks([]);
                   setEditingSequenceId(null);
                   setEditingSequenceName('');
@@ -9873,6 +10076,17 @@ const DashboardTiles = {
     });
   };
 
+  // Escape closes Customize, as it does the other dialogs.
+  useEffect(() => {
+    if (!showCustomizeDashboard) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      setShowCustomizeDashboard(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [showCustomizeDashboard]);
+
   const renderCustomizeDashboard = () => {
     if (!showCustomizeDashboard) return null;
     const prefs = dashLayout?.preferences || {};
@@ -10367,6 +10581,33 @@ const DashboardTiles = {
           yearly: { bg: 'rgba(139,92,246,0.12)', color: 'var(--nx-sec-library)' },
           holiday: { bg: 'rgba(244,63,94,0.12)', color: 'color-mix(in srgb, var(--error-color) 92%, #000)' },
         };
+
+        // Nothing runs this week: one line instead of an empty seven-day grid.
+        if (totalActiveThisWeek === 0) {
+          const upcoming = nowShowing?.up_next;
+          const upcomingWhen = upcoming?.at
+            ? new Date(upcoming.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+            : null;
+          return (
+            <div className="card nx-week-empty">
+              <div className="nx-tile-head">
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CalendarDays size={18} /> This Week's Schedule</h2>
+                <button
+                  className="button button-secondary nx-no-drag"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => { setActiveTab('schedules/calendar'); setShowCalendar(true); setCalendarMode('week'); }}
+                  style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  Full Calendar <ChevronRight size={12} />
+                </button>
+              </div>
+              <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>
+                Nothing is scheduled {days[0].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} &ndash; {days[6].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
+                {upcoming ? <> Next: <strong style={{ color: 'var(--text-color)' }}>{upcoming.name}</strong>{upcomingWhen ? `, ${upcomingWhen}` : ''}.</> : ' No schedule is waiting to start.'}
+              </p>
+            </div>
+          );
+        }
 
         return (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -20435,6 +20676,12 @@ const DashboardTiles = {
       return needsPlaybackInfo(block.condition) ? `${label} / Jellyfin & Emby` : label;
     };
     const selectedChain = chainInfo(sequenceBlocks, selectedIndex);
+    // What each block still needs (the checks a save and a schedule make),
+    // shown on the block itself instead of only when saving fails.
+    const blockProblems = Object.fromEntries(sequenceProblems(sequenceBlocks, categories, prerolls)
+      .map(entry => [entry.index, entry.problems]));
+    const problemCount = Object.keys(blockProblems).length;
+    const selectedProblems = blockProblems[selectedIndex] || [];
 
     return (
       <div className="nx-schedule-draft nx-draft-builder-page">
@@ -20458,7 +20705,7 @@ const DashboardTiles = {
 
           <section className="nx-draft-panel nx-draft-sequence-canvas">
             <header className="nx-draft-seq-meta">
-              <div><strong>{builderName}</strong><span>{(() => {
+              <div><strong>{builderForSchedule ? `Sequence for ${scheduleForm.name?.trim() || 'a new schedule'}` : builderName}</strong><span>{(() => {
                 const est = describeEstimate(sequenceBlocks, prerolls);
                 const count = `${sequenceBlocks.length} ${sequenceBlocks.length === 1 ? 'block' : 'blocks'}`;
                 // An empty builder used to claim "estimated 1m 0s" for nothing.
@@ -20473,7 +20720,10 @@ const DashboardTiles = {
                   <button type="button" className={advancedBuilder ? '' : 'active'} aria-pressed={!advancedBuilder} title="Blocks play in order, every time" onClick={() => setSequenceBuilderMode('simple')}>Simple</button>
                   <button type="button" className={advancedBuilder ? 'active' : ''} aria-pressed={advancedBuilder} title="Add IF/THEN conditions to blocks" onClick={() => setSequenceBuilderMode('advanced')}>Advanced</button>
                 </div>
-                <span className={`nx-draft-badge${sequenceBlocks.length ? ' live' : ''}`}>{sequenceBlocks.length ? 'Ready' : 'Empty'}</span>
+                <span className={`nx-draft-badge${!sequenceBlocks.length ? '' : problemCount ? ' warn' : ' live'}`}
+                  title={problemCount ? 'Select a block marked "Needs attention" to see what it needs' : undefined}>
+                  {!sequenceBlocks.length ? 'Empty' : problemCount ? `${problemCount} ${problemCount === 1 ? 'block needs' : 'blocks need'} attention` : 'Ready'}
+                </span>
               </div>
             </header>
             {!advancedBuilder && blocksHaveConditions(sequenceBlocks) && (
@@ -20526,8 +20776,7 @@ const DashboardTiles = {
                 <div className="nx-draft-sequence-empty"><Layers size={28} /><strong>Build the viewer experience</strong><span>Add a block from the library on the left.</span></div>
               ) : sequenceBlocks.map((block, index) => (
                 <React.Fragment key={block.ui_id || `${block.type}-${index}`}>
-                  <button
-                    type="button"
+                  <div
                     className={`nx-draft-seq-block${index === selectedIndex ? ' selected' : ''}${draggedBlockIndex === index ? ' dragging' : ''}`}
                     onClick={() => setScheduleBuilderSelectedIndex(index)}
                     draggable
@@ -20541,12 +20790,12 @@ const DashboardTiles = {
                     onDragEnd={() => setDraggedBlockIndex(null)}
                   >
                     <span className="drag"><GripVertical size={13} /></span><span className="order">{index + 1}</span>
-                    <span className="copy"><strong>{blockTitle(block)}</strong><small>{blockDescription(block)}</small>{(hasCondition(block) || chainInfo(sequenceBlocks, index).elseIf) && <em className="nx-draft-badge violet"><GitBranch size={10} /> {conditionBadge(block, index)}</em>}</span>
+                    <button type="button" className="copy nx-draft-seq-select" aria-pressed={index === selectedIndex} onClick={event => { event.stopPropagation(); setScheduleBuilderSelectedIndex(index); }}><strong>{blockTitle(block)}</strong><small>{blockDescription(block)}</small>{(hasCondition(block) || chainInfo(sequenceBlocks, index).elseIf) && <em className="nx-draft-badge violet"><GitBranch size={10} /> {conditionBadge(block, index)}</em>}{blockProblems[index] && <em className="nx-draft-badge warn" title={blockProblems[index].join('; ')}>Needs attention</em>}</button>
                     <span className="nx-draft-seq-move">
-                      <span role="button" tabIndex={0} title="Move up" aria-disabled={index === 0} onClick={event => { event.stopPropagation(); moveBlock(index, index - 1); }} onKeyDown={event => { if (event.key === 'Enter') { event.stopPropagation(); moveBlock(index, index - 1); } }}><ChevronUp size={12} /></span>
-                      <span role="button" tabIndex={0} title="Move down" aria-disabled={index === sequenceBlocks.length - 1} onClick={event => { event.stopPropagation(); moveBlock(index, index + 1); }} onKeyDown={event => { if (event.key === 'Enter') { event.stopPropagation(); moveBlock(index, index + 1); } }}><ChevronDown size={12} /></span>
+                      <button type="button" title="Move up" aria-label={`Move block ${index + 1} up`} disabled={index === 0} onClick={event => { event.stopPropagation(); moveBlock(index, index - 1); }}><ChevronUp size={12} /></button>
+                      <button type="button" title="Move down" aria-label={`Move block ${index + 1} down`} disabled={index === sequenceBlocks.length - 1} onClick={event => { event.stopPropagation(); moveBlock(index, index + 1); }}><ChevronDown size={12} /></button>
                     </span>
-                  </button>
+                  </div>
                   {index < sequenceBlocks.length - 1 && <span className="nx-draft-seq-line" />}
                 </React.Fragment>
               ))}
@@ -20571,10 +20820,15 @@ const DashboardTiles = {
           <aside className="nx-draft-panel nx-draft-inspector">
             <header><div><strong>Block settings</strong><span>{selectedBlock ? blockTitle(selectedBlock) : 'Select a block'}</span></div></header>
             <div className="nx-draft-panel-body">
+              {builderForSchedule ? (
+                <p className="nx-draft-field-hint nx-draft-for-schedule">Building the sequence for the schedule <strong>{scheduleForm.name?.trim() || 'you are creating'}</strong>. Use <strong>Back to schedule</strong> when it's done; the schedule saves it.</p>
+              ) : <>
               <label className="nx-draft-field"><span>Sequence name</span><input id="nx-approved-sequence-name" value={editingSequenceName} placeholder="Untitled Sequence" onChange={event => setEditingSequenceName(event.target.value)} /></label>
               <label className="nx-draft-field"><span>Description</span><input value={editingSequenceDescription} placeholder="Describe this experience" onChange={event => setEditingSequenceDescription(event.target.value)} /></label>
+              </>}
               {selectedBlock && <>
-                <label className="nx-draft-field"><span>Block type</span><select value={selectedBlock.type} disabled><option value={selectedBlock.type}>{['dynamic_preroll', 'coming_soon_list'].includes(selectedBlock.type) ? 'Generated preroll' : selectedBlock.type.replaceAll('_', ' ')}</option></select></label>
+                <label className="nx-draft-field"><span>Block type</span><select value={selectedBlock.type} disabled title={flowView ? "Change it with the block's Edit button" : undefined}><option value={selectedBlock.type}>{blockTitle(selectedBlock)}</option></select></label>
+                {selectedProblems.length > 0 && <div className="nx-draft-block-problems" role="status"><strong>This block needs attention</strong><ul>{selectedProblems.map(problem => <li key={problem}>{problem}</li>)}</ul></div>}
                 {(selectedBlock.type === 'random' || selectedBlock.type === 'sequential') && <label className="nx-draft-field"><span>Category</span><select value={selectedBlock.category_id || ''} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, category_id: Number(event.target.value) } : block))}><option value="">Choose category</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
                 {(selectedBlock.type === 'random' || selectedBlock.type === 'sequential') && <>
                   <label className="nx-draft-field"><span>How many prerolls</span><input type="number" min="1" max="10" value={selectedBlock.count ?? 1} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Math.max(1, Math.min(10, Number(event.target.value) || 1)) } : block))} /></label>
@@ -20697,9 +20951,13 @@ const DashboardTiles = {
                 <div className="nx-draft-info-row"><span>Position</span><strong>{selectedIndex + 1} of {sequenceBlocks.length}</strong></div>
                 <button type="button" className="nx-draft-btn danger" onClick={() => removeBlock(selectedIndex)}><Trash2 size={12} /> Remove block</button>
               </>}
-              <button type="button" className="nx-draft-btn schedule wide" disabled={!sequenceBlocks.length} onClick={async () => {
+              {builderForSchedule ? (
+                <button type="button" className="nx-draft-btn schedule wide" onClick={returnToScheduleForm}><Check size={12} /> Back to schedule</button>
+              ) : (
+              <button type="button" className="nx-draft-btn schedule wide" disabled={!sequenceBlocks.length || savingSequence} onClick={async () => {
                 try { await saveSequence(editingSequenceName.trim() || 'Untitled Sequence', editingSequenceDescription.trim()); } catch (_) {}
-              }}><Save size={12} /> Save sequence</button>
+              }}>{savingSequence ? <Loader2 size={12} className="spin" /> : <Save size={12} />} {savingSequence ? 'Saving...' : editingSequenceId !== null ? 'Save changes' : 'Save sequence'}</button>
+              )}
             </div>
           </aside>
         </div>
@@ -20748,7 +21006,7 @@ const DashboardTiles = {
       <div className="nx-schedule-draft nx-draft-sequence-library">
         <div className="nx-draft-command">
           <label className="nx-draft-search"><Search size={13} /><input value={sequenceLibrarySearch} onChange={event => setSequenceLibrarySearch(event.target.value)} placeholder="Search saved sequences..." /></label>
-          <select value={sequenceLibrarySort} onChange={event => setSequenceLibrarySort(event.target.value)}>
+          <select aria-label="Sort saved sequences" value={sequenceLibrarySort} onChange={event => setSequenceLibrarySort(event.target.value)}>
             <option value="updated">Recently updated</option><option value="name">Name</option><option value="used">Most used</option>
           </select>
         </div>
@@ -20775,7 +21033,8 @@ const DashboardTiles = {
     const selected = unresolved.find(conflict => conflict.id === selectedScheduleConflictId) || unresolved[0] || null;
     return (
       <div className="nx-schedule-draft nx-draft-conflicts-page">
-        <div className="nx-draft-command nx-draft-conflict-command"><select><option>This month</option><option>This week</option><option>This year</option></select><button className="nx-draft-btn small">High {unresolved.filter(conflict => conflict.severity === 'high').length}</button><button className="nx-draft-btn small">Medium {unresolved.filter(conflict => conflict.severity === 'medium').length}</button><button className="nx-draft-btn small">Low {unresolved.filter(conflict => conflict.severity === 'low').length}</button><span>{unresolved.length} unresolved conflicts</span></div>
+        {/* Counts, not controls: these were a select and three buttons that did nothing when used. */}
+        <div className="nx-draft-command nx-draft-conflict-command"><span className={`nx-draft-badge${unresolved.some(conflict => conflict.severity === 'high') ? ' warn' : ''}`}>High {unresolved.filter(conflict => conflict.severity === 'high').length}</span><span className="nx-draft-badge">Medium {unresolved.filter(conflict => conflict.severity === 'medium').length}</span><span className="nx-draft-badge">Low {unresolved.filter(conflict => conflict.severity === 'low').length}</span><span>{unresolved.length} unresolved {unresolved.length === 1 ? 'conflict' : 'conflicts'}</span></div>
         {selected ? <div className="nx-draft-conflict-layout">
           <aside className="nx-draft-panel nx-draft-conflict-queue"><header><div><strong>Conflict queue</strong><span>Ordered by impact</span></div></header><div className="nx-draft-panel-body">{unresolved.map(conflict => <button key={conflict.id} className={`nx-draft-conflict-item${conflict.id === selected.id ? ' active' : ''}`} onClick={() => { setSelectedScheduleConflictId(conflict.id); setShowConflictAlternatives(false); }}><span><strong>{conflict.scheduleA.name} vs {conflict.scheduleB.name}</strong><i className="nx-draft-badge warn">{conflict.severity || 'Review'}</i></span><p>{conflict.description}</p><small>{conflict.overlappingDays?.length || 1} overlapping day{conflict.overlappingDays?.length === 1 ? '' : 's'}</small></button>)}</div></aside>
           <section className="nx-draft-panel nx-draft-conflict-detail"><header><div><strong>{selected.scheduleA.name} vs {selected.scheduleB.name}</strong><span>{selected.description}</span></div><i className="nx-draft-badge warn">High impact</i></header><div className="nx-draft-panel-body"><div className="nx-draft-compare">
@@ -34754,11 +35013,23 @@ const DashboardTiles = {
   };
 
   const saveSequence = async (name, description, { preserveBuilder = false, forceCreate = false } = {}) => {
+    // One save at a time: a double click used to store two copies.
+    if (savingSequenceRef.current) return null;
+    savingSequenceRef.current = true;
+    setSavingSequence(true);
     try {
       // Clean the blocks data before sending to ensure it's properly serializable
       // Validate we have blocks to save
       if (!sequenceBlocks || sequenceBlocks.length === 0) {
         throw new Error('Cannot save empty sequence. Please add at least one block.');
+      }
+      // The same checks a schedule makes. The builder used to save blocks that
+      // play nothing, and an edit of a library sequence copies its blocks
+      // straight into every schedule built from it.
+      const problems = sequenceProblems(sequenceBlocks, categories, prerolls);
+      if (problems.length) {
+        setScheduleBuilderSelectedIndex(problems[0].index);
+        throw new Error(problems.map(p => `Block ${p.index + 1}: ${p.problems.join('; ')}`).join('\n'));
       }
       
       // Same shape a schedule's sequence is saved in, conditions included.
@@ -34831,7 +35102,34 @@ const DashboardTiles = {
       const errorMsg = error.message || String(error);
       showAlert(`Failed to save sequence: ${errorMsg}`, 'error');
       throw error;
+    } finally {
+      savingSequenceRef.current = false;
+      setSavingSequence(false);
     }
+  };
+
+  // Builder opened from the schedule form: back with the blocks, or back
+  // with the ones it had (Cancel).
+  const returnToScheduleForm = () => {
+    const before = builderScheduleSnapshotRef.current;
+    if (loadedSavedSequenceId && stringifySequence(before || []) !== stringifySequence(sequenceBlocks)) {
+      // Changed, so no longer the library sequence it was picked from; it is
+      // saved as the schedule's own sequence (edits to the library one would
+      // otherwise overwrite it later).
+      setLoadedSavedSequenceId(null);
+      showAlert('This schedule now has its own copy of the sequence, with your changes.', 'info');
+    }
+    setActiveTab('schedules/create');
+  };
+  const cancelScheduleSequenceEdits = async () => {
+    const before = builderScheduleSnapshotRef.current || [];
+    if (stringifySequence(before) !== stringifySequence(sequenceBlocks)) {
+      const confirmed = await showConfirm('Go back to the schedule without these changes?',
+        { title: 'Discard changes', type: 'danger', confirmText: 'Discard' });
+      if (!confirmed) return;
+    }
+    setSequenceBlocks(before);
+    setActiveTab('schedules/create');
   };
 
   const deleteSequence = async (sequenceId, sequenceName) => {
@@ -35014,8 +35312,9 @@ const DashboardTiles = {
     if (activeTab === 'schedules/library' || activeTab === 'schedules/create') {
       loadSavedSequences();
     }
-    // Reset loaded sequence tracking when leaving create page
-    if (activeTab !== 'schedules/create') {
+    // Reset loaded sequence tracking when leaving create page (the builder,
+    // opened from its Content step, still belongs to the schedule)
+    if (activeTab !== 'schedules/create' && activeTab !== 'schedules/builder') {
       setLoadedSavedSequenceId(null);
     }
     if (activeTab !== 'schedules/builder') {

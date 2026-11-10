@@ -64,7 +64,7 @@ const SequenceConditionPanel = ({ condition, otherwise, onChange, categories = [
         {rules.map((rule, i) => (
           <div className="nx-draft-condition-rule" key={i}>
             <div className="nx-draft-condition-pair">
-              <label className="nx-draft-field"><span>{i === 0 ? 'Play' : 'And'}</span>
+              <label className="nx-draft-field"><span>{i === 0 ? 'Play' : condition.match === 'any' ? 'Or' : 'And'}</span>
                 <select aria-label={`Rule ${i + 1} when or unless`} value={rule.negate ? 'unless' : 'when'} onChange={event => updateRule(i, { negate: event.target.value === 'unless' })}>
                   <option value="when">when</option>
                   <option value="unless">unless</option>

@@ -69,6 +69,7 @@ from backend.scheduler import (
     MAX_PLAYBACK_GUARD_MINUTES,
     ensure_trailer_prerolls,
     drop_trailer_prerolls,
+    _generated_preroll_path,
 )
 from backend.sequence_conditions import block_to_play, describe_condition
 from backend import trailer_language
@@ -16548,10 +16549,12 @@ def system_health_summary(conflicts: Optional[int] = None, db: Session = Depends
     # Saved settings establish intent; only a live authenticated probe proves
     # connectivity. Resolve credentials from both legacy DB and secure storage.
     try:
-        from backend.media_server_health import check_media_servers
         setting = db.query(models.Setting).first()
+        # Reused for a few seconds: the dashboard asks several times while it
+        # loads, and probing a server that is down takes seconds each time.
+        from backend.media_server_health import check_media_servers_cached
         checks.append(health_summary.media_server_check(
-            check_media_servers(setting, list(PLUGIN_CLIENTS.values()))))
+            check_media_servers_cached(setting, list(PLUGIN_CLIENTS.values()))))
     except Exception:
         checks.append(health_summary.make_check(
             "media_server", "Media server", health_summary.WARN,
@@ -26275,47 +26278,27 @@ def resolve_preview_blocks(blocks: list = Body(...), db: Session = Depends(get_d
                         "type": "coming_soon_list"
                     })
         elif block_type == "dynamic_preroll":
-            filename = str(block.get("filename", "")).strip()
-            template = str(block.get("template", "")).lower().strip()
-            theme = str(block.get("theme", "")).lower().strip()
+            # The same file the scheduler plays (resolve_sequence_paths): the
+            # named video, else the legacy template + theme (Coming Soon /
+            # Midnight by default). A video that no longer exists plays
+            # nothing, so it previews nothing; this used to fall back to the
+            # first generated video in the folder, which never plays.
             if storage_path:
-                dp_dir = os.path.join(storage_path, "dynamic_prerolls")
-                if filename and os.path.sep not in filename and filename not in (".", ".."):
-                    fpath = os.path.join(dp_dir, filename)
-                    if os.path.exists(fpath):
-                        label = filename.replace("_preroll.mp4", "").replace("_", " ").title()
-                        items.append({
-                            "title": label,
-                            "url": f"/nexup/preroll/video/{filename}",
-                            "type": "dynamic_preroll"
-                        })
-                if not items and template and theme:
-                    filename = f"{template}_{theme}_preroll.mp4"
-                    fpath = os.path.join(dp_dir, filename)
-                    if os.path.exists(fpath):
-                        items.append({
-                            "title": f"{template.replace('_', ' ').title()} ({theme.title()})",
-                            "url": f"/nexup/preroll/video/{filename}",
-                            "type": "dynamic_preroll"
-                        })
-                # Fallback: if no specific match, pick the first available dynamic preroll
-                if not items and os.path.isdir(dp_dir):
-                    import glob as _glob
-                    for fp in sorted(_glob.glob(os.path.join(dp_dir, "*_preroll.mp4"))):
-                        fname = os.path.basename(fp)
-                        tid = fname.replace("_preroll.mp4", "")
-                        parts = tid.split("_")
-                        if len(parts) >= 2:
-                            fb_theme = parts[-1]
-                            fb_template = "_".join(parts[:-1])
-                        else:
-                            fb_template, fb_theme = tid, ""
-                        items.append({
-                            "title": f"{fb_template.replace('_', ' ').title()} ({fb_theme.title()})" if fb_theme else fb_template.replace('_', ' ').title(),
-                            "url": f"/nexup/preroll/video/{fname}",
-                            "type": "dynamic_preroll"
-                        })
-                        break
+                filename = block.get("filename")
+                if filename:
+                    fpath = os.path.join(storage_path, "dynamic_prerolls", os.path.basename(str(filename)))
+                else:
+                    fpath = _generated_preroll_path(
+                        storage_path,
+                        str(block.get("template") or "coming_soon").lower(),
+                        str(block.get("theme") or "midnight").lower())
+                if os.path.exists(fpath):
+                    fname = os.path.basename(fpath)
+                    items.append({
+                        "title": fname.replace("_preroll.mp4", "").replace(".mp4", "").replace("_", " ").title(),
+                        "url": f"/nexup/preroll/video/{fname}",
+                        "type": "dynamic_preroll"
+                    })
         results.append({"block_type": block_type, "items": items})
     return {"blocks": results}
 

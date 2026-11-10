@@ -83,18 +83,20 @@ describe('estimateSequence', () => {
     expect(estimateSequence([{ type: 'separator' }], prerolls).seconds).toBe(0);
   });
 
-  test('sequential plays the whole category', () => {
-    const result = estimateSequence(
-      [{ type: 'sequential', category_id: 10 }], prerolls);
-    expect(result.seconds).toBe(23);
-    expect(result.variations).toBe(1);
+  test('in category order plays the first `count` prerolls by id, as playback does', () => {
+    // It used to add up the whole category, ignoring how many play.
+    const one = estimateSequence([{ type: 'sequential', category_id: 10 }], prerolls);
+    expect(one.seconds).toBe(11);
+    expect(one.variations).toBe(1);
+    expect(estimateSequence([{ type: 'sequential', category_id: 10, count: 2 }], prerolls).seconds).toBe(23);
+    expect(estimateSequence([{ type: 'sequential', category_id: 10, count: 5 }], prerolls).seconds).toBe(23);
   });
 
   test('prerolls in a category only through the categories list count', () => {
     // A preroll whose primary category was deleted keeps its other categories
     // there, and playback picks it for them (issue #45).
     const withSecondary = [...prerolls, { id: 5, category_id: null, categories: [{ id: 10 }], duration: 7 }];
-    const result = estimateSequence([{ type: 'sequential', category_id: 10 }], withSecondary);
+    const result = estimateSequence([{ type: 'sequential', category_id: 10, count: 3 }], withSecondary);
     expect(result.seconds).toBe(30);
     expect(estimateSequence([{ type: 'random', category_id: 10, count: 1 }], withSecondary).variations).toBe(3);
   });

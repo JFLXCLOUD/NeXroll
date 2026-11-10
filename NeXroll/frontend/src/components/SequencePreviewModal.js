@@ -60,6 +60,9 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   // Which server to preview a "Media server" rule as. Only offered when the
   // sequence has one; Plex is the default, like the rest of the preview.
   const [previewServer, setPreviewServer] = useState('plex');
+  // Movie or TV episode, for "Movie or episode" rules (always a movie on Plex).
+  const [previewEpisode, setPreviewEpisode] = useState(false);
+  const hasMediaTypeRules = blocks.some(block => block.condition?.rules?.some(rule => rule.kind === 'media_type'));
   const hasServerRules = blocks.some(block => block.condition?.rules?.some(rule => rule.kind === 'server'));
   const sequenceGenres = genresInSequence(blocks);
   // Tag and file path to preview tag and file path rules as; '' is unknown, as on Plex.
@@ -289,6 +292,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     if (previewGenre) params.set('genres', previewGenre);
     if (previewAudio) params.set('audio_format', previewAudio);
     if (hasServerRules) params.set('server', previewServer);
+    if (previewEpisode) params.set('media_type', 'episode');
     if (previewTag) params.set('tags', previewTag);
     if (previewPath.trim()) params.set('file_path', previewPath.trim());
     const genreQuery = params.size ? `?${params}` : '';
@@ -345,7 +349,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       controller.abort();
       if (innerCleanup) innerCleanup();
     };
-  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre, previewAudio, previewServer, hasServerRules, previewTag, previewPath]);
+  }, [isOpen, modalOpenCounter, getBlockPrerolls, previewGenre, previewAudio, previewServer, hasServerRules, previewTag, previewPath, previewEpisode]);
 
   // Start playback
   const startPlayback = () => {
@@ -620,7 +624,11 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               Preview as
               <select
                 value={previewGenre}
-                onChange={(event) => setPreviewGenre(event.target.value)}
+                onChange={(event) => {
+                  setPreviewGenre(event.target.value);
+                  // A known genre comes from Jellyfin or Emby; Plex never says.
+                  if (event.target.value && previewServer === 'plex') setPreviewServer('jellyfin');
+                }}
                 style={{
                   padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-color)',
                   background: 'var(--input-bg)', color: 'var(--text-color)', fontSize: '0.83rem',
@@ -631,6 +639,18 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               </select>
             </label>
           )}
+          {hasMediaTypeRules && <label style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            Preview before
+            <select aria-label="Preview media type" value={previewEpisode ? 'episode' : 'movie'} onChange={event => {
+              const episode = event.target.value === 'episode';
+              setPreviewEpisode(episode);
+              // Plex only runs prerolls before movies.
+              if (episode && previewServer === 'plex') setPreviewServer('jellyfin');
+            }}>
+              <option value="movie">A movie</option>
+              <option value="episode">A TV episode (Jellyfin or Emby)</option>
+            </select>
+          </label>}
           {hasServerRules && <label style={{ fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             Preview for
             <select aria-label="Preview media server" value={previewServer} onChange={event => setPreviewServer(event.target.value)}>
@@ -669,7 +689,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               }}
             >
               <strong>
-                Conditions, checked as if {previewGenre ? `a ${previewGenre} movie` : 'a movie'} were starting now{hasServerRules ? ` on ${serverLabel(previewServer)}` : ''}
+                Conditions, checked as if {previewEpisode ? (previewGenre ? `a ${previewGenre} TV episode` : 'a TV episode') : (previewGenre ? `a ${previewGenre} movie` : 'a movie')} were starting now{hasServerRules ? ` on ${serverLabel(previewServer)}` : ''}
                 {sequenceGenres.length > 0 && !previewGenre && !previewAudio ? ' with unknown genre, as on Plex' : ''}:
               </strong>
               {conditionNotes.map(note => (

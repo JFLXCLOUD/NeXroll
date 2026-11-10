@@ -76,3 +76,27 @@ def check_media_servers(setting, plugin_clients):
     # One slow/offline server must not delay checking the others in sequence.
     with ThreadPoolExecutor(max_workers=len(configured)) as pool:
         return list(pool.map(lambda args: probe_server(*args), configured))
+
+
+# The dashboard asks for the health summary several times while it loads
+# (each input that arrives restarts the request), and probing a server that
+# is down takes seconds each time: the health tile sat on "Checking..." for
+# about nine. The answer is reused briefly; other servers are asked at once.
+_PROBE_CACHE = {"key": None, "at": 0.0, "result": None}
+PROBE_CACHE_SECONDS = 20
+
+
+def reset_probe_cache() -> None:
+    _PROBE_CACHE.update(key=None, at=0.0, result=None)
+
+
+def check_media_servers_cached(setting, plugin_clients=None):
+    import time
+    clients = list(plugin_clients or [])
+    key = (getattr(setting, "plex_url", None), getattr(setting, "jellyfin_url", None),
+           getattr(setting, "emby_url", None), len(clients))
+    if _PROBE_CACHE["key"] == key and _PROBE_CACHE["result"] is not None             and time.monotonic() - _PROBE_CACHE["at"] < PROBE_CACHE_SECONDS:
+        return _PROBE_CACHE["result"]
+    result = check_media_servers(setting, clients)
+    _PROBE_CACHE.update(key=key, at=time.monotonic(), result=result)
+    return result
