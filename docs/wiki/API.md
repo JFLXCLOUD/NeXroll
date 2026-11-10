@@ -830,7 +830,7 @@ GET /nexup/settings                    # Get NeX-Up settings
 PUT /nexup/settings                    # Update NeX-Up settings
 ```
 
-`trailer_language` takes a TMDB language code (`en`, `fr-FR`, `fr-CA`, `de-DE`, `es-ES`, `es-MX`, ...); `GET` lists the choices as `trailer_languages`. `trailer_language_fallback` is `english` or `skip`. A sync reports movies skipped for having no trailer in the language as `skipped_no_language`.
+`trailer_language` takes a TMDB language code (`en`, `fr-FR`, `fr-CA`, `de-DE`, `es-ES`, `es-MX`, ...); `GET` lists the choices as `trailer_languages`. `trailer_language_fallback` is `english` or `skip`. A sync reports movies skipped for having no trailer in the language as `skipped_no_language`. `max_storage_gb` must be more than 0 (a 400 otherwise; 0 used to be saved and read as 5 GB). `download_delay` takes 0 to 60 seconds; 0 means no wait.
 
 ### Radarr
 
@@ -861,6 +861,18 @@ POST /nexup/preroll/generate                      # Generate dynamic intro
 POST /nexup/preroll/generate-coming-soon-list      # Generate Coming Soon List video
 POST /nexup/preroll/generate-from-preview          # Generate from preview settings
 ```
+
+### Coming Soon list exclusions
+
+```http
+GET /nexup/coming-soon-list/exclusions             # Titles left off Coming Soon lists
+PUT /nexup/coming-soon-list/exclusions             # Exclude a title or put it back
+Content-Type: application/json
+
+{"kind": "movie", "tmdb_id": 1368337, "title": "The Odyssey", "excluded": true}
+```
+
+Exclusions are kept per title, whether or not NeX-Up has a trailer for it: movies by `tmdb_id`, shows by `tvdb_id` (`"kind": "show"`; every season), and by `title` when there is no id. `excluded` is required. `GET /nexup/radarr/upcoming` and `GET /nexup/sonarr/upcoming` report each title's `excluded_from_list`. The older `PUT /nexup/trailers/{id}/exclude` and `PUT /nexup/trailers/tv/{id}/exclude` still toggle the title of that trailer.
 
 ### Sync Progress
 

@@ -69,14 +69,15 @@ Go to the **Settings** tab to configure:
 |---------|-------------|-------------|
 | **Storage Path** | Where trailers are saved (use the Browse button to select) | Default is fine |
 | **Days Ahead** | How far in the future to look for releases | 30-90 days |
-| **Max Trailers** | Maximum number of trailers to keep | 10-20 |
+| **Max Trailers** | How many trailers to keep, counted separately for movies and TV. A sync stops downloading at the limit; nothing is deleted to make room | 10-20 |
+| **Storage limit** | Under **Trailer storage**. Syncs stop downloading once movie and TV trailers use this much space; Library Trailers have their own limit | 5 GB |
 | **Max Trailer Duration** | Sync skips trailers longer than this. Most trailers run 2 to 3 minutes, so 1.5 minutes skips nearly all of them. The download button on the Upcoming tab ignores this limit | 3 minutes or No limit |
 | **Quality** | Download quality (720p, 1080p, 4K) | 1080p |
 | **Trailer language** | Download movie trailers in this language when TMDB has one: French, German, Spanish, Italian, Portuguese, Dutch and others, with regional versions such as French (Canada) and Spanish (Latin America). Applies to NeX-Up and Library Trailers; TV trailers stay English. See [Trailer languages](#trailer-languages) | English |
 | **When there is none in that language** | Shown for languages other than English. **Use the English trailer**, or **Skip the movie for now** (checked again on every sync) | Use the English trailer |
 | **Auto-Cleanup** | Remove trailers after content releases and lands in your library | Enabled |
-| **Release Date to Use** | Which date a trailer follows: **Digital First** (default), **Digital Only** (skip movies with no digital date), **Physical First**, or **Theatrical**. Retention is measured from this date, so a trailer is never removed before the movie is out | Digital First |
-| **Include Unmonitored** | Include unmonitored content from Radarr/Sonarr | Disabled |
+| **Release Date to Use** | Which date a trailer follows: **Digital First** (default), **Digital Only** (skip movies with no digital date), **Physical First**, or **Theatrical**. Retention is measured from this date, so a trailer is never removed before the movie is out. Every sync brings the stored date up to date, so a movie that moves keeps its trailer until the new date | Digital First |
+| **Include Unmonitored** | Include unmonitored content from Radarr/Sonarr: in the syncs, on the Upcoming page and on Coming Soon lists | Disabled |
 
 
 ### Trailer languages
@@ -107,11 +108,15 @@ Three views, chosen with the toggle in the panel header:
 
 Filter by search text, release window (30 days, 90 days, this year, all dates), trailer state (ready, missing, unavailable) and list state (included, excluded, all).
 
+A title Radarr or Sonarr already has shows **Available now**, as it does on the Coming Soon list. NeX-Up doesn't fetch trailers for titles that are already in your library, so one without a trailer reads **No trailer** rather than missing; **Download** still gets one if you want it.
+
 Each entry offers:
 
 - **Download** — fetch that trailer now
 - **Preview** — play the trailer once it has been downloaded
-- **Include / exclude toggle** — keep a title out of Coming Soon lists without deleting its trailer
+- **Include / exclude toggle** — keep a title out of Coming Soon lists, whether or not it has a trailer. The choice is kept for the title (a show's choice covers every season), so it still holds after the trailer is removed. Exclusions used to go with the trailer.
+
+Movies from two or more years back (re-releases and new editions of old films) are left out here, from the list and from the syncs.
 
 Switching between **Movies** and **TV shows** changes which service is queried.
 
@@ -122,6 +127,8 @@ Switching between **Movies** and **TV shows** changes which service is queried.
 1. Go to the **Connections** tab
 2. Click **Sync** next to Radarr or Sonarr
 3. NeX-Up fetches upcoming releases within your configured timeframe
+
+A trailer that couldn't be downloaded (or was longer than **Max Trailer Duration**) is tried again at the next sync. TV trailers used to stay skipped after one failed try, until you pressed **Download** on the Upcoming page.
 
 ### View Upcoming Content
 
@@ -160,7 +167,7 @@ Manual trailers are for movies only.
 
 **NeX-Up > Library Trailers** keeps trailers for movies you **already own**, so a sequence can show them the way a cinema shows trailers before the feature.
 
-It is separate from the rest of NeX-Up on purpose. Coming Soon trailers are for movies that aren't in your library yet, and are removed once a movie arrives. Library trailers are for movies that have arrived. They have their own settings, their own storage folder and their own limits, and nothing on this page is affected by Coming Soon's retention or cleanup.
+It is separate from the rest of NeX-Up on purpose. Coming Soon trailers are for movies that aren't in your library yet, and are removed shortly after a movie arrives. Library trailers are for movies that have arrived. They have their own settings, their own storage folder and their own limits, and nothing on this page is affected by Coming Soon's retention or cleanup.
 
 ### Turning it on
 
@@ -443,7 +450,9 @@ Once a title is out and on your server, the list shows **Available Now!** in pla
 
 - A movie gets the label once Radarr has downloaded it; a show once Sonarr has downloaded its season premiere. Before 2.2.9 shows never got it.
 - **Days visible** (Generator → Availability and automation, 1-30, default 1) is how many days after its release or premiere date a title keeps the label. After that it leaves the list.
-- **Maximum items** keeps only the most recently released Available Now titles; 0 keeps them all.
+- A movie downloaded before its release date shows **Available Now!** until that date plus Days visible. The Upcoming page lists downloaded titles the same way.
+- Days visible also keeps a title's Coming Soon trailer: it plays for that many days after Radarr or Sonarr has the title, then the next sync removes it (see [Retention](#retention)).
+- **Maximum items** keeps only the most recently released Available Now titles; 0 keeps them all. The list preview applies it too.
 - A movie that is out but not downloaded keeps its date for up to 7 days, then leaves the list. A show that has aired but isn't downloaded leaves the list the next day, and comes back as Available Now if Sonarr downloads it within the window.
 - The list is a video: changes show up in the next render or the next automatic regeneration.
 
@@ -629,7 +638,13 @@ Changing the path afterwards moves the existing trailers into the new location a
 
 ### Retention
 
-Trailers are removed automatically once the film enters your library, or once the retention window passes — whichever comes first. Set the window in days, or set it to `0` to keep trailers until you delete them yourself.
+Trailers are removed automatically once the film has been in your library for the Coming Soon list's **Days visible** (see [Available Now!](#available-now)), or once the retention window passes — whichever comes first. The days are counted from the first sync that sees the movie or season downloaded, and the Your Trailers page shows the resulting removal date. Set the retention window in days, or set it to `0` to keep trailers until you delete them yourself or their title arrives.
+
+A TV trailer also goes **Days visible** days after its premiere date if Sonarr hasn't downloaded the premiere by then. The automatic sync and the **Sync** button use the same rule (the automatic sync used to wait a fixed 5 days).
+
+Release and premiere dates are checked again on every sync. When a movie or premiere moves, its trailer is kept by the new date; it used to be removed by the old date and downloaded again later.
+
+If a trailer's file is deleted outside NeXroll, the next sync removes its entry and downloads it again. A trailer whose folder can't be reached (an unplugged drive or a share that is down) is left alone.
 
 A removed trailer leaves the list straight away and is never picked again, and its entry in the trailer category goes with it. If Plex's preroll list still has the file, the file itself stays on disk until NeXroll has given Plex a new list (after any movie that is in its prerolls), so Plex never reaches for a trailer that is gone. This applies to every removal: the movie arriving, retention, the Sonarr side, Library Trailers rotation and the Delete button.
 
@@ -639,10 +654,10 @@ A removed trailer leaves the list straight away and is never picked again, and i
 |---------|------------------|
 | **Quality** | Maximum resolution to fetch |
 | **Days ahead** | How far into the future to look for releases |
-| **Max trailers** | Hard cap on how many are kept |
+| **Max trailers** | How many movie trailers, and how many TV trailers, a sync downloads up to. Lowering it stops new downloads; nothing is removed |
 | **Max trailer duration** | Sync skips longer trailers; the Upcoming tab's download button ignores it |
-| **Max storage** | Hard cap in GB |
-| **Delay between downloads** | How politely requests are paced |
+| **Max storage** | Syncs stop downloading once the movie and TV trailer folders reach it (Library Trailers have their own limit). Set it under **Settings → Trailer storage → Storage limit** |
+| **Delay between downloads** | How politely requests are paced (0 to 60 seconds through the API; 0 means no wait) |
 | **Max concurrent** | How many downloads run at once |
 | **Include unmonitored** | Whether unmonitored Radarr/Sonarr items are eligible |
 | **Release date preference** | Digital, physical or theatrical dates first |
