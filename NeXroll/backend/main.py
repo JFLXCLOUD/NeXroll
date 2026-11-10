@@ -27380,6 +27380,7 @@ def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
         if auto_configured:
             config = connector.get_plugin_configuration(plugin_id) or config
 
+        safe_config, linked_here = _plugin_link_report("jellyfin", config, db)
         return {
             "detected": True,
             "auto_configured": auto_configured,
@@ -27389,7 +27390,8 @@ def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
                 "version": plugin.get("Version") or plugin.get("version") or "",
                 "status": plugin.get("Status") or plugin.get("status") or "",
             },
-            "config": config,
+            "config": safe_config,
+            "linked_here": linked_here,
             "suggested_nexroll_url": suggested_url,
         }
     except Exception as e:
@@ -27406,6 +27408,36 @@ def _plugin_has_checked_in(server_type: str) -> bool:
     want = (server_type or "").lower()
     return (any((c.get("server_type") or "").lower() == want for c in PLUGIN_CLIENTS.values())
             or keyless_plugins.seen(server_type))
+
+
+def _plugin_link_report(server_type: str, config: dict, db) -> tuple:
+    """What the Connect page needs to know about a detected plugin's link.
+
+    Returns (config safe to send to the browser, linked_here). The plugin's
+    API key is a credential for whichever NeXroll it belongs to, so only its
+    first characters leave the server. linked_here is True when the plugin
+    holds one of this NeXroll's keys or has asked this NeXroll for prerolls,
+    False when it holds a key this NeXroll does not know (it is set up for
+    another NeXroll, or its key was deleted here: either way nothing scheduled
+    here plays), and None when there is no way to tell yet.
+    """
+    safe = dict(config or {})
+    raw = str(safe.get("ApiKey") or "")
+    key_known = None
+    if raw:
+        try:
+            key_known = db.query(models.APIKey).filter(
+                models.APIKey.key_hash == _hash_api_key(raw),
+                models.APIKey.is_active == True,  # noqa: E712
+            ).first() is not None
+        except Exception:
+            key_known = None
+        safe["ApiKey"] = f"{raw[:6]}..."
+    if key_known or _plugin_has_checked_in(server_type):
+        return safe, True
+    if key_known is False:
+        return safe, False
+    return safe, None
 
 
 def _auto_repair_plugin_url(server_type: str, config: dict, suggested_url: str,
@@ -27962,8 +27994,16 @@ def detect_emby_plugin(request: Request, db: Session = Depends(get_db)):
                 EmbyPluginConfigureRequest(nexroll_url=suggested_url), db),
             db)
         if auto_configured:
-            config = connector.get_plugin_configuration(plugin_id) or config
+            # Read it back; this used to call a connector that does not exist
+            # here, so a repair that worked was reported as "plugin not found".
+            try:
+                cfg_resp = requests.get(f"{base}/emby/Plugins/{plugin_id}/Configuration", headers=headers, timeout=10)
+                if cfg_resp.status_code == 200:
+                    config = cfg_resp.json() or config
+            except Exception:
+                pass
 
+        safe_config, linked_here = _plugin_link_report("emby", config, db)
         return {
             "detected": True,
             "auto_configured": auto_configured,
@@ -27973,7 +28013,8 @@ def detect_emby_plugin(request: Request, db: Session = Depends(get_db)):
                 "version": plugin.get("Version") or plugin.get("version") or "",
                 "status": plugin.get("Status") or plugin.get("status") or "",
             },
-            "config": config,
+            "config": safe_config,
+            "linked_here": linked_here,
             "suggested_nexroll_url": suggested_url,
         }
     except Exception as e:

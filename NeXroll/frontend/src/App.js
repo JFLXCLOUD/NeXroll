@@ -954,6 +954,9 @@ const Modal = ({ title, subtitle, className = '', bodyClassName = '', onClose, c
 
 function App() {
   const [plexStatus, setPlexStatus] = useState('Disconnected');
+  // False until the first answer about the three servers is in; until then
+  // the Connect page says it is checking instead of "Not connected".
+  const [serversChecked, setServersChecked] = useState(false);
   const [plexServerInfo, setPlexServerInfo] = useState(null);
   const [autoScanMinutes, setAutoScanMinutes] = useState(15); // preroll folder auto-scan interval (0 = off)
   const [cinemaTrailers, setCinemaTrailers] = useState(null); // { fields: [...] } from /plex/cinema-trailers
@@ -3324,6 +3327,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         }
         setEmbyStatus(emby.connected ? 'Connected' : 'Disconnected');
         setEmbyServerInfo(emby);
+        setServersChecked(true);
         // Plugin detect is handled separately (not on every 30s poll)
         if (!emby.connected || emby.connection_type !== 'direct') {
           setEmbyPluginInfo(null);
@@ -3539,7 +3543,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         .then(pluginData => {
           setJellyfinPluginInfo(pluginData);
           if (pluginData.detected) {
-            if (pluginData.config?.NexrollUrl) {
+            if (pluginData.config?.NexrollUrl && pluginData.linked_here !== false) {
               setJellyfinPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
             } else if (pluginData.suggested_nexroll_url) {
               setJellyfinPluginNexrollUrl(prev => prev || pluginData.suggested_nexroll_url);
@@ -3565,7 +3569,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         .then(pluginData => {
           setEmbyPluginInfo(pluginData);
           if (pluginData.detected) {
-            if (pluginData.config?.NexrollUrl) {
+            if (pluginData.config?.NexrollUrl && pluginData.linked_here !== false) {
               setEmbyPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
             } else if (pluginData.suggested_nexroll_url) {
               setEmbyPluginNexrollUrl(prev => prev || pluginData.suggested_nexroll_url);
@@ -9170,11 +9174,12 @@ const DashboardTiles = {
       // Several servers connected is a supported setup, not a warning state.
       const connectedServers = getConnectedServers();
       const realActive = connectedServers[0] || null;
-      const activeLabel = connectedServers.length ? describeServers(connectedServers) : 'None';
+      const checkingServers = !serversChecked && !connectedServers.length;
+      const activeLabel = connectedServers.length ? describeServers(connectedServers) : (checkingServers ? 'Checking...' : 'None');
       const connectionValue = connectedServers.length > 1
         ? `${connectedServers.length} connected`
-        : connectedServers.length ? 'Connected' : 'Disconnected';
-      const connectionTone = connectedServers.length ? 'success' : 'warning';
+        : connectedServers.length ? 'Connected' : (checkingServers ? 'Checking...' : 'Disconnected');
+      const connectionTone = connectedServers.length ? 'success' : (checkingServers ? '' : 'warning');
       // pathMappings always carries at least one blank placeholder row (for the
       // Path Mappings form's empty state) — filter those out so the tile reflects
       // real saved mappings, not the placeholder. Path mappings are Plex-only, so
@@ -21995,9 +22000,9 @@ const DashboardTiles = {
         setJellyfinPluginInfo(data);
         if (data.detected) {
           // Pre-fill fields from current plugin config or suggested URL
-          if (data.config?.NexrollUrl) {
+          if (data.config?.NexrollUrl && data.linked_here !== false) {
             setJellyfinPluginNexrollUrl(data.config.NexrollUrl);
-          } else if (data.suggested_nexroll_url && !jellyfinPluginNexrollUrl) {
+          } else if (data.suggested_nexroll_url && (!jellyfinPluginNexrollUrl || data.linked_here === false)) {
             setJellyfinPluginNexrollUrl(data.suggested_nexroll_url);
           }
           setJellyfinPluginPathFrom(data.config?.PathPrefixFrom || '');
@@ -22012,6 +22017,20 @@ const DashboardTiles = {
         console.error('Plugin detect error:', err);
         setJellyfinPluginInfo({ detected: false, error: err.message });
       });
+  };
+
+  // A plugin holding a key this NeXroll doesn't know belongs to another
+  // NeXroll (or its key was deleted here). Linking it here is a takeover, so
+  // ask first.
+  const linkPluginHere = async (label, info, configure) => {
+    if (info?.linked_here === false) {
+      const other = info.config?.NexrollUrl ? ` (${info.config.NexrollUrl})` : '';
+      const ok = await showConfirm(
+        `The ${label} plugin is set up for another NeXroll${other}. Linking it here means that one stops playing prerolls on this ${label} server.`,
+        { title: 'Link the plugin to this NeXroll?', type: 'warning', confirmText: 'Link it here' });
+      if (!ok) return;
+    }
+    configure();
   };
 
   const handleConfigureJellyfinPlugin = () => {
@@ -22127,9 +22146,9 @@ const DashboardTiles = {
       .then(data => {
         setEmbyPluginInfo(data);
         if (data.detected) {
-          if (data.config?.NexrollUrl) {
+          if (data.config?.NexrollUrl && data.linked_here !== false) {
             setEmbyPluginNexrollUrl(data.config.NexrollUrl);
-          } else if (data.suggested_nexroll_url && !embyPluginNexrollUrl) {
+          } else if (data.suggested_nexroll_url && (!embyPluginNexrollUrl || data.linked_here === false)) {
             setEmbyPluginNexrollUrl(data.suggested_nexroll_url);
           }
           setEmbyPluginPathFrom(data.config?.PathPrefixFrom || '');
@@ -22358,7 +22377,7 @@ const DashboardTiles = {
             <div className="nx-conn-alt-body">
               <p className="nx-conn-method-sub" style={{ marginTop: 0 }}>
                 Already have a Plex token? Save it directly (useful for Docker/headless — or run
-                {' '}<code>curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN"</code>).
+                {' '}<code>curl -X POST "{window.location.origin}/plex/stable-token/save?token=YOUR_PLEX_TOKEN"</code>).
               </p>
               <form onSubmit={handleSaveStableToken} style={{ display: 'grid', gap: '0.5rem' }}>
                 <input
@@ -22405,14 +22424,13 @@ const DashboardTiles = {
                     <details className="nx-plex-help">
                       <summary>How to get your X-Plex-Token</summary>
                       <ol style={{ marginTop: '0.5rem' }}>
-                        <li>Open Plex Web at your server's URL (e.g., http://your-plex-server:32400/web)</li>
-                        <li>Sign in to your Plex account</li>
-                        <li>Go to Settings → General → Advanced</li>
-                        <li>Enable "Show Advanced" if needed</li>
-                        <li>Copy the "Authentication Token" (X-Plex-Token)</li>
+                        <li>Open Plex Web and sign in</li>
+                        <li>Open any movie or episode, then the three-dot menu, <strong>Get Info</strong></li>
+                        <li>Choose <strong>View XML</strong>; a new tab opens</li>
+                        <li>In that tab's address, copy what follows <code>X-Plex-Token=</code></li>
                       </ol>
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        Note: For remote servers, ensure you can access the Plex Web interface from your current location.
+                        Sign in with Plex below does all of this for you.
                       </p>
                     </details>
                   </div>
@@ -22506,22 +22524,16 @@ const DashboardTiles = {
           </div>
 
           <div style={{ marginTop: '1rem' }}>
-            <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>Connecting to Remote Plex Servers</h3>
+            <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>Plex on another computer</h3>
             <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem' }}>
-              If your Plex server is not on the same machine as NeXroll, you'll need to ensure remote access is configured:
+              The Server URL is the address NeXroll uses to reach Plex, not the one your browser uses:
             </p>
             <ul style={{ fontSize: '0.9rem', color: 'var(--text-color)', paddingLeft: '1.5rem', marginBottom: '1rem' }}>
-              <li>Enable remote access in your Plex server settings</li>
-              <li>Ensure your router forwards port 32400 to your Plex server</li>
-              <li>Use your external IP address or domain name in the Server URL field</li>
-              <li>If using HTTPS, include 'https://' in the URL</li>
+              <li>On the same network, use the Plex computer's address, for example <code>http://192.168.1.100:32400</code></li>
+              <li><code>localhost</code> only works when Plex and NeXroll run on the same machine (and never from inside Docker)</li>
+              <li>On another network, Plex needs Remote Access turned on; use its public address or domain, with <code>https://</code> if it has a certificate</li>
+              <li>Not sure? Sign in with Plex finds an address that works</li>
             </ul>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-              <strong>Example URLs:</strong><br/>
-              Local: http://192.168.1.100:32400<br/>
-              Remote: https://my-plex-server.example.com:32400<br/>
-              Plex Cloud: https://app.plex.tv/desktop (use your server's URL)
-            </p>
             </div>
           </details>
         </div>
@@ -34103,7 +34115,7 @@ const DashboardTiles = {
         {jellyfinStatus === 'Connected' && jellyfinPluginInfo?.detected && (
           <>
             {/* Detection badge */}
-            <div className="nx-notice success">
+            <div className={`nx-notice ${jellyfinPluginInfo.linked_here === false ? 'warn' : 'success'}`}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <span className="nx-chip nx-status ok">Detected</span>
                 <strong>{jellyfinPluginInfo.plugin?.name || 'NeXroll Intros'}</strong>
@@ -34115,9 +34127,17 @@ const DashboardTiles = {
                 <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                   Currently linked to: <code style={{ userSelect: 'all' }}>{jellyfinPluginInfo.config.NexrollUrl}</code>
                   {jellyfinPluginInfo.config?.ApiKey && (
-                    <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
-                      API Key Active
+                    <span className={`nx-chip ${jellyfinPluginInfo.linked_here === false ? 'warn' : 'success'}`} style={{ marginLeft: '0.5rem' }}>
+                      {jellyfinPluginInfo.linked_here === false ? 'Key from another NeXroll' : 'API Key Active'}
                     </span>
+                  )}
+                  {jellyfinPluginInfo.linked_here === false && (
+                    <p style={{ margin: '0.6rem 0 0', color: 'var(--text-color)', lineHeight: 1.5 }}>
+                      <strong>Prerolls from this NeXroll will not play on Jellyfin.</strong>{' '}
+                      The plugin is set up for another NeXroll, or its key was deleted here. To use
+                      this one, check the address below and press <strong>Link plugin to this NeXroll</strong>.
+                      One plugin follows one NeXroll, so the other stops playing on this server.
+                    </p>
                   )}
                   {jellyfinPluginInfo.auto_configured && (
                     <span className="nx-chip info" style={{ marginLeft: '0.5rem' }}>
@@ -34149,7 +34169,7 @@ const DashboardTiles = {
                   style={{ width: '100%', padding: '0.5rem' }}
                 />
                 <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
-                  The URL your Jellyfin server can reach NeXroll at. Auto-detected from your current session.
+                  The address your Jellyfin server can reach this NeXroll at. Not <code>localhost</code> unless Jellyfin runs on the same machine.
                 </small>
               </div>
 
@@ -34238,12 +34258,14 @@ const DashboardTiles = {
 
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button
-                  onClick={handleConfigureJellyfinPlugin}
+                  onClick={() => linkPluginHere('Jellyfin', jellyfinPluginInfo, handleConfigureJellyfinPlugin)}
                   className="button button-success"
                   disabled={jellyfinPluginConfiguring || !jellyfinPluginNexrollUrl}
                 >
                   {jellyfinPluginConfiguring
                     ? 'Configuring...'
+                    : jellyfinPluginInfo.linked_here === false
+                      ? 'Link plugin to this NeXroll'
                     : jellyfinPluginInfo.config?.NexrollUrl
                       ? 'Update Plugin Configuration'
                       : 'Link Plugin to NeXroll'}
@@ -34495,7 +34517,7 @@ const DashboardTiles = {
         {embyStatus === 'Connected' && embyPluginInfo?.detected && (
           <>
             {/* Detection badge */}
-            <div className="nx-notice success">
+            <div className={`nx-notice ${embyPluginInfo.linked_here === false ? 'warn' : 'success'}`}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <span className="nx-chip nx-status ok">Detected</span>
                 <strong>{embyPluginInfo.plugin?.name || 'NeXroll Intros'}</strong>
@@ -34507,9 +34529,17 @@ const DashboardTiles = {
                 <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                   Currently linked to: <code style={{ userSelect: 'all' }}>{embyPluginInfo.config.NexrollUrl}</code>
                   {embyPluginInfo.config?.ApiKey && (
-                    <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
-                      API Key Active
+                    <span className={`nx-chip ${embyPluginInfo.linked_here === false ? 'warn' : 'success'}`} style={{ marginLeft: '0.5rem' }}>
+                      {embyPluginInfo.linked_here === false ? 'Key from another NeXroll' : 'API Key Active'}
                     </span>
+                  )}
+                  {embyPluginInfo.linked_here === false && (
+                    <p style={{ margin: '0.6rem 0 0', color: 'var(--text-color)', lineHeight: 1.5 }}>
+                      <strong>Prerolls from this NeXroll will not play on Emby.</strong>{' '}
+                      The plugin is set up for another NeXroll, or its key was deleted here. To use
+                      this one, check the address below and press <strong>Link plugin to this NeXroll</strong>.
+                      One plugin follows one NeXroll, so the other stops playing on this server.
+                    </p>
                   )}
                   {embyPluginInfo.auto_configured && (
                     <span className="nx-chip info" style={{ marginLeft: '0.5rem' }}>
@@ -34541,7 +34571,7 @@ const DashboardTiles = {
                   style={{ width: '100%', padding: '0.5rem' }}
                 />
                 <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
-                  The URL your Emby server can reach NeXroll at. Auto-detected from your current session.
+                  The address your Emby server can reach this NeXroll at. Not <code>localhost</code> unless Emby runs on the same machine.
                 </small>
               </div>
 
@@ -34578,12 +34608,14 @@ const DashboardTiles = {
 
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button
-                  onClick={handleConfigureEmbyPlugin}
+                  onClick={() => linkPluginHere('Emby', embyPluginInfo, handleConfigureEmbyPlugin)}
                   className="button button-success"
                   disabled={embyPluginConfiguring || !embyPluginNexrollUrl}
                 >
                   {embyPluginConfiguring
                     ? 'Configuring...'
+                    : embyPluginInfo.linked_here === false
+                      ? 'Link plugin to this NeXroll'
                     : embyPluginInfo.config?.NexrollUrl
                       ? 'Update Plugin Configuration'
                       : 'Link Plugin to NeXroll'}
@@ -34701,6 +34733,8 @@ const DashboardTiles = {
                 well if you run {notConnected.length > 1 ? 'them' : 'it'}, and everything you
                 schedule will apply to all of them.
               </>
+            ) : !serversChecked ? (
+              <>Checking your servers...</>
             ) : (
               <>
                 <strong>Connect as many servers as you run.</strong>{' '}
@@ -34730,7 +34764,7 @@ const DashboardTiles = {
                   <span className="nx-connect-card-mark">{srv.mark}</span>
                   <span className="nx-connect-card-copy">
                     <strong>{srv.label}</strong>
-                    <span className={`nx-connect-card-badge${srv.connected ? ' ok' : srv.saved ? ' warn' : ''}`}><span className={`nx-dot ${srv.connected ? 'ok' : srv.saved ? 'warn' : 'bad'}`} />{srv.connected ? 'Connected' : srv.saved ? "Can't connect" : 'Not connected'}</span>
+                    <span className={`nx-connect-card-badge${srv.connected ? ' ok' : !serversChecked ? '' : srv.saved ? ' warn' : ''}`}><span className={`nx-dot ${srv.connected ? 'ok' : !serversChecked ? '' : srv.saved ? 'warn' : 'bad'}`} />{srv.connected ? 'Connected' : !serversChecked ? 'Checking...' : srv.saved ? "Can't connect" : 'Not connected'}</span>
                   </span>
                 </button>
                 {/* Every card body is details on top, buttons along the bottom,
