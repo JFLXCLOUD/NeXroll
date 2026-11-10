@@ -166,11 +166,15 @@ def _premiere_calls():
 
 
 def test_coming_soon_list_and_upcoming_page_pass_the_available_now_window():
+    # Generate, the regenerate after a sync and the preview all build their
+    # titles in _coming_soon_list_items.
     calls = _premiere_calls()
-    for name in ("generate_coming_soon_list", "_auto_regenerate_coming_soon_list",
-                 "preview_coming_soon_list", "get_upcoming_shows"):
+    for name in ("_coming_soon_list_items", "get_upcoming_shows"):
         assert calls.get(name) == ["available_days"], name
+    for name in ("generate_coming_soon_list", "_auto_regenerate_coming_soon_list", "preview_coming_soon_list"):
+        assert name not in calls, name
 
 
 def test_tv_trailer_sync_does_not_fetch_shows_that_already_aired():
-    assert _premiere_calls().get("sync_sonarr_trailers") == [None]
+    calls = _premiere_calls().get("sync_sonarr_trailers")
+    assert calls and all(window is None for window in calls)

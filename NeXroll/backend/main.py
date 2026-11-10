@@ -68,11 +68,15 @@ from backend.scheduler import (
     normalize_playback_guard_minutes,
     MAX_PLAYBACK_GUARD_MINUTES,
     ensure_trailer_prerolls,
+    drop_trailer_prerolls,
 )
 from backend.sequence_conditions import block_to_play, describe_condition
 from backend import trailer_language
 from backend import radarr_servers
 from backend import sonarr_servers
+from backend import available_now
+from backend import trailer_upkeep
+from backend import list_exclusions
 from backend import secure_store
 from backend import app_log
 from backend import plugin_url_repair
@@ -462,6 +466,12 @@ def ensure_schema() -> None:
             # Coming Soon TV Trailers: ensure excluded_from_list column
             if not _sqlite_has_column("coming_soon_tv_trailers", "excluded_from_list"):
                 _sqlite_add_column("coming_soon_tv_trailers", "excluded_from_list BOOLEAN DEFAULT 0")
+
+            # When the movie/season itself arrived, which starts its trailer's
+            # Available Now window (downloaded_at is the trailer's own download).
+            for _trailer_table in ("coming_soon_trailers", "coming_soon_tv_trailers"):
+                if not _sqlite_has_column(_trailer_table, "available_at"):
+                    _sqlite_add_column(_trailer_table, "available_at DATETIME")
 
             # The repair for trailers stuck at 'pending' used to live here as raw
             # SQL. It now runs from startup_event() via
@@ -2752,6 +2762,26 @@ def startup_event():
             _file_log(f"Startup NeX-Up trailer status repair error: {e}", level="ERROR")
         except Exception:
             pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    # Coming Soon list exclusions an older version stored on trailer rows move
+    # to the per-title table, so they outlive their trailer. Idempotent.
+    try:
+        db = SessionLocal()
+        moved = list_exclusions.backfill(db)
+        if moved:
+            db.commit()
+            _file_log(f"Startup: kept {moved} Coming Soon list exclusion(s) per title")
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        _file_log(f"Startup Coming Soon exclusion copy skipped: {e}", level="WARNING")
     finally:
         try:
             db.close()
@@ -20324,7 +20354,10 @@ def update_nexup_settings(
     if max_trailers is not None:
         setting.nexup_max_trailers = max_trailers
     if max_storage_gb is not None:
-        setting.nexup_max_storage_gb = max_storage_gb
+        # 0 or less used to be stored and then read as the 5 GB default.
+        if not max_storage_gb > 0:
+            raise HTTPException(status_code=400, detail="max_storage_gb must be more than 0")
+        setting.nexup_max_storage_gb = min(float(max_storage_gb), 10000.0)
     if trailers_per_playback is not None:
         setting.nexup_trailers_per_playback = trailers_per_playback
     if playback_order is not None:
@@ -20711,42 +20744,26 @@ async def get_upcoming_movies(db: Session = Depends(get_db)):
     movies = library.parser().upcoming_from_raw(
         library.movies, days_ahead, include_unmonitored, release_date_preference) if library.movies else []
 
-    # Get existing trailers to mark which are already downloaded and excluded
+    # Get existing trailers to mark which are already downloaded; exclusions
+    # are kept per title, trailer or not (list_exclusions)
     existing_trailers = db.query(models.ComingSoonTrailer).all()
     existing_map = {t.radarr_movie_id: t for t in existing_trailers}
-    
-    # Get the "Available Now!" grace period setting
-    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
-    
-    # Filter out movies that have been available too long
+    exclusions = list_exclusions.load(db)
+
+    available_days = available_now.days_visible(setting)
+
+    # A downloaded movie stays while the Coming Soon list would still show it
+    # as "Available Now!" (counted from its release date, not from when the
+    # trailer was downloaded; see available_now.py).
     filtered_movies = []
     for movie in movies:
         trailer = existing_map.get(movie['radarr_id'])
         movie['downloaded'] = trailer is not None
-        movie['excluded_from_list'] = trailer.excluded_from_list if trailer else False
+        movie['excluded_from_list'] = exclusions.excludes(list_exclusions.MOVIE, movie.get('tmdb_id'), movie.get('title'))
         movie['trailer_db_id'] = trailer.id if trailer else None
-        
-        # Mark as "available now" if Radarr says the file is downloaded
         movie['available_now'] = movie.get('has_file', False)
-        
-        # If the movie has been downloaded by Radarr (hasFile=True), check grace period
-        if movie.get('has_file', False):
-            # Check if trailer was downloaded - use downloaded_at if available, else release_date
-            if trailer and trailer.downloaded_at:
-                days_since = (utcnow() - trailer.downloaded_at).days
-            elif movie.get('release_date'):
-                try:
-                    rd = datetime.datetime.fromisoformat(movie['release_date']).date()
-                    days_since = (datetime.date.today() - rd).days
-                except:
-                    days_since = 0
-            else:
-                days_since = 0
-            
-            # Skip if past the "Available Now!" grace period
-            if days_since > available_days:
-                continue
-        
+        if movie['available_now'] and available_now.release_window_passed(movie.get('release_date'), available_days):
+            continue
         filtered_movies.append(movie)
     
     return {
@@ -20877,8 +20894,7 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
     include_unmonitored = getattr(setting, 'nexup_include_unmonitored_shows', False)
 
-    # Get the "Available Now!" grace period setting
-    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+    available_days = available_now.days_visible(setting)
 
     # Use the calendar-based premiere detection for accurate dates. Downloaded
     # premieres inside the Available Now window are listed too, as movies are.
@@ -20891,37 +20907,26 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
     shows = library.premieres(include_unmonitored, available_days)
     _file_log(f"Sonarr: Found {len(shows)} upcoming shows within {days_ahead} days")
 
-    # Get existing TV trailers to mark which are already downloaded and excluded
+    # Get existing TV trailers to mark which are already downloaded;
+    # exclusions are kept per show, trailer or not (list_exclusions)
     existing_trailers = db.query(models.ComingSoonTVTrailer).all()
     existing_map = {f"{t.sonarr_series_id}_S{t.season_number}": t for t in existing_trailers}
+    exclusions = list_exclusions.load(db)
 
     filtered_shows = []
     for show in shows:
         key = f"{show['sonarr_id']}_S{show['season_number']}"
         trailer = existing_map.get(key)
         show['downloaded'] = trailer is not None and trailer.status == 'downloaded'
-        show['excluded_from_list'] = trailer.excluded_from_list if trailer else False
+        show['excluded_from_list'] = exclusions.excludes(list_exclusions.SHOW, show.get('tvdb_id'), show.get('title'))
         show['trailer_db_id'] = trailer.id if trailer else None
         show['has_trailer'] = True  # We'll try to find one via TMDB
         
-        # Mark as "available now" only if Sonarr says the episode file exists
+        # "Available now" only if Sonarr has the episode file, kept for as long
+        # as the Coming Soon list shows it (from the air date, as for movies).
         show['available_now'] = show.get('has_file', False)
-        
-        # If available, check grace period
-        if show['available_now']:
-            if trailer and trailer.downloaded_at:
-                days_since = (utcnow() - trailer.downloaded_at).days
-            elif show.get('release_date'):
-                try:
-                    rd = datetime.datetime.fromisoformat(show['release_date']).date()
-                    days_since = (datetime.date.today() - rd).days
-                except:
-                    days_since = 0
-            else:
-                days_since = 0
-            if days_since > available_days:
-                continue
-        
+        if show['available_now'] and available_now.release_window_passed(show.get('release_date'), available_days):
+            continue
         filtered_shows.append(show)
     
     return {
@@ -20947,20 +20952,24 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
     except Exception:
         retention_days = 7
 
-    def calc_removal(downloaded_at, release_date=None):
-        # Anchor on the later of download time and release date so an upcoming
-        # movie's trailer is never shown as "removed" before it even releases.
-        if not downloaded_at or retention_days <= 0:
-            return None
-        try:
-            anchor = downloaded_at
-            if release_date:
-                rd = release_date if isinstance(release_date, datetime.datetime) else datetime.datetime(release_date.year, release_date.month, release_date.day)
-                if rd > anchor:
-                    anchor = rd
-            return (anchor + datetime.timedelta(days=retention_days)).isoformat()
-        except Exception:
-            return None
+    def calc_removal(downloaded_at, release_date=None, available_at=None):
+        # Retention anchors on the later of download time and release date so
+        # an upcoming movie's trailer is never shown as "removed" before it
+        # even releases. Once the title itself is downloaded, the sync removes
+        # the trailer after Days visible, which can come sooner.
+        dates = [available_now.trailer_removal_date(available_at, available_now.days_visible(setting))]
+        if downloaded_at and retention_days > 0:
+            try:
+                anchor = downloaded_at
+                if release_date:
+                    rd = release_date if isinstance(release_date, datetime.datetime) else datetime.datetime(release_date.year, release_date.month, release_date.day)
+                    if rd > anchor:
+                        anchor = rd
+                dates.append(anchor + datetime.timedelta(days=retention_days))
+            except Exception:
+                pass
+        dates = [d for d in dates if d is not None]
+        return min(dates).isoformat() if dates else None
 
     return [{
         "id": t.id,
@@ -20979,7 +20988,8 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
         "is_enabled": t.is_enabled,
         "status": t.status,
         "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None,
-        "removal_date": calc_removal(t.downloaded_at, t.release_date)
+        "available_at": t.available_at.isoformat() if t.available_at else None,
+        "removal_date": calc_removal(t.downloaded_at, t.release_date, t.available_at)
     } for t in trailers]
 
 @app.get("/nexup/sonarr/trailers/search")
@@ -21320,6 +21330,117 @@ def toggle_tv_trailer(trailer_id: int, db: Session = Depends(get_db)):
     return {"success": True, "is_enabled": trailer.is_enabled}
 
 # Helper function to auto-regenerate Coming Soon List after sync
+async def _coming_soon_list_items(db: Session, setting, source: str, log) -> list:
+    """The titles a Coming Soon list shows, soonest first, before Maximum
+    items is applied. Generate, the regenerate after a sync and the preview
+    all build from here; they had three copies that disagreed (the preview
+    kept every Available Now title and shows past their window, and none
+    followed Include unmonitored movies).
+
+    Movies come from every Radarr (Include unmonitored movies and the release
+    date preference apply), shows from every Sonarr's premieres (Include
+    unmonitored TV shows). A downloaded title stays while it is "Available
+    Now!" (Days visible from its release date). Titles excluded by hand are
+    left out (list_exclusions), each title appears once, and the Available Now
+    Maximum items setting keeps the most recent arrivals.
+
+    log(message, level="INFO") gets the caller's log prefix."""
+    items = []
+    days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+    available_days = available_now.days_visible(setting)
+    today = datetime.date.today()
+
+    def days_until(release):
+        released = available_now.as_date(release)
+        return (released - today).days if released else None
+
+    if source in ("movies", "both"):
+        if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
+            try:
+                movies, failed_radarrs = await radarr_servers.upcoming_movies(
+                    db, setting, days_ahead, **trailer_upkeep.movie_options(setting))
+                for movie in movies:
+                    is_available = bool(movie.get('has_file', False))
+                    if is_available and available_now.release_window_passed(movie.get('release_date'), available_days, today):
+                        continue
+                    items.append({
+                        'title': movie.get('title', ''),
+                        'release_date': movie.get('release_date', ''),
+                        'poster_url': movie.get('poster_url', ''),
+                        'type': 'movie',
+                        'available_now': is_available,
+                        'days_until_release': days_until(movie.get('release_date')),
+                        'tmdb_id': movie.get('tmdb_id'),
+                    })
+                log(f"Found {len(movies)} upcoming movies from Radarr")
+                if failed_radarrs:
+                    log(f"Could not read {', '.join(failed_radarrs)}; their movies are left out", "WARNING")
+            except Exception as e:
+                log(f"Error fetching from Radarr: {e}", "WARNING")
+        else:
+            log("Radarr not configured, skipping movies")
+
+    if source in ("shows", "both"):
+        if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
+            try:
+                include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
+                shows, failed_sonarrs = await sonarr_servers.upcoming_premieres(
+                    db, setting, days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
+                for show in shows:
+                    is_available = bool(show.get('has_file', False))
+                    if is_available and available_now.release_window_passed(show.get('release_date'), available_days, today):
+                        continue
+                    series_title = show.get('title', '')
+                    season_number = show.get('season_number', 1)
+                    title = f"{series_title} (S{season_number})" if season_number and season_number > 1 else series_title
+                    items.append({
+                        'title': title,
+                        'series_title': series_title,
+                        'release_date': show.get('release_date', ''),
+                        'poster_url': show.get('poster_url', ''),
+                        'type': 'show',
+                        'available_now': is_available,
+                        'days_until_release': days_until(show.get('release_date')),
+                        'tvdb_id': show.get('tvdb_id'),
+                    })
+                log(f"Found {len(shows)} upcoming shows from Sonarr")
+                if failed_sonarrs:
+                    log(f"Could not read {', '.join(failed_sonarrs)}; their shows are left out", "WARNING")
+            except Exception as e:
+                log(f"Error fetching from Sonarr: {e}", "WARNING")
+        else:
+            log("Sonarr not configured, skipping shows")
+
+    exclusions = list_exclusions.load(db)
+    fetched = len(items)
+    items = [item for item in items if not exclusions.excludes_item(item)]
+    if len(items) < fetched:
+        log(f"Filtered out {fetched - len(items)} excluded item(s)")
+
+    seen_titles = set()
+    unique_items = []
+    for item in items:
+        if item['title'] in seen_titles:
+            log(f"Skipping duplicate: {item['title']}")
+            continue
+        seen_titles.add(item['title'])
+        unique_items.append(item)
+    items = unique_items
+
+    items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
+
+    # Available Now > Maximum items: keep the most recent arrivals
+    max_available_now = getattr(setting, 'nexup_coming_soon_max_available_now', 0) or 0
+    if max_available_now > 0:
+        available_items = [i for i in items if i.get('available_now')]
+        if len(available_items) > max_available_now:
+            available_items.sort(key=lambda x: x.get('release_date') or '0000-01-01', reverse=True)
+            kept = {id(i) for i in available_items[:max_available_now]}
+            log(f"Limited 'Available Now!' items from {len(available_items)} to {max_available_now}")
+            items = [i for i in items if not i.get('available_now') or id(i) in kept]
+    return items
+
+
 async def _auto_regenerate_coming_soon_list(db: Session):
     """Auto-regenerate Coming Soon List if enabled in settings."""
     try:
@@ -21365,127 +21486,15 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         # Use server name from settings if not specified
         if not server_name or not server_name.strip():
             server_name = setting.plex_server_name or getattr(setting, 'jellyfin_server_name', None) or "Your Server"
-        
-        # Fetch items from Radarr/Sonarr APIs (all upcoming content)
-        items = []
-        days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-        available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
-        today = datetime.date.today()
-        
-        # Get movies from Radarr API
-        if source in ["movies", "both"]:
-            if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
-                try:
-                    release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
-                    movies, failed_radarrs = await radarr_servers.upcoming_movies(db, setting, days_ahead, release_date_preference=release_date_pref)
-                    for movie in movies:
-                        is_available = movie.get('has_file', False)
-                        # Apply "Available Now!" grace period — skip items past the cutoff
-                        if is_available:
-                            try:
-                                rd = datetime.datetime.fromisoformat(movie.get('release_date', '')).date()
-                                if (today - rd).days > available_days:
-                                    continue
-                            except Exception:
-                                pass
-                        items.append({
-                            'title': movie.get('title', ''),
-                            'release_date': movie.get('release_date', ''),
-                            'poster_url': movie.get('poster_url', ''),
-                            'type': 'movie',
-                            'available_now': is_available
-                        })
-                    _file_log(f"Coming Soon List auto-regen: Found {len(movies)} upcoming movies from Radarr")
-                    if failed_radarrs:
-                        _file_log(f"Coming Soon List auto-regen: Could not read {', '.join(failed_radarrs)}; their movies are left out", level="WARNING")
-                except Exception as e:
-                    _file_log(f"Coming Soon List auto-regen: Error fetching from Radarr: {e}")
-        
-        # Get shows from Sonarr API
-        if source in ["shows", "both"]:
-            if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
-                try:
-                    include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                    shows, failed_sonarrs = await sonarr_servers.upcoming_premieres(db, setting, days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
-                    for show in shows:
-                        is_available = show.get('has_file', False)
-                        # Apply "Available Now!" grace period — skip items past the cutoff
-                        if is_available:
-                            try:
-                                rd = datetime.datetime.fromisoformat(show.get('release_date', '')).date()
-                                if (today - rd).days > available_days:
-                                    continue
-                            except Exception:
-                                pass
-                        title = show.get('title', '')
-                        season_number = show.get('season_number', 1)
-                        if season_number and season_number > 1:
-                            title = f"{title} (S{season_number})"
-                        items.append({
-                            'title': title,
-                            'release_date': show.get('release_date', ''),
-                            'poster_url': show.get('poster_url', ''),
-                            'type': 'show',
-                            'available_now': is_available
-                        })
-                    _file_log(f"Coming Soon List auto-regen: Found {len(shows)} upcoming shows from Sonarr")
-                    if failed_sonarrs:
-                        _file_log(f"Coming Soon List auto-regen: Could not read {', '.join(failed_sonarrs)}; their shows are left out", level="WARNING")
-                except Exception as e:
-                    _file_log(f"Coming Soon List auto-regen: Error fetching from Sonarr: {e}")
-        
+
+        # Every upcoming title from Radarr/Sonarr, by the same rules as Generate
+        items = await _coming_soon_list_items(
+            db, setting, source,
+            lambda message, level="INFO": _file_log(f"Coming Soon List auto-regen: {message}", level=level))
         if not items:
             _file_log("Coming Soon List auto-regen: No items to display")
             return
-        
-        # Filter out excluded items from database
-        excluded_movie_titles = set()
-        excluded_movies = db.query(models.ComingSoonTrailer).filter(
-            models.ComingSoonTrailer.excluded_from_list == True
-        ).all()
-        for em in excluded_movies:
-            if em.title:
-                excluded_movie_titles.add(em.title.lower())
-        
-        excluded_tv_titles = set()
-        excluded_tv = db.query(models.ComingSoonTVTrailer).filter(
-            models.ComingSoonTVTrailer.excluded_from_list == True
-        ).all()
-        for et in excluded_tv:
-            if et.title:
-                excluded_tv_titles.add(et.title.lower())
-        
-        original_count = len(items)
-        items = [
-            item for item in items
-            if item['title'].lower() not in excluded_movie_titles 
-            and item['title'].lower() not in excluded_tv_titles
-            and item['title'].split(' (S')[0].lower() not in excluded_tv_titles
-        ]
-        
-        if len(items) < original_count:
-            _file_log(f"Coming Soon List auto-regen: Filtered out {original_count - len(items)} excluded item(s)")
-        
-        if not items:
-            _file_log("Coming Soon List auto-regen: No items after exclusions")
-            return
-        
-        # Sort by release date and limit
-        items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
-        
-        # Apply max "Available Now!" items limit
-        max_available_now = getattr(setting, 'nexup_coming_soon_max_available_now', 0) or 0
-        if max_available_now > 0:
-            available_items = [i for i in items if i.get('available_now', False)]
-            non_available_items = [i for i in items if not i.get('available_now', False)]
-            if len(available_items) > max_available_now:
-                available_items.sort(key=lambda x: x.get('release_date') or '0000-01-01', reverse=True)
-                kept = available_items[:max_available_now]
-                removed_count = len(available_items) - max_available_now
-                _file_log(f"Coming Soon List auto-regen: Limited 'Available Now!' items from {len(available_items)} to {max_available_now}")
-                items = non_available_items + kept
-                items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
-        
+
         items = items[:max_items]
         
         # Convert colors from CSS hex (#141428) to FFmpeg format (0x141428)
@@ -21640,11 +21649,9 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     from backend.radarr_connector import TrailerDownloader
 
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-    max_trailers = getattr(setting, 'nexup_max_trailers', 10)
-    if max_trailers is None:
-        max_trailers = 10
-    download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
-    
+    max_trailers = trailer_upkeep.max_trailers(setting)
+    download_delay = trailer_upkeep.download_delay(setting)
+
     _file_log(f"Sonarr Sync: Config - days_ahead={days_ahead}, max_trailers={max_trailers} ({'no limit' if max_trailers == 0 else max_trailers}), delay={download_delay}s")
     
     results = {
@@ -21671,8 +21678,12 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     sonarr_servers.rehome(db, library)
     from backend.trailer_filters import refresh_trailer_ratings
     refresh_trailer_ratings(db, models.ComingSoonTVTrailer, all_series, "sonarr_series_id", "id")
+    # A premiere that moved is removed by its new date, not the stored one
+    # (the old date removed it early and the next sync downloaded it again).
+    trailer_upkeep.refresh_show_dates(db.query(models.ComingSoonTVTrailer).all(), library.premieres(True),
+                                      log=lambda message: _file_log(f"Sonarr Sync: {message}"))
     db.commit()
-    
+
     # Build a map of series_id -> {season_number: episodeFileCount}
     series_download_status = {}
     for series in all_series:
@@ -21685,36 +21696,32 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
             season_num = season.get('seasonNumber', 0)
             stats = season.get('statistics', {})
             series_download_status[series_id]['seasons'][season_num] = stats.get('episodeFileCount', 0)
-    
+
     # Get existing trailers and check for expired ones
     existing_trailers = db.query(models.ComingSoonTVTrailer).filter(
         models.ComingSoonTVTrailer.status == 'downloaded'
     ).all()
-    
+
     today = datetime.datetime.now().date()
-    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+    now = utcnow()
+    available_days = available_now.days_visible(setting)
     expired_paths = []
 
     for trailer in existing_trailers:
         should_expire = False
         expire_reason = ""
-        
-        # Check 1: Has Sonarr downloaded episodes for this season?
+
+        # Check 1: Has Sonarr had episodes of this season for longer than
+        # Days visible? Counted from when a sync first saw them (available_at),
+        # not from the trailer's own download.
         series_info = series_download_status.get(trailer.sonarr_series_id)
         if series_info:
             season_file_count = series_info['seasons'].get(trailer.season_number, 0)
-            if season_file_count > 0:
-                # Mark downloaded_at if not already set
-                if not trailer.downloaded_at:
-                    trailer.downloaded_at = utcnow()
-                    db.commit()
-                    _file_log(f"Sonarr Sync: Marked '{trailer.title}' S{trailer.season_number} as downloaded (Available Now!)")
-                
-                # Only expire if past the grace period
-                days_since = (utcnow() - trailer.downloaded_at).days
-                if days_since > available_days:
-                    should_expire = True
-                    expire_reason = f"Season has {season_file_count} episode(s) downloaded, past {available_days}-day grace period"
+            if available_now.track_arrival(trailer, season_file_count > 0, now, clear=not library.failed):
+                _file_log(f"Sonarr Sync: '{trailer.title}' S{trailer.season_number} is downloaded; its trailer stays {available_days} more day(s) (Available Now!)")
+            if season_file_count > 0 and available_now.trailer_window_passed(trailer, available_days, now):
+                should_expire = True
+                expire_reason = f"Season has {season_file_count} episode(s) downloaded, past {available_days}-day grace period"
         
         # Check 2: Has the release date passed by more than grace period?
         if not should_expire and trailer.release_date:
@@ -21743,8 +21750,8 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
             db.delete(trailer)
             results["expired"] += 1
     
+    db.commit()  # arrivals noted above, and the expired rows
     if results["expired"] > 0:
-        db.commit()
         _file_log(f"Sonarr Sync: Expired {results['expired']} TV trailers")
         scheduler.retire_trailer_files(expired_paths, "expired", db=db)
     
@@ -21764,6 +21771,9 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
         models.ComingSoonTVTrailer.status == 'downloaded'
     ).all()
     existing_keys = {f"{t.sonarr_series_id}_S{t.season_number}" for t in existing_trailers}
+    # Maximum stored trailers counts the TV trailers already stored; it used
+    # to count this sync's downloads, so every sync could add that many more.
+    stored_count = len(existing_trailers)
     
     # Find shows that need trailers
     tmdb_api_key = getattr(setting, 'nexup_tmdb_api_key', None)
@@ -21789,42 +21799,69 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
             _nexup_sync_progress["skipped"] = skipped_already_exists
             _nexup_sync_progress["status"] = f"Skipping '{show['title']}' S{show['season_number']} (already have)"
             continue
-        
-        if max_trailers > 0 and downloads_completed >= max_trailers:
+
+        def season_rows():
+            return db.query(models.ComingSoonTVTrailer).filter(
+                models.ComingSoonTVTrailer.sonarr_series_id == show['sonarr_id'],
+                models.ComingSoonTVTrailer.season_number == show['season_number']
+            ).all()
+
+        # Rows left by earlier tries (a failed or too-long download, or one
+        # that never finished) are replaced and the season tried again; they
+        # used to block it on every later sync. A download that may still be
+        # running is left alone.
+        earlier_tries = trailer_upkeep.failed_tries(season_rows(), utcnow())
+        if earlier_tries is None:
+            skipped_already_exists += 1
+            _nexup_sync_progress["skipped"] = skipped_already_exists
+            _file_log(f"Sonarr Sync: Skipping '{show['title']}' S{show['season_number']} (a download for it may still be running)")
+            continue
+
+        if max_trailers > 0 and stored_count >= max_trailers:
             _nexup_sync_progress["status"] = f"Reached max trailers limit ({max_trailers})"
             _file_log(f"Sonarr Sync: Reached max trailers limit ({max_trailers})")
             break
-        
+        full = trailer_upkeep.storage_full(downloader, setting)
+        if full:
+            _nexup_sync_progress["status"] = full
+            _file_log(f"Sonarr Sync: {full}")
+            break
+
         results["eligible"] += 1
-        
+        tv_trailer = None
+
         # Try to find and download trailer
         try:
+            if earlier_tries:
+                last = earlier_tries[0].error_message or earlier_tries[0].status or "unknown"
+                _file_log(f"Sonarr Sync: Trying '{show['title']}' S{show['season_number']} again (last try: {last})")
+                for row in earlier_tries:
+                    db.delete(row)
+                db.commit()
+
             _nexup_sync_progress["status"] = f"Looking for trailer: '{show['title']}' S{show['season_number']}..."
             _nexup_sync_progress["current_item"] = f"{show['title']} S{show['season_number']}"
-            
+
             trailers = await fetcher.get_tv_trailers(
                 tvdb_id=show.get('tvdb_id'),
                 imdb_id=show.get('imdb_id')
             )
-            
+
             if not trailers:
                 skipped_no_trailer += 1
                 _nexup_sync_progress["status"] = f"No trailer found for '{show['title']}' S{show['season_number']}"
                 _file_log(f"Sonarr Sync: No trailer found for '{show['title']}' S{show.get('season_number', '?')} (TVDB: {show.get('tvdb_id')}, IMDB: {show.get('imdb_id')})")
                 continue
-            
+
             trailer_url = trailers[0]['url']
-            
-            # Double-check for duplicates right before insert (prevents race condition)
-            existing_check = db.query(models.ComingSoonTVTrailer).filter(
-                models.ComingSoonTVTrailer.sonarr_series_id == show['sonarr_id'],
-                models.ComingSoonTVTrailer.season_number == show['season_number']
-            ).first()
-            if existing_check:
+
+            # Double-check right before insert: the Upcoming page's Download
+            # may have saved or started this season meanwhile.
+            if trailer_upkeep.failed_tries(season_rows(), utcnow()) != []:
                 _file_log(f"Sonarr Sync: Skipping duplicate for '{show['title']}' S{show['season_number']} (already exists in DB)")
                 skipped_already_exists += 1
                 continue
-            
+
             # Create record
             tv_trailer = models.ComingSoonTVTrailer(
                 sonarr_series_id=show['sonarr_id'],
@@ -21872,13 +21909,14 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                 await _create_preroll_from_tv_trailer(tv_trailer, setting, db)
                 results["downloaded"] += 1
                 downloads_completed += 1
+                stored_count += 1
                 _nexup_sync_progress["downloaded"] = results["downloaded"]
                 _nexup_sync_progress["status"] = f"Downloaded '{show['title']}' S{show['season_number']} successfully!"
-                
+
                 _file_log(f"Sonarr Sync: Downloaded trailer for '{show['title']}' S{show['season_number']} to {result['path']}")
-                
+
                 # Rate limiting delay
-                if download_delay > 0 and (max_trailers == 0 or downloads_completed < max_trailers):
+                if download_delay > 0 and (max_trailers == 0 or stored_count < max_trailers):
                     _nexup_sync_progress["status"] = f"Rate limiting - waiting {download_delay}s..."
                     await asyncio.sleep(download_delay)
             elif isinstance(result, dict) and result.get('error') == 'TOO_LONG':
@@ -21904,6 +21942,16 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
             _nexup_sync_progress["status"] = f"Error: {show['title']} - {str(e)[:50]}"
             _file_log(f"Sonarr Sync: Error downloading '{show['title']}': {str(e)}", level="ERROR")
             log_event('ERROR', 'nexup', f'Sonarr sync download error: {show["title"]}: {e}', source='sync_sonarr_trailers', db=db)
+            # Left as 'downloading', the row would look like a download still
+            # running for an hour; record the failure so the next sync retries.
+            if tv_trailer is not None:
+                try:
+                    if tv_trailer.status == 'downloading':
+                        tv_trailer.status = 'error'
+                        tv_trailer.error_message = str(e)[:500]
+                        db.commit()
+                except Exception:
+                    db.rollback()
     
     # Add skip counts to results
     results["skipped_no_trailer"] = skipped_no_trailer
@@ -22895,20 +22943,24 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
     except Exception:
         retention_days = 7
 
-    def calc_removal(downloaded_at, release_date=None):
-        # Anchor on the later of download time and release date so an upcoming
-        # movie's trailer is never shown as "removed" before it even releases.
-        if not downloaded_at or retention_days <= 0:
-            return None
-        try:
-            anchor = downloaded_at
-            if release_date:
-                rd = release_date if isinstance(release_date, datetime.datetime) else datetime.datetime(release_date.year, release_date.month, release_date.day)
-                if rd > anchor:
-                    anchor = rd
-            return (anchor + datetime.timedelta(days=retention_days)).isoformat()
-        except Exception:
-            return None
+    def calc_removal(downloaded_at, release_date=None, available_at=None):
+        # Retention anchors on the later of download time and release date so
+        # an upcoming movie's trailer is never shown as "removed" before it
+        # even releases. Once the title itself is downloaded, the sync removes
+        # the trailer after Days visible, which can come sooner.
+        dates = [available_now.trailer_removal_date(available_at, available_now.days_visible(setting))]
+        if downloaded_at and retention_days > 0:
+            try:
+                anchor = downloaded_at
+                if release_date:
+                    rd = release_date if isinstance(release_date, datetime.datetime) else datetime.datetime(release_date.year, release_date.month, release_date.day)
+                    if rd > anchor:
+                        anchor = rd
+                dates.append(anchor + datetime.timedelta(days=retention_days))
+            except Exception:
+                pass
+        dates = [d for d in dates if d is not None]
+        return min(dates).isoformat() if dates else None
 
     return {
         "retention_days": retention_days,  # 0 = never auto-removed
@@ -22934,7 +22986,8 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
                 "is_enabled": t.is_enabled,
                 "play_count": t.play_count,
                 "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None,
-                "removal_date": calc_removal(t.downloaded_at, t.release_date)
+                "available_at": t.available_at.isoformat() if t.available_at else None,
+                "removal_date": calc_removal(t.downloaded_at, t.release_date, t.available_at)
             }
             for t in trailers
         ],
@@ -23818,37 +23871,72 @@ def toggle_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
 
 @app.put("/nexup/trailers/{trailer_id}/exclude")
 def toggle_trailer_exclusion(trailer_id: int, db: Session = Depends(get_db)):
-    """Toggle whether a movie trailer is excluded from Coming Soon list generation"""
+    """Toggle whether a movie trailer's title is left off Coming Soon lists.
+    The exclusion is kept per title (list_exclusions), so it outlives the
+    trailer."""
     trailer = db.query(models.ComingSoonTrailer).filter(
         models.ComingSoonTrailer.id == trailer_id
     ).first()
-    
+
     if not trailer:
         raise HTTPException(status_code=404, detail="Trailer not found")
-    
-    trailer.excluded_from_list = not trailer.excluded_from_list
+
+    kind = list_exclusions.MOVIE
+    excluded = not list_exclusions.load(db).excludes(kind, trailer.tmdb_id, trailer.title)
+    list_exclusions.set_excluded(db, kind, trailer.tmdb_id, trailer.title, excluded)
     trailer.updated_at = utcnow()
     db.commit()
-    
-    status = "excluded from" if trailer.excluded_from_list else "included in"
-    return {"success": True, "message": f"Trailer {status} Coming Soon list", "excluded_from_list": trailer.excluded_from_list}
+
+    status = "excluded from" if excluded else "included in"
+    return {"success": True, "message": f"Trailer {status} Coming Soon list", "excluded_from_list": excluded}
 
 @app.put("/nexup/trailers/tv/{trailer_id}/exclude")
 def toggle_tv_trailer_exclusion(trailer_id: int, db: Session = Depends(get_db)):
-    """Toggle whether a TV trailer is excluded from Coming Soon list generation"""
+    """Toggle whether a TV trailer's show (every season) is left off Coming
+    Soon lists, kept per show as for movies."""
     trailer = db.query(models.ComingSoonTVTrailer).filter(
         models.ComingSoonTVTrailer.id == trailer_id
     ).first()
-    
+
     if not trailer:
         raise HTTPException(status_code=404, detail="TV Trailer not found")
-    
-    trailer.excluded_from_list = not trailer.excluded_from_list
+
+    kind = list_exclusions.SHOW
+    excluded = not list_exclusions.load(db).excludes(kind, trailer.tvdb_id, trailer.title)
+    list_exclusions.set_excluded(db, kind, trailer.tvdb_id, trailer.title, excluded)
     trailer.updated_at = utcnow()
     db.commit()
-    
-    status = "excluded from" if trailer.excluded_from_list else "included in"
-    return {"success": True, "message": f"TV Trailer {status} Coming Soon list", "excluded_from_list": trailer.excluded_from_list}
+
+    status = "excluded from" if excluded else "included in"
+    return {"success": True, "message": f"TV Trailer {status} Coming Soon list", "excluded_from_list": excluded}
+
+
+@app.get("/nexup/coming-soon-list/exclusions")
+def list_coming_soon_exclusions(db: Session = Depends(get_db)):
+    """Titles left off Coming Soon lists by hand (movies by TMDB id, shows by
+    TVDB id)."""
+    return {"exclusions": list_exclusions.listed(db)}
+
+
+@app.put("/nexup/coming-soon-list/exclusions")
+def set_coming_soon_exclusion(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Leave a title off Coming Soon lists, or put it back, whether or not
+    NeX-Up has a trailer for it. Body: {"kind": "movie" | "show", "tmdb_id"
+    (movies) or "tvdb_id" (shows), "title", "excluded": true | false}."""
+    kind = str(payload.get("kind") or "").strip().lower()
+    if kind not in list_exclusions.KINDS:
+        raise HTTPException(status_code=400, detail="kind must be 'movie' or 'show'")
+    external_id = payload.get("tmdb_id") if kind == list_exclusions.MOVIE else payload.get("tvdb_id")
+    title = str(payload.get("title") or "").strip()
+    if "excluded" not in payload:
+        raise HTTPException(status_code=400, detail="Say whether the title is excluded")
+    try:
+        excluded = list_exclusions.set_excluded(db, kind, external_id, title, bool(payload.get("excluded")))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.commit()
+    status = "excluded from" if excluded else "included in"
+    return {"success": True, "message": f"{title or 'Title'} {status} Coming Soon list", "excluded_from_list": excluded}
 
 @app.post("/nexup/sync")
 async def sync_nexup(db: Session = Depends(get_db)):
@@ -23925,6 +24013,12 @@ async def sync_nexup(db: Session = Depends(get_db)):
         radarr_servers.rehome(db, models.ComingSoonTrailer, library)
         from backend.trailer_filters import refresh_trailer_ratings
         refresh_trailer_ratings(db, models.ComingSoonTrailer, all_radarr_movies, "radarr_movie_id", "id")
+        options = trailer_upkeep.movie_options(setting)
+        # Release dates move; retention counts from the one Radarr has now.
+        trailer_upkeep.refresh_movie_dates(db.query(models.ComingSoonTrailer).all(),
+                                           {m['id']: m for m in all_radarr_movies},
+                                           options['release_date_preference'],
+                                           log=lambda message: _file_log(f"NeX-Up sync: {message}"))
         db.commit()
         _file_log(f"NeX-Up sync: Got {len(all_radarr_movies)} total movies from Radarr"
                   + (f" ({len(library.servers)} servers)" if len(library.servers) > 1 else ""))
@@ -23939,74 +24033,63 @@ async def sync_nexup(db: Session = Depends(get_db)):
         _file_log(f"NeX-Up sync: {len(existing_radarr_ids)} existing trailers in DB")
         
         _nexup_sync_progress["status"] = "Cleaning up orphaned records..."
-        
-        # Verify existing trailer files exist - remove orphaned records
-        orphaned_count = 0
-        for trailer in existing:
-            if trailer.local_path and not os.path.exists(trailer.local_path):
-                _file_log(f"NeX-Up sync: Removing orphaned record for '{trailer.title}' - file missing: {trailer.local_path}")
-                # Also clean up corresponding preroll record
-                orphan_preroll = db.query(models.Preroll).filter(
-                    models.Preroll.path == trailer.local_path
-                ).first()
-                if orphan_preroll:
-                    db.delete(orphan_preroll)
-                    _file_log(f"NeX-Up sync: Removed orphaned preroll record for '{trailer.title}'")
+
+        # A trailer whose file was deleted loses its record (and preroll), so
+        # it can be downloaded again. Shared with the automatic sync; a folder
+        # that can't be seen (drive or share offline) is left alone.
+        orphaned = set(trailer_upkeep.drop_orphans(db, existing, drop_trailer_prerolls,
+                                                   log=lambda message: _file_log(f"NeX-Up sync: {message}")))
+        if orphaned:
+            for trailer in orphaned:
                 existing_radarr_ids.discard(trailer.radarr_movie_id)
-                db.delete(trailer)
-                orphaned_count += 1
-        if orphaned_count > 0:
             db.commit()
-            _file_log(f"NeX-Up sync: Cleaned up {orphaned_count} orphaned trailer records")
+            _file_log(f"NeX-Up sync: Cleaned up {len(orphaned)} orphaned trailer records")
         
         _nexup_sync_progress["status"] = "Checking for expired trailers..."
         
-        # Check for movies that have been downloaded - respect "Available Now!" grace period
-        available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+        # A downloaded movie's trailer stays for Days visible days after the
+        # movie arrives (available_at), then goes. downloaded_at is when the
+        # trailer was downloaded, so counting from it removed every trailer at
+        # the first sync after its movie arrived.
+        available_days = available_now.days_visible(setting)
         expired_trailer_paths = []
-        for trailer in existing:
-            if trailer.radarr_movie_id in downloaded_movies:
-                # Mark downloaded_at if not already set
-                if not trailer.downloaded_at:
-                    trailer.downloaded_at = utcnow()
-                    db.commit()
-                    _file_log(f"NeX-Up: Marked '{trailer.title}' as downloaded (Available Now!)")
-                
-                # Check if past the grace period
-                days_since = (utcnow() - trailer.downloaded_at).days
-                if days_since > available_days:
-                    # The file goes after the rows (below), kept while Plex's
-                    # preroll list still has it.
-                    if trailer.local_path:
-                        expired_trailer_paths.append(trailer.local_path)
-                    # Also clean up corresponding preroll record
-                    if trailer.local_path:
-                        expired_preroll = db.query(models.Preroll).filter(
-                            models.Preroll.path == trailer.local_path
-                        ).first()
-                        if expired_preroll:
-                            db.delete(expired_preroll)
-                    db.delete(trailer)
-                    results["expired"] += 1
-                    _file_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}' (past {available_days}-day grace period)")
+        past_window = available_now.movie_trailers_past_window(
+            [t for t in existing if t not in orphaned],
+            reported_ids={m['id'] for m in all_radarr_movies},
+            downloaded_ids=downloaded_movies,
+            available_days=available_days,
+            now=utcnow(),
+            on_arrival=lambda t: _file_log(
+                f"NeX-Up: '{t.title}' is downloaded; its trailer stays {available_days} more day(s) (Available Now!)"),
+            complete=not library.failed,
+        )
+        for trailer in past_window:
+            # The file goes after the rows (below), kept while Plex's
+            # preroll list still has it.
+            if trailer.local_path:
+                expired_trailer_paths.append(trailer.local_path)
+                expired_preroll = db.query(models.Preroll).filter(
+                    models.Preroll.path == trailer.local_path
+                ).first()
+                if expired_preroll:
+                    db.delete(expired_preroll)
+            db.delete(trailer)
+            results["expired"] += 1
+            _file_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}' (past {available_days}-day grace period)")
+        db.commit()  # arrivals noted above, and the expired rows
         if expired_trailer_paths:
-            db.commit()
             scheduler.retire_trailer_files(expired_trailer_paths, "expired", db=db)
 
         # Parse upcoming movies from the already-fetched data
-        include_unmonitored = getattr(setting, 'nexup_include_unmonitored_movies', False)
-        release_date_preference = getattr(setting, 'nexup_release_date_preference', 'digital_first')
-        upcoming = connector.parse_upcoming_from_raw(all_radarr_movies, days_ahead, include_unmonitored=include_unmonitored, release_date_preference=release_date_preference)
+        upcoming = connector.parse_upcoming_from_raw(all_radarr_movies, days_ahead, **options)
         results["checked"] = len(upcoming)
         _file_log(f"NeX-Up sync: Found {len(upcoming)} upcoming movies")
-        
+
         # Download new trailers (up to limit)
-        max_trailers = getattr(setting, 'nexup_max_trailers', 10)
-        if max_trailers is None:
-            max_trailers = 10
+        max_trailers = trailer_upkeep.max_trailers(setting)
         current_count = db.query(models.ComingSoonTrailer.radarr_movie_id).distinct().count()
         storage_usage = downloader.get_storage_usage()
-        max_storage = getattr(setting, 'nexup_max_storage_gb', 5.0) or 5.0
+        max_storage = trailer_upkeep.max_storage_gb(setting)
 
         _file_log(f"NeX-Up sync: max_trailers={max_trailers} ({'no limit' if max_trailers == 0 else max_trailers}), current_count={current_count}, storage={storage_usage['total_size_gb']}GB/{max_storage}GB")
         
@@ -24030,7 +24113,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
             _file_log(f"NeX-Up sync: leftover cleanup skipped ({_e})", level="WARNING")
 
         # Get rate limiting settings
-        download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
+        download_delay = trailer_upkeep.download_delay(setting)
         downloads_completed = 0
         processed_count = 0
 
@@ -24291,6 +24374,12 @@ def get_nexup_playback_trailers(db: Session = Depends(get_db)):
                 "duration": getattr(setting, 'nexup_dynamic_preroll_duration', 5)
             }
     
+    def days_until(release_date):
+        # release_date is a datetime column; subtracting today's date from it
+        # raised, so the endpoint failed whenever a trailer had a date.
+        released = available_now.as_date(release_date)
+        return (released - datetime.date.today()).days if released else None
+
     return {
         "trailers": [
             {
@@ -24299,7 +24388,7 @@ def get_nexup_playback_trailers(db: Session = Depends(get_db)):
                 "year": t.year,
                 "path": t.local_path,
                 "release_date": t.release_date.isoformat() if t.release_date else None,
-                "days_until": (t.release_date - datetime.datetime.now().date()).days if t.release_date else None,
+                "days_until": days_until(t.release_date),
                 "poster_url": t.poster_url,
                 "duration_seconds": t.duration_seconds
             }
@@ -25437,147 +25526,16 @@ async def generate_coming_soon_list(
     if not server_name or not server_name.strip():
         server_name = setting.plex_server_name or getattr(setting, 'jellyfin_server_name', None) or "Your Server"
     
-    # Fetch from Radarr/Sonarr APIs (ALL upcoming content, not just downloaded trailers)
-    items = []
-    days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
-    today = datetime.date.today()
-    
-    # Get movies from Radarr API
-    if source in ["movies", "both"]:
-        if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
-            try:
-                release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
-                movies, failed_radarrs = await radarr_servers.upcoming_movies(db, setting, days_ahead, release_date_preference=release_date_pref)
-                for movie in movies:
-                    is_available = movie.get('has_file', False)
-                    # Apply "Available Now!" grace period — skip items past the cutoff
-                    if is_available:
-                        try:
-                            rd = datetime.datetime.fromisoformat(movie.get('release_date', '')).date()
-                            if (today - rd).days > available_days:
-                                continue
-                        except Exception:
-                            pass
-                    items.append({
-                        'title': movie.get('title', ''),
-                        'release_date': movie.get('release_date', ''),
-                        'poster_url': movie.get('poster_url', ''),
-                        'type': 'movie',
-                        'available_now': is_available
-                    })
-                _file_log(f"[COMING-SOON-LIST] Found {len(movies)} upcoming movies from Radarr API")
-                if failed_radarrs:
-                    _file_log(f"[COMING-SOON-LIST] Could not read {', '.join(failed_radarrs)}; their movies are left out", level="WARNING")
-            except Exception as e:
-                _file_log(f"[COMING-SOON-LIST] Error fetching from Radarr: {e}")
-        else:
-            _file_log(f"[COMING-SOON-LIST] Radarr not configured, skipping movies")
-    
-    # Get shows from Sonarr API
-    if source in ["shows", "both"]:
-        if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
-            try:
-                include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                shows, failed_sonarrs = await sonarr_servers.upcoming_premieres(db, setting, days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
-                for show in shows:
-                    is_available = show.get('has_file', False)
-                    # Apply "Available Now!" grace period — skip items past the cutoff
-                    if is_available:
-                        try:
-                            rd = datetime.datetime.fromisoformat(show.get('release_date', '')).date()
-                            if (today - rd).days > available_days:
-                                continue
-                        except Exception:
-                            pass
-                    title = show.get('title', '')
-                    season_number = show.get('season_number', 1)
-                    if season_number and season_number > 1:
-                        title = f"{title} (S{season_number})"
-                    items.append({
-                        'title': title,
-                        'release_date': show.get('release_date', ''),
-                        'poster_url': show.get('poster_url', ''),
-                        'type': 'show',
-                        'available_now': is_available
-                    })
-                _file_log(f"[COMING-SOON-LIST] Found {len(shows)} upcoming shows from Sonarr API")
-                if failed_sonarrs:
-                    _file_log(f"[COMING-SOON-LIST] Could not read {', '.join(failed_sonarrs)}; their shows are left out", level="WARNING")
-            except Exception as e:
-                _file_log(f"[COMING-SOON-LIST] Error fetching from Sonarr: {e}")
-        else:
-            _file_log(f"[COMING-SOON-LIST] Sonarr not configured, skipping shows")
-    
-    _file_log(f"[COMING-SOON-LIST] Total items from APIs: {len(items)}, max_items requested: {max_items}")
-    
-    # Filter out excluded items from database
-    # Get excluded movie titles
-    excluded_movie_titles = set()
-    excluded_movies = db.query(models.ComingSoonTrailer).filter(
-        models.ComingSoonTrailer.excluded_from_list == True
-    ).all()
-    for em in excluded_movies:
-        if em.title:
-            excluded_movie_titles.add(em.title.lower())
-    
-    # Get excluded TV show titles
-    excluded_tv_titles = set()
-    excluded_tv = db.query(models.ComingSoonTVTrailer).filter(
-        models.ComingSoonTVTrailer.excluded_from_list == True
-    ).all()
-    for et in excluded_tv:
-        if et.title:
-            # Match both base title and "(S#)" variants
-            excluded_tv_titles.add(et.title.lower())
-    
-    # Filter out excluded items
-    original_count = len(items)
-    items = [
-        item for item in items
-        if item['title'].lower() not in excluded_movie_titles 
-        and item['title'].lower() not in excluded_tv_titles
-        # Also check without season suffix for TV shows
-        and item['title'].split(' (S')[0].lower() not in excluded_tv_titles
-    ]
-    
-    if len(items) < original_count:
-        _file_log(f"[COMING-SOON-LIST] Filtered out {original_count - len(items)} excluded item(s)")
-    
+    # Every upcoming title from Radarr/Sonarr (not just downloaded trailers),
+    # by the same rules as the regenerate after a sync and the preview
+    items = await _coming_soon_list_items(
+        db, setting, source,
+        lambda message, level="INFO": _file_log(f"[COMING-SOON-LIST] {message}", level=level))
+    _file_log(f"[COMING-SOON-LIST] Titles for the list: {len(items)}, max_items requested: {max_items}")
+
     if not items:
         raise HTTPException(status_code=400, detail="No upcoming content found. Make sure Radarr/Sonarr is connected and has upcoming releases.")
-    
-    # Deduplicate items by title (in case of duplicate database records)
-    seen_titles = set()
-    unique_items = []
-    for item in items:
-        if item['title'] not in seen_titles:
-            seen_titles.add(item['title'])
-            unique_items.append(item)
-        else:
-            _file_log(f"[COMING-SOON-LIST] Skipping duplicate: {item['title']}")
-    
-    if len(unique_items) < len(items):
-        _file_log(f"[COMING-SOON-LIST] Removed {len(items) - len(unique_items)} duplicate(s)")
-    items = unique_items
-    
-    # Sort by release date
-    items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
-    
-    # Apply max "Available Now!" items limit
-    max_available_now = getattr(setting, 'nexup_coming_soon_max_available_now', 0) or 0
-    if max_available_now > 0:
-        available_items = [i for i in items if i.get('available_now', False)]
-        non_available_items = [i for i in items if not i.get('available_now', False)]
-        if len(available_items) > max_available_now:
-            # Keep only the most recently added (last N by release date, reversed)
-            available_items.sort(key=lambda x: x.get('release_date') or '0000-01-01', reverse=True)
-            kept = available_items[:max_available_now]
-            removed_count = len(available_items) - max_available_now
-            _file_log(f"[COMING-SOON-LIST] Limited 'Available Now!' items from {len(available_items)} to {max_available_now} (removed {removed_count})")
-            items = non_available_items + kept
-            items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
-    
+
     # Convert colors from CSS hex to FFmpeg format
     bg_ffmpeg = bg_color.replace('#', '0x')
     text_ffmpeg = text_color.replace('#', '0x')
@@ -25748,105 +25706,13 @@ async def preview_coming_soon_list(
     setting = db.query(models.Setting).first()
     if not setting:
         return {"items": [], "error": "Settings not configured"}
-    
-    items = []
-    days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
 
-    def calc_days_until(release_str):
-        if not release_str:
-            return None
-        try:
-            from datetime import datetime
-            release_date = datetime.fromisoformat(release_str.replace('Z', '+00:00')).date() if isinstance(release_str, str) else release_str
-            return (release_date - datetime.now().date()).days
-        except:
-            return None
-    
-    # Get movies from Radarr API
-    if source in ["movies", "both"]:
-        if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
-            try:
-                release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
-                movies, failed_radarrs = await radarr_servers.upcoming_movies(db, setting, days_ahead, release_date_preference=release_date_pref)
-                for movie in movies:
-                    days_until = calc_days_until(movie.get('release_date'))
-                    # Same "Available Now!" window as the rendered list
-                    if movie.get('has_file', False) and days_until is not None and -days_until > available_days:
-                        continue
-                    items.append({
-                        'title': movie.get('title', ''),
-                        'release_date': movie.get('release_date', ''),
-                        'poster_url': movie.get('poster_url', ''),
-                        'type': 'movie',
-                        'days_until_release': days_until,
-                        'available_now': movie.get('has_file', False)
-                    })
-                if failed_radarrs:
-                    _file_log(f"[COMING-SOON-PREVIEW] Could not read {', '.join(failed_radarrs)}; their movies are left out", level="WARNING")
-            except Exception as e:
-                _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Radarr: {e}")
-    
-    # Get shows from Sonarr API
-    if source in ["shows", "both"]:
-        if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
-            try:
-                include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
-                shows, failed_sonarrs = await sonarr_servers.upcoming_premieres(db, setting, days_ahead, include_unmonitored=include_unmonitored_shows, recent_days=available_days)
-                for show in shows:
-                    title = show.get('title', '')
-                    season_number = show.get('season_number', 1)
-                    if season_number and season_number > 1:
-                        title = f"{title} (S{season_number})"
-                    items.append({
-                        'title': title,
-                        'release_date': show.get('release_date', ''),
-                        'poster_url': show.get('poster_url', ''),
-                        'type': 'show',
-                        'days_until_release': calc_days_until(show.get('release_date')),
-                        'available_now': show.get('has_file', False)
-                    })
-                if failed_sonarrs:
-                    _file_log(f"[COMING-SOON-PREVIEW] Could not read {', '.join(failed_sonarrs)}; their shows are left out", level="WARNING")
-            except Exception as e:
-                _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Sonarr: {e}")
-    
-    # Filter out excluded items from database
-    excluded_movie_titles = set()
-    excluded_movies = db.query(models.ComingSoonTrailer).filter(
-        models.ComingSoonTrailer.excluded_from_list == True
-    ).all()
-    for em in excluded_movies:
-        if em.title:
-            excluded_movie_titles.add(em.title.lower())
-    
-    excluded_tv_titles = set()
-    excluded_tv = db.query(models.ComingSoonTVTrailer).filter(
-        models.ComingSoonTVTrailer.excluded_from_list == True
-    ).all()
-    for et in excluded_tv:
-        if et.title:
-            excluded_tv_titles.add(et.title.lower())
-    
-    items = [
-        item for item in items
-        if item['title'].lower() not in excluded_movie_titles 
-        and item['title'].lower() not in excluded_tv_titles
-        and item['title'].split(' (S')[0].lower() not in excluded_tv_titles
-    ]
-    
-    # Deduplicate items by title
-    seen_titles = set()
-    unique_items = []
-    for item in items:
-        if item['title'] not in seen_titles:
-            seen_titles.add(item['title'])
-            unique_items.append(item)
-    items = unique_items
-    
-    # Sort by release date
-    items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
-    
+    # The same titles a generated list would show (Available Now window for
+    # shows too, Available Now > Maximum items, Include unmonitored movies)
+    items = await _coming_soon_list_items(
+        db, setting, source,
+        lambda message, level="INFO": _file_log(f"[COMING-SOON-PREVIEW] {message}", level=level))
+
     # Count totals for each type
     movie_count = len([i for i in items if i['type'] == 'movie'])
     show_count = len([i for i in items if i['type'] == 'show'])

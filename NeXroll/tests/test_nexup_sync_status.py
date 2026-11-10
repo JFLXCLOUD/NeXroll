@@ -20,6 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend import models
 from backend import scheduler as scheduler_module
+from backend.sonarr_connector import SonarrConnector as RealSonarrConnector
 from backend.timeutil import utcnow
 
 
@@ -35,7 +36,7 @@ class FakeRadarrConnector:
     async def fetch_all_movies(self):
         return [{"id": 41, "hasFile": False}]
 
-    def parse_upcoming_from_raw(self, all_movies, days_ahead):
+    def parse_upcoming_from_raw(self, all_movies, days_ahead, **options):
         return [{
             "radarr_id": 41,
             "tmdb_id": 603,
@@ -61,6 +62,15 @@ class FakeSonarrConnector:
         return []
 
     async def fetch_all_series(self):
+        return []
+
+    # The auto-sync reads the calendar too, for current premiere dates.
+    calendar_window = staticmethod(RealSonarrConnector.calendar_window)
+
+    async def fetch_calendar(self, start_date=None, end_date=None):
+        return []
+
+    def premieres_from_calendar(self, calendar, include_unmonitored=False, recent_days=0):
         return []
 
     async def get_upcoming_shows(self, days_ahead=90):

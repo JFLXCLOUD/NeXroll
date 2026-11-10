@@ -199,10 +199,22 @@ def test_auto_sync_downloads_4k_only_movies_once_and_expires_by_any_copy(db):
     db.add(models.ComingSoonTrailer(radarr_movie_id=7, tmdb_id=300, title="Released Elsewhere", status="downloaded"))
     db.commit()
     sched = scheduler_module.Scheduler.__new__(scheduler_module.Scheduler)
-    with patch("backend.radarr_connector.TrailerDownloader", FakeDownloader):
-        asyncio.run(sched._sync_radarr_trailers(db, db.query(models.Setting).first()))
-    rows = {r.title: r.radarr_movie_id for r in db.query(models.ComingSoonTrailer).all()}
-    assert rows == {"Thunderbolts": 5, "Avengers Doomsday": UHD_KEY + 12}
+
+    def sync():
+        with patch("backend.radarr_connector.TrailerDownloader", FakeDownloader):
+            asyncio.run(sched._sync_radarr_trailers(db, db.query(models.Setting).first()))
+        return {r.title: r for r in db.query(models.ComingSoonTrailer).all()}
+
+    # The 4K copy's file counts: the trailer's Available Now window starts...
+    rows = sync()
+    assert set(rows) == {"Thunderbolts", "Avengers Doomsday", "Released Elsewhere"}
+    assert rows["Thunderbolts"].radarr_movie_id == 5 and rows["Avengers Doomsday"].radarr_movie_id == UHD_KEY + 12
+    assert rows["Released Elsewhere"].available_at is not None
+    assert rows["Thunderbolts"].available_at is None
+    # ...and once it has run out (Days visible defaults to 1) the trailer goes.
+    rows["Released Elsewhere"].available_at = utcnow() - datetime.timedelta(days=2)
+    db.commit()
+    assert set(sync()) == {"Thunderbolts", "Avengers Doomsday"}
 
 
 def test_library_sync_stops_when_a_radarr_cannot_be_read(db):
@@ -260,7 +272,7 @@ ROUTES = {"_ARR_SERVER_KINDS", "_arr_kind", "_arr_server_out", "_arr_server_row"
 
 def route_client(db, routes):
     """The named main.py functions on a bare app, without importing main."""
-    from backend import sonarr_servers
+    from backend import available_now, list_exclusions, sonarr_servers, trailer_upkeep
     app = FastAPI()
 
     def get_db():
@@ -268,7 +280,9 @@ def route_client(db, routes):
 
     env = dict(app=app, models=models, Session=Session, Depends=Depends, HTTPException=HTTPException,
                Body=Body, Optional=Optional, get_db=get_db, radarr_servers=radarr_servers,
-               sonarr_servers=sonarr_servers, _file_log=lambda *a, **k: None, log_event=lambda *a, **k: None,
+               sonarr_servers=sonarr_servers, available_now=available_now,
+               list_exclusions=list_exclusions, trailer_upkeep=trailer_upkeep,
+               _file_log=lambda *a, **k: None, log_event=lambda *a, **k: None,
                utcnow=utcnow, datetime=datetime)
     tree = ast.parse((Path(__file__).parents[1] / "backend/main.py").read_text(encoding="utf-8"))
 

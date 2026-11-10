@@ -207,6 +207,7 @@ class ComingSoonTrailer(TrailerGenres, Base):
     poster_url = Column(String, nullable=True)  # Movie poster URL
     fanart_url = Column(String, nullable=True)  # Fanart/background URL
     downloaded_at = Column(DateTime, nullable=True)  # When trailer was downloaded
+    available_at = Column(DateTime, nullable=True)  # When a sync first saw the movie downloaded (starts the Available Now window; see available_now.py)
     status = Column(String, default='pending')  # 'pending', 'downloading', 'downloaded', 'error', 'expired'
     error_message = Column(Text, nullable=True)  # Error details if download failed
     is_enabled = Column(Boolean, default=True)  # User can enable/disable individual trailers
@@ -244,6 +245,7 @@ class ComingSoonTVTrailer(TrailerGenres, Base):
     poster_url = Column(String, nullable=True)  # Show poster URL
     fanart_url = Column(String, nullable=True)  # Fanart/background URL
     downloaded_at = Column(DateTime, nullable=True)  # When trailer was downloaded
+    available_at = Column(DateTime, nullable=True)  # When a sync first saw the season downloaded (starts the Available Now window; see available_now.py)
     status = Column(String, default='pending')  # 'pending', 'downloading', 'downloaded', 'error', 'expired'
     error_message = Column(Text, nullable=True)  # Error details if download failed
     is_enabled = Column(Boolean, default=True)  # User can enable/disable individual trailers
@@ -604,6 +606,23 @@ class SonarrServer(Base):
     name = Column(String, nullable=True)
     url = Column(String, nullable=False)
     api_key = Column(String, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class ComingSoonExclusion(Base):
+    """NeX-Up: a title left off the Coming Soon list by hand. See
+    list_exclusions.py.
+
+    Kept per title rather than on the title's trailer row, so removing the
+    trailer (arrival window, retention, delete) no longer puts the title back
+    on the list. Movies match by TMDB id and shows by TVDB id; the title is
+    used when there is no id."""
+    __tablename__ = "coming_soon_exclusions"
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, nullable=False)  # 'movie' or 'show'
+    external_id = Column(Integer, nullable=True)  # TMDB id (movie) or TVDB id (show)
+    title = Column(String, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
 

@@ -220,6 +220,73 @@ class TMDBTrailerFetcher:
         return trailers
 
 
+def select_release_date(digital_release: str, physical_release: str, in_cinemas: str, preference: str = 'digital_first') -> tuple:
+    """
+    Select the appropriate release date based on user preference.
+    Returns (release_date, release_type) tuple.
+
+    Preferences:
+    - 'digital_first': Digital > Physical > Theatrical (default)
+    - 'digital_only': Only use digital date
+    - 'physical_first': Physical > Digital > Theatrical
+    - 'theatrical': Theatrical > Digital > Physical
+    """
+    def parse_date(date_str):
+        if not date_str:
+            return None
+        try:
+            return datetime.fromisoformat(date_str.replace('Z', '+00:00')).date()
+        except:
+            return None
+
+    digital_date = parse_date(digital_release)
+    physical_date = parse_date(physical_release)
+    theatrical_date = parse_date(in_cinemas)
+
+    if preference == 'digital_only':
+        # Only return digital date, skip movie if not available
+        if digital_date:
+            return digital_date, 'digital'
+        return None, None
+
+    elif preference == 'physical_first':
+        # Physical > Digital > Theatrical
+        if physical_date:
+            return physical_date, 'physical'
+        if digital_date:
+            return digital_date, 'digital'
+        if theatrical_date:
+            return theatrical_date, 'theatrical'
+        return None, None
+
+    elif preference == 'theatrical':
+        # Theatrical > Digital > Physical
+        if theatrical_date:
+            return theatrical_date, 'theatrical'
+        if digital_date:
+            return digital_date, 'digital'
+        if physical_date:
+            return physical_date, 'physical'
+        return None, None
+
+    else:  # 'digital_first' (default)
+        # Digital > Physical > Theatrical
+        if digital_date:
+            return digital_date, 'digital'
+        if physical_date:
+            return physical_date, 'physical'
+        if theatrical_date:
+            return theatrical_date, 'theatrical'
+        return None, None
+
+
+def movie_release_date(movie: Dict[str, Any], preference: str = 'digital_first') -> tuple:
+    """(release_date, release_type) of a raw Radarr movie under the release
+    date preference."""
+    return select_release_date(movie.get('digitalRelease'), movie.get('physicalRelease'),
+                               movie.get('inCinemas'), preference or 'digital_first')
+
+
 class RadarrConnector:
     """Handles all Radarr API interactions"""
     
@@ -233,64 +300,19 @@ class RadarrConnector:
         }
     
     def _select_release_date(self, digital_release: str, physical_release: str, in_cinemas: str, preference: str = 'digital_first') -> tuple:
-        """
-        Select the appropriate release date based on user preference.
-        Returns (release_date, release_type) tuple.
-        
-        Preferences:
-        - 'digital_first': Digital > Physical > Theatrical (default)
-        - 'digital_only': Only use digital date
-        - 'physical_first': Physical > Digital > Theatrical  
-        - 'theatrical': Theatrical > Digital > Physical
-        """
-        def parse_date(date_str):
-            if not date_str:
-                return None
-            try:
-                return datetime.fromisoformat(date_str.replace('Z', '+00:00')).date()
-            except:
-                return None
-        
-        digital_date = parse_date(digital_release)
-        physical_date = parse_date(physical_release)
-        theatrical_date = parse_date(in_cinemas)
-        
-        if preference == 'digital_only':
-            # Only return digital date, skip movie if not available
-            if digital_date:
-                return digital_date, 'digital'
-            return None, None
-        
-        elif preference == 'physical_first':
-            # Physical > Digital > Theatrical
-            if physical_date:
-                return physical_date, 'physical'
-            if digital_date:
-                return digital_date, 'digital'
-            if theatrical_date:
-                return theatrical_date, 'theatrical'
-            return None, None
-        
-        elif preference == 'theatrical':
-            # Theatrical > Digital > Physical
-            if theatrical_date:
-                return theatrical_date, 'theatrical'
-            if digital_date:
-                return digital_date, 'digital'
-            if physical_date:
-                return physical_date, 'physical'
-            return None, None
-        
-        else:  # 'digital_first' (default)
-            # Digital > Physical > Theatrical
-            if digital_date:
-                return digital_date, 'digital'
-            if physical_date:
-                return physical_date, 'physical'
-            if theatrical_date:
-                return theatrical_date, 'theatrical'
-            return None, None
-    
+        """select_release_date (module level, so callers without a connector
+        can use it too)."""
+        return select_release_date(digital_release, physical_release, in_cinemas, preference)
+
+    @staticmethod
+    def is_old_release(movie: Dict[str, Any], today=None) -> bool:
+        """A movie from two or more years back: a re-release or a new copy of
+        an old film (e.g. a 4K edition), not a new movie. The Upcoming page,
+        the Coming Soon list and the trailer syncs all leave these out."""
+        movie_year = movie.get('year', 0) or 0
+        current_year = (today or datetime.now().date()).year
+        return bool(movie_year) and movie_year < current_year - 1
+
     async def test_connection(self) -> Dict[str, Any]:
         """Test the Radarr connection and return system status"""
         try:
@@ -364,9 +386,7 @@ class RadarrConnector:
             # Filter out quality upgrades / re-releases of old movies
             # If the movie year is more than 2 years before current year, it's likely
             # a re-release (e.g., 4K upgrade) not genuinely new content
-            movie_year = movie.get('year', 0) or 0
-            current_year = today.year
-            if movie_year and movie_year < current_year - 1:
+            if self.is_old_release(movie, today):
                 continue
             
             # Get all release dates
@@ -496,17 +516,23 @@ class RadarrConnector:
             status = movie.get('status', '').lower()
             if status not in ['announced', 'incinemas', 'released']:
                 continue
-            
+
+            # Re-releases of old movies: upcoming_from_raw leaves them off the
+            # Upcoming page and the Coming Soon list, so a trailer for one was
+            # downloaded and never shown.
+            if self.is_old_release(movie, today):
+                continue
+
             # Get all release dates
             digital_release = movie.get('digitalRelease')
             physical_release = movie.get('physicalRelease')
             in_cinemas = movie.get('inCinemas')
-            
+
             # Determine the release date based on preference
             release_date, release_type = self._select_release_date(
                 digital_release, physical_release, in_cinemas, release_date_preference
             )
-            
+
             if not release_date:
                 continue
             if release_date > cutoff_date:

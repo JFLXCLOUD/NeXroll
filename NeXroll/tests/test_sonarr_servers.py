@@ -202,9 +202,20 @@ def test_tv_auto_sync_expires_a_season_the_other_sonarr_has(db, tmp_path):
     ])
     db.commit()
     sched = scheduler_module.Scheduler.__new__(scheduler_module.Scheduler)
-    with patch("backend.radarr_connector.TrailerDownloader", NoDownloads):
-        asyncio.run(sched._sync_sonarr_trailers(db, db.query(models.Setting).first()))
-    assert [r.title for r in db.query(models.ComingSoonTVTrailer).all()] == ["Kept"]
+
+    def sync():
+        with patch("backend.radarr_connector.TrailerDownloader", NoDownloads):
+            asyncio.run(sched._sync_sonarr_trailers(db, db.query(models.Setting).first()))
+        return {r.title: r for r in db.query(models.ComingSoonTVTrailer).all()}
+
+    # The other Sonarr's episodes start the season's Available Now window...
+    rows = sync()
+    assert rows["The Expanse"].available_at is not None and rows["Kept"].available_at is None
+    assert files[0].exists()
+    # ...and once it has run out (Days visible defaults to 1) the trailer goes.
+    rows["The Expanse"].available_at = utcnow() - datetime.timedelta(days=2)
+    db.commit()
+    assert list(sync()) == ["Kept"]
     assert not files[0].exists() and files[1].exists()
 
 

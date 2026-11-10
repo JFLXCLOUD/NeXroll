@@ -9641,6 +9641,7 @@ body.light .nx-lt-chip.off, body.light .nx-lt-pin.never { color: color-mix(in sr
 }
 .nx-ap-poster-state.is-ready { background: color-mix(in srgb, var(--success-color) 90%, transparent); }
 .nx-ap-poster-state.is-missing { background: color-mix(in srgb, var(--nx-sec-nexup) 90%, transparent); }
+.nx-ap-poster-state.is-available { background: color-mix(in srgb, var(--success-color) 72%, rgba(12, 13, 15, 0.8)); }
 .nx-ap-poster-state.is-unavailable { background: rgba(12, 13, 15, 0.8); }
 
 .nx-ap-poster-play {
@@ -9667,7 +9668,7 @@ body.light .nx-lt-chip.off, body.light .nx-lt-pin.never { color: color-mix(in sr
   .nx-ap-poster-play { opacity: 1; }
 }
 
-.nx-ap-upcoming-list > article { min-height: 66px; display: grid; grid-template-columns: 90px minmax(180px,1fr) 110px 96px 75px 118px; align-items: center; gap: 9px; padding: 8px 10px; border-bottom: 1px solid var(--border-color); }
+.nx-ap-upcoming-list > article { min-height: 66px; display: grid; grid-template-columns: 90px minmax(180px,1fr) 128px 96px 75px 118px; align-items: center; gap: 9px; padding: 8px 10px; border-bottom: 1px solid var(--border-color); }
 .nx-ap-upcoming-list > article:last-child { border-bottom: 0; }
 .nx-ap-upcoming-list > article.excluded { opacity: .55; }
 .nx-ap-release { display: flex; align-items: center; gap: 8px; }
@@ -12221,7 +12222,7 @@ body :is(.nx-sidebar, .nx-content) :is(
 /* Tablets: the desktop row widths (about 750px) no longer fit, so the columns
    narrow; headings and rows keep sharing them. */
 @media (min-width: 721px) and (max-width: 980px) {
-  .nx-ap-upcoming-list > article { grid-template-columns: 74px minmax(130px, 1fr) 108px 96px 56px 110px; gap: 7px; }
+  .nx-ap-upcoming-list > article { grid-template-columns: 74px minmax(130px, 1fr) 124px 96px 56px 110px; gap: 7px; }
   .nx-ap-trailer-head,
   .nx-ap-trailer-table > article { grid-template-columns: minmax(150px, 1fr) 76px 66px 64px 100px 96px; gap: 7px; }
 }

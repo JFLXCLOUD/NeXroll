@@ -17,6 +17,7 @@ import backend.models as models
 from backend.plex_connector import PlexConnector
 from backend import path_mapping
 from backend import app_log
+from backend import available_now
 from backend.jellyfin_connector import JellyfinConnector
 from backend.database import SessionLocal
 from backend.shuffle_bag import shuffle_bag_sample
@@ -1640,11 +1641,17 @@ class Scheduler:
             _scheduler_log(f"Error registering Coming Soon List to category: {e}", level="ERROR")
 
     async def _sync_radarr_trailers(self, db: Session, setting):
-        """Sync trailers from Radarr (called by auto-sync)"""
+        """Sync trailers from Radarr (called by auto-sync). Follows the same
+        settings as the Sync button (main.sync_nexup), through trailer_upkeep:
+        it used to ignore Include unmonitored movies, the release date
+        preference, the storage limit and trailers whose file was deleted."""
         import os
         from pathlib import Path
         from backend.radarr_connector import TrailerDownloader
-        from backend import radarr_servers
+        from backend import radarr_servers, trailer_upkeep
+
+        def note(message):
+            _scheduler_log(f"NeX-Up auto-sync: {message}")
 
         storage_path = setting.nexup_storage_path
         quality = getattr(setting, 'nexup_quality', '1080') or '1080'
@@ -1660,11 +1667,10 @@ class Scheduler:
                                        **trailer_language.downloader_options(setting))
         
         days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-        max_trailers = getattr(setting, 'nexup_max_trailers', 10)
-        if max_trailers is None:
-            max_trailers = 10
-        download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
-        
+        max_trailers = trailer_upkeep.max_trailers(setting)
+        download_delay = trailer_upkeep.download_delay(setting)
+        options = trailer_upkeep.movie_options(setting)
+
         # Get upcoming movies from every Radarr (one entry per movie)
         library = await radarr_servers.fetch_library(db, setting)
         for failed in library.failed:
@@ -1673,32 +1679,61 @@ class Scheduler:
         radarr_servers.rehome(db, models.ComingSoonTrailer, library)
         from backend.trailer_filters import refresh_trailer_ratings
         refresh_trailer_ratings(db, models.ComingSoonTrailer, all_movies, "radarr_movie_id", "id")
+        # Release dates move; retention counts from the one Radarr has now.
+        trailer_upkeep.refresh_movie_dates(db.query(models.ComingSoonTrailer).all(), {m['id']: m for m in all_movies},
+                                           options['release_date_preference'], log=note)
         db.commit()
-        upcoming = library.parser().parse_upcoming_from_raw(all_movies, days_ahead) if library.connected else []
-        
+
+        # A trailer whose file was deleted loses its record, so it can be
+        # downloaded again (the Sync button always did this).
+        if trailer_upkeep.drop_orphans(db, db.query(models.ComingSoonTrailer).all(), drop_trailer_prerolls, log=note):
+            db.commit()
+
+        upcoming = library.parser().parse_upcoming_from_raw(all_movies, days_ahead, **options) if library.connected else []
+
         # Get existing trailer IDs
         existing_ids = {t.radarr_movie_id for t in db.query(models.ComingSoonTrailer).all()}
-        
-        # Clean up expired/downloaded movies
-        # The file may be in Plex's list right now (a movie that arrived this
-        # evening); retire_trailer_files keeps it until the list moves on.
+
+        # A downloaded movie's trailer stays for Days visible days after the
+        # movie arrives, then goes, as in the manual sync (available_now.py);
+        # this used to remove it at the first auto-sync after the download.
+        # The file may be in Plex's list right now; retire_trailer_files keeps
+        # it until the list moves on.
+        available_days = available_now.days_visible(setting)
         downloaded_movies = {m['id'] for m in all_movies if m.get('hasFile', False)}
         arrived_paths = []
-        for trailer in db.query(models.ComingSoonTrailer).all():
-            if trailer.radarr_movie_id in downloaded_movies:
-                if trailer.local_path:
-                    arrived_paths.append(trailer.local_path)
-                    drop_trailer_prerolls(db, trailer.local_path)
-                db.delete(trailer)
-                _scheduler_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}'")
+        past_window = available_now.movie_trailers_past_window(
+            db.query(models.ComingSoonTrailer).all(),
+            reported_ids={m['id'] for m in all_movies},
+            downloaded_ids=downloaded_movies,
+            available_days=available_days,
+            now=utcnow(),
+            on_arrival=lambda t: _scheduler_log(
+                f"NeX-Up: '{t.title}' is downloaded; its trailer stays {available_days} more day(s) (Available Now!)"),
+            complete=not library.failed,
+        )
+        for trailer in past_window:
+            if trailer.local_path:
+                arrived_paths.append(trailer.local_path)
+                drop_trailer_prerolls(db, trailer.local_path)
+            db.delete(trailer)
+            _scheduler_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}' (past {available_days}-day grace period)")
         db.commit()
         if arrived_paths:
             self.retire_trailer_files(arrived_paths, "arrived", db=db)
-        
+
+        # Leftovers of an interrupted download count toward storage.
+        try:
+            swept = downloader.cleanup_partial_downloads()
+            if swept:
+                note(f"cleared {swept} stale download leftover(s)")
+        except Exception as exc:
+            note(f"leftover cleanup skipped ({exc})")
+
         # Download new trailers
         current_count = db.query(models.ComingSoonTrailer).count()
         downloaded = 0
-        
+
         for movie in upcoming:
             if max_trailers > 0 and current_count >= max_trailers:
                 break
@@ -1706,7 +1741,11 @@ class Scheduler:
                 continue
             if not movie.get('trailer_url'):
                 continue
-            
+            full = trailer_upkeep.storage_full(downloader, setting)
+            if full:
+                note(f"{full}; no more trailers this time")
+                break
+
             import time
             if downloaded > 0:
                 time.sleep(download_delay)
@@ -1780,11 +1819,13 @@ class Scheduler:
             _scheduler_log(f"NeX-Up: could not add trailers to their category: {exc}", level="WARNING")
 
     async def _sync_sonarr_trailers(self, db: Session, setting):
-        """Sync trailers from Sonarr (called by auto-sync)"""
+        """Sync trailers from Sonarr (called by auto-sync). Removes TV trailers
+        by the same rules as the Sync button (main.sync_sonarr_trailers)."""
         import os
         from pathlib import Path
         from backend.radarr_connector import TrailerDownloader
-        from backend import sonarr_servers
+        from backend.sonarr_connector import SonarrConnector
+        from backend import sonarr_servers, trailer_upkeep
 
         storage_path = setting.nexup_storage_path
         quality = getattr(setting, 'nexup_quality', '1080') or '1080'
@@ -1796,27 +1837,29 @@ class Scheduler:
         _scheduler_log(f"NeX-Up Sonarr sync: cookies_file={cookies_file} (exists={cookies_file.exists() if cookies_file else False})")
         
         downloader = TrailerDownloader(storage_path, quality, max_duration=max_duration)
-        
+
         days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-        max_trailers = getattr(setting, 'nexup_max_trailers', 10)
-        if max_trailers is None:
-            max_trailers = 10
-        download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
-        
+        max_trailers = trailer_upkeep.max_trailers(setting)
+        download_delay = trailer_upkeep.download_delay(setting)
+
         # ========================================
         # CLEANUP: Expire trailers for aired shows
         # ========================================
         _scheduler_log("NeX-Up Sonarr auto-sync: Checking for expired TV trailers...")
-        
+
         # Get all series from every Sonarr to check download status (one entry
-        # per show; a season counts once any of them has episodes)
-        library = await sonarr_servers.fetch_library(db, setting)
+        # per show; a season counts once any of them has episodes), and their
+        # calendars for current premiere dates
+        library = await sonarr_servers.fetch_library(db, setting, calendar=SonarrConnector.calendar_window(days_ahead))
         for failed in library.failed:
             _scheduler_log(f"NeX-Up Sonarr auto-sync: Could not read {failed['name']}, its shows are skipped this time: {failed['error']}", level="WARNING")
         all_series = library.series
         sonarr_servers.rehome(db, library)
         from backend.trailer_filters import refresh_trailer_ratings
         refresh_trailer_ratings(db, models.ComingSoonTVTrailer, all_series, "sonarr_series_id", "id")
+        # A premiere that moved is removed by its new date, not the stored one.
+        trailer_upkeep.refresh_show_dates(db.query(models.ComingSoonTVTrailer).all(), library.premieres(True),
+                                          log=lambda message: _scheduler_log(f"NeX-Up Sonarr auto-sync: {message}"))
         db.commit()
         
         # Build a map of series_id -> {season_number: episodeFileCount}
@@ -1838,29 +1881,36 @@ class Scheduler:
         ).all()
         
         today = datetime.datetime.now().date()
-        grace_period_days = 5  # Keep trailer for 5 days after air date
+        now = utcnow()
+        # Kept Days visible days after the premiere, as the Sync button does
+        # (this used a fixed 5 days).
+        available_days = available_now.days_visible(setting)
         expired_count = 0
         expired_paths = []
 
         for trailer in existing_trailers:
             should_expire = False
             expire_reason = ""
-            
-            # Check 1: Has Sonarr downloaded episodes for this season?
+
+            # Check 1: Has Sonarr had episodes of this season for longer than
+            # Days visible? Counted from when a sync first saw them, as in the
+            # manual sync; this used to expire the trailer at once.
             series_info = series_download_status.get(trailer.sonarr_series_id)
             if series_info:
                 season_file_count = series_info['seasons'].get(trailer.season_number, 0)
-                if season_file_count > 0:
+                if available_now.track_arrival(trailer, season_file_count > 0, now, clear=not library.failed):
+                    _scheduler_log(f"NeX-Up Sonarr auto-sync: '{trailer.title}' S{trailer.season_number} is downloaded; its trailer stays {available_days} more day(s)")
+                if season_file_count > 0 and available_now.trailer_window_passed(trailer, available_days, now):
                     should_expire = True
-                    expire_reason = f"Season has {season_file_count} episode(s) downloaded"
+                    expire_reason = f"Season has {season_file_count} episode(s) downloaded, past {available_days}-day grace period"
             
-            # Check 2: Has the release date passed by more than grace period?
+            # Check 2: Has the release date passed by more than Days visible?
             if not should_expire and trailer.release_date:
                 release_date = trailer.release_date.date() if hasattr(trailer.release_date, 'date') else trailer.release_date
                 days_since_release = (today - release_date).days
-                if days_since_release > grace_period_days:
+                if days_since_release > available_days:
                     should_expire = True
-                    expire_reason = f"Aired {days_since_release} days ago"
+                    expire_reason = f"Aired {days_since_release} days ago (grace period: {available_days} days)"
             
             if should_expire:
                 _scheduler_log(f"NeX-Up Sonarr auto-sync: Expiring trailer for '{trailer.title}' S{trailer.season_number} - {expire_reason}")
@@ -1874,8 +1924,8 @@ class Scheduler:
                 db.delete(trailer)
                 expired_count += 1
 
+        db.commit()  # arrivals noted above, and the expired rows
         if expired_count > 0:
-            db.commit()
             _scheduler_log(f"NeX-Up Sonarr auto-sync: Expired {expired_count} TV trailers")
             self.retire_trailer_files(expired_paths, "expired", db=db)
         
@@ -1888,11 +1938,13 @@ class Scheduler:
         
         # Get existing trailer IDs (re-fetch after cleanup)
         existing_ids = {t.sonarr_series_id for t in db.query(models.ComingSoonTVTrailer).all()}
-        
-        # Download new trailers
-        current_count = db.query(models.ComingSoonTVTrailer).count()
+
+        # Download new trailers (Maximum stored trailers counts the TV trailers
+        # already stored, as the Sync button now does)
+        current_count = db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.status == 'downloaded').count()
         downloaded = 0
-        
+
         for show in upcoming:
             if max_trailers > 0 and current_count >= max_trailers:
                 break
@@ -1900,7 +1952,11 @@ class Scheduler:
                 continue
             if not show.get('trailer_url'):
                 continue
-            
+            full = trailer_upkeep.storage_full(downloader, setting)
+            if full:
+                _scheduler_log(f"NeX-Up Sonarr auto-sync: {full}; no more trailers this time")
+                break
+
             import time
             if downloaded > 0:
                 time.sleep(download_delay)

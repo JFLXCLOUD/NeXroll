@@ -25708,12 +25708,17 @@ const DashboardTiles = {
   // ============================================
   // RENDER: NeX-Up Page with Sub-Navigation
   // ============================================
+  // Exclusions are kept per title (TMDB id for movies, TVDB id for shows), so
+  // any upcoming title can be left off the list, trailer or not, and it stays
+  // off after its trailer is removed.
   const handleNexupToggleExclude = async (item, type) => {
-    const endpoint = type === 'movie'
-      ? `/nexup/trailers/${item.trailer_db_id}/exclude`
-      : `/nexup/trailers/tv/${item.trailer_db_id}/exclude`;
+    const body = type === 'movie'
+      ? { kind: 'movie', tmdb_id: item.tmdb_id, title: item.title, excluded: !item.excluded_from_list }
+      : { kind: 'show', tvdb_id: item.tvdb_id, title: item.title, excluded: !item.excluded_from_list };
     try {
-      const res = await fetch(apiUrl(endpoint), { method: 'PUT' });
+      const res = await fetch(apiUrl('/nexup/coming-soon-list/exclusions'), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
       if (!res.ok) throw new Error('The trailer eligibility could not be updated.');
       if (type === 'movie') await handleLoadNexupUpcoming();
       else await loadNexupUpcomingTV();
