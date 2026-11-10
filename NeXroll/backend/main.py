@@ -4278,7 +4278,7 @@ def set_preroll_folder(body: PrerollFolderUpdate):
         # Update globals
         PREROLLS_DIR = new_path
         THUMBNAILS_DIR = thumb_dir
-        print(f"Preroll folder changed: {old_dir} → {PREROLLS_DIR}")
+        print(f"Preroll folder changed: {old_dir} -> {PREROLLS_DIR}")
         log_event('INFO', 'system', f'Preroll storage folder changed: {old_dir} → {PREROLLS_DIR}',
                   source='settings.preroll_folder',
                   details={'previous': old_dir, 'new_folder': PREROLLS_DIR, 'action': 'change'})
@@ -4392,7 +4392,7 @@ def move_preroll_folder(body: PrerollFolderMove):
         PREROLLS_DIR = new_path
         THUMBNAILS_DIR = os.path.join(new_path, "thumbnails")
         os.makedirs(THUMBNAILS_DIR, exist_ok=True)
-        print(f"Preroll folder {operation}: {old_dir} → {PREROLLS_DIR} ({moved_count} files, {path_updates} DB paths updated)")
+        print(f"Preroll folder {operation}: {old_dir} -> {PREROLLS_DIR} ({moved_count} files, {path_updates} DB paths updated)")
         log_event('INFO', 'system',
                   f'Preroll files {operation}: {old_dir} → {PREROLLS_DIR} ({moved_count} files, {path_updates} DB paths updated)',
                   source='settings.preroll_folder_move',
@@ -6393,7 +6393,7 @@ def onboarding_docker_info(db: Session = Depends(get_db)):
     # excludes NeX-Up's storage (see _scanner_exclude_trees), so nothing gets
     # indexed twice, and this is the one place the media server is guaranteed to
     # reach without a further path mapping.
-    suggested = os.path.join(PREROLLS_DIR, "NeXup")
+    suggested = os.path.join(PREROLLS_DIR, "nexup_trailers")
 
     return {
         "is_docker": in_docker,
@@ -8164,6 +8164,10 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
             _file_log(f"/plex/connect: Connection test failed for {url}", level="ERROR")
             log_event('WARNING', 'plex', f'Plex connection test failed for {url}', source='connect_plex')
             raise HTTPException(status_code=422, detail="Failed to connect to Plex server. Please check your URL and token.")
+    except HTTPException:
+        # Already says what went wrong; wrapping it again read
+        # "Connection error: 422: Failed to connect...".
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Connection error: {str(e)}")
 
@@ -27718,7 +27722,13 @@ def connect_emby(request: EmbyConnectRequest, db: Session = Depends(get_db)):
     try:
         # Reachability first, against the public endpoint, so a bad address is
         # reported as a bad address rather than a bad key.
-        resp = requests.get(f"{url.rstrip('/')}/emby/System/Info/Public", timeout=10)
+        try:
+            resp = requests.get(f"{url.rstrip('/')}/emby/System/Info/Public", timeout=10)
+        except requests.exceptions.RequestException as e:
+            # The raw error (connection pool, retries, WinError) means nothing
+            # to someone typing an address; it goes to the log instead.
+            log_event('WARNING', 'emby', f'Emby connection failed: {e}', source='connect_emby')
+            raise HTTPException(status_code=422, detail="Failed to connect to Emby server. Please check your URL.")
         if resp.status_code != 200:
             raise HTTPException(status_code=422, detail="Failed to connect to Emby server. Please check your URL.")
         info = resp.json()

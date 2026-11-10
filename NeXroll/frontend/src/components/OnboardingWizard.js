@@ -23,6 +23,8 @@ import { suggestedTimeZone } from '../utils/timezones';
 
 // The Paths step only appears when Plex needs it (see showPaths), so the run's
 // step list is built from this rather than being fixed.
+const SERVER_LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+
 const BASE_STEPS = [
   { key: 'welcome', label: 'Welcome', icon: Rocket },
   { key: 'server', label: 'Media Server', icon: Server },
@@ -59,6 +61,15 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
   const [sonarrKey, setSonarrKey] = useState('');
   const [nexupBusy, setNexupBusy] = useState(false);
   const [nexupResult, setNexupResult] = useState(null);
+  // What is connected, from this run or an earlier one ({radarr, sonarr}).
+  const [arrConnected, setArrConnected] = useState({ radarr: false, sonarr: false });
+  const [trailerFolderSaved, setTrailerFolderSaved] = useState(false);
+  // The preroll folder in use ({current_folder, default_folder, is_custom}).
+  const [folderInfo, setFolderInfo] = useState(null);
+  // Steps the user has been on, and a reminder shown once before leaving a
+  // step with something typed but not saved.
+  const [visited, setVisited] = useState(() => new Set(['welcome']));
+  const [leaveNote, setLeaveNote] = useState(null);
   // Trailer storage. Kept with the NeX-Up step because the folder only matters
   // once Radarr/Sonarr are downloading into it.
   const [nexupStorage, setNexupStorage] = useState('');
@@ -85,6 +96,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
   const [pathRows, setPathRows] = useState([{ local: '', plex: '' }]);
   const [pathBusy, setPathBusy] = useState(false);
   const [pathResult, setPathResult] = useState(null);
+  const [pathDirty, setPathDirty] = useState(false);
   const [pathHelpOpen, setPathHelpOpen] = useState(false);
   const [testPath, setTestPath] = useState('');
   const [testOut, setTestOut] = useState(null);
@@ -123,8 +135,40 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       try {
         const res = await fetch(apiUrl('/plex/status'), { credentials: 'include' });
         const data = res.ok ? await res.json() : null;
-        if (!cancelled && data && data.connected) setPlexReady(true);
+        if (!cancelled && data && data.connected) {
+          setPlexReady(true);
+          setConnectedServers((prev) => (prev.includes('plex') ? prev : [...prev, 'plex']));
+        }
       } catch { /* treated as not connected */ }
+    })();
+    return () => { cancelled = true; };
+  }, [apiUrl]);
+
+  // What an earlier run already set up, so reopening the wizard shows it
+  // instead of empty forms that look like nothing is connected.
+  useEffect(() => {
+    let cancelled = false;
+    const read = async (path) => {
+      try {
+        const res = await fetch(apiUrl(path), { credentials: 'include' });
+        return res.ok ? await res.json() : null;
+      } catch { return null; }
+    };
+    ['jellyfin', 'emby'].forEach(async (kind) => {
+      const data = await read(`/${kind}/status`);
+      if (!cancelled && data && data.connected) {
+        setConnectedServers((prev) => (prev.includes(kind) ? prev : [...prev, kind]));
+      }
+    });
+    (async () => {
+      const data = await read('/nexup/settings');
+      if (cancelled || !data) return;
+      setArrConnected({ radarr: !!data.radarr_connected, sonarr: !!data.sonarr_connected });
+      if (data.storage_path) setTrailerFolderSaved(true);
+    })();
+    (async () => {
+      const data = await read('/settings/preroll-folder');
+      if (!cancelled && data && data.current_folder) setFolderInfo(data);
     })();
     return () => { cancelled = true; };
   }, [apiUrl]);
@@ -174,10 +218,35 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     [showPaths]
   );
   const step = steps[Math.min(stepIdx, steps.length - 1)];
-  const next = () => setStepIdx((i) => Math.min(i + 1, steps.length - 1));
-  const back = () => setStepIdx((i) => Math.max(i - 1, 0));
+  const goTo = (i) => {
+    const target = Math.max(0, Math.min(i, steps.length - 1));
+    setLeaveNote(null);
+    setVisited((prev) => new Set(prev).add(steps[target].key));
+    setStepIdx(target);
+  };
+  const next = () => goTo(stepIdx + 1);
+  const back = () => goTo(stepIdx - 1);
 
   const safeJson = async (res) => { try { return await res.json(); } catch { return null; } };
+
+  // Radarr and Sonarr report failures in their own words; say them plainly.
+  const arrReason = (raw) => {
+    const text = String(raw || '').trim();
+    if (/api key/i.test(text)) return 'the API key was not accepted';
+    if (!text || /connection attempts failed|connect|refused|timed? ?out|unreachable|name or service/i.test(text)) {
+      return 'nothing answered at that address';
+    }
+    return text.replace(/[.\s]+$/, '');
+  };
+  // The same for a media server: never show a raw network error.
+  const serverReason = (raw, label) => {
+    const text = String(raw || '').trim();
+    if (!text) return `Could not connect to ${label}. Check the address and the ${label === 'Plex' ? 'token' : 'API key'}.`;
+    if (/HTTPConnectionPool|Max retries|NewConnectionError|WinError|Errno|timed out/i.test(text)) {
+      return `Nothing answered at that address. Check the URL and that ${label} is running.`;
+    }
+    return text.replace(/^Connection error:\s*(\d{3}:\s*)?/i, '');
+  };
 
   // ---- Actions (reuse existing endpoints) ----
   const connectServer = async () => {
@@ -189,34 +258,36 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         res = await fetch(apiUrl('/jellyfin/connect'), {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: serverUrl, api_key: serverApiKey }),
+          body: JSON.stringify({ url: serverUrl.trim(), api_key: serverApiKey.trim() }),
         });
       } else if (serverType === 'emby') {
         res = await fetch(apiUrl('/emby/connect'), {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: serverUrl, api_key: serverApiKey }),
+          body: JSON.stringify({ url: serverUrl.trim(), api_key: serverApiKey.trim() }),
         });
       } else {
         // Plex token-based connect (OAuth is handled on the full Connect page)
         res = await fetch(apiUrl('/plex/connect'), {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: serverUrl, token: serverApiKey }),
+          body: JSON.stringify({ url: serverUrl.trim(), token: serverApiKey.trim() }),
         });
       }
       const data = await safeJson(res);
+      const label = SERVER_LABELS[serverType];
       if (res.ok) {
         setConnectedServers((prev) => (prev.includes(serverType) ? prev : [...prev, serverType]));
         if (serverType === 'plex') setPlexReady(true);
-        setServerResult({ ok: true, msg: 'Connected successfully.' });
+        setServerResult({ ok: true, msg: `${label} connected.` });
         setServerUrl('');
         setServerApiKey('');
       } else {
-        setServerResult({ ok: false, msg: (data && (data.detail || data.message)) || 'Connection failed. Check the URL and token/key.' });
+        const detail = data && (typeof data.detail === 'string' ? data.detail : data.message);
+        setServerResult({ ok: false, msg: serverReason(detail, label) });
       }
     } catch {
-      setServerResult({ ok: false, msg: 'Could not reach the server. Check the URL.' });
+      setServerResult({ ok: false, msg: 'NeXroll did not answer. Check that it is still running.' });
     } finally {
       setServerBusy(false);
     }
@@ -294,6 +365,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         return;
       }
       setNexupStorageResult({ ok: true, msg: 'Trailer folder saved.' });
+      setTrailerFolderSaved(true);
       // Saving is only half of it: report whether the media server can actually
       // open files there, which is what decides if trailers ever play.
       try {
@@ -307,23 +379,52 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     }
   };
 
+  // Radarr and Sonarr answer 200 with {success: false, message} when the
+  // address or key is wrong, so the status code alone says nothing.
+  const connectArr = async (kind, url, key) => {
+    const label = kind === 'radarr' ? 'Radarr' : 'Sonarr';
+    try {
+      const res = await fetch(
+        apiUrl(`/nexup/${kind}/connect?url=${encodeURIComponent(url.trim())}&api_key=${encodeURIComponent(key.trim())}`),
+        { method: 'POST', credentials: 'include' }
+      );
+      const data = await safeJson(res);
+      if (res.ok && data && data.success !== false) return { kind, label, ok: true };
+      const why = data && (data.message || (typeof data.detail === 'string' ? data.detail : ''));
+      return { kind, label, ok: false, why: arrReason(why) };
+    } catch {
+      return { kind, label, ok: false, why: 'NeXroll did not answer' };
+    }
+  };
+
   const connectNexup = async () => {
+    const jobs = [];
+    const half = [];
+    if (radarrUrl.trim() && radarrKey.trim()) jobs.push(['radarr', radarrUrl, radarrKey]);
+    else if (radarrUrl.trim() || radarrKey.trim()) half.push('Radarr');
+    if (sonarrUrl.trim() && sonarrKey.trim()) jobs.push(['sonarr', sonarrUrl, sonarrKey]);
+    else if (sonarrUrl.trim() || sonarrKey.trim()) half.push('Sonarr');
+    if (!jobs.length) {
+      setNexupResult({ ok: false, msg: `${half.join(' and ') || 'Radarr or Sonarr'} needs both the URL and the API key.` });
+      return;
+    }
     setNexupBusy(true);
     setNexupResult(null);
-    const results = [];
     try {
-      if (radarrUrl && radarrKey) {
-        const r = await fetch(apiUrl(`/nexup/radarr/connect?url=${encodeURIComponent(radarrUrl)}&api_key=${encodeURIComponent(radarrKey)}`), { method: 'POST', credentials: 'include' });
-        results.push(`Radarr: ${r.ok ? 'connected' : 'failed'}`);
+      const results = [];
+      for (const [kind, url, key] of jobs) results.push(await connectArr(kind, url, key));
+      const good = results.filter((r) => r.ok);
+      if (good.length) {
+        setArrConnected((prev) => ({ ...prev, ...Object.fromEntries(good.map((r) => [r.kind, true])) }));
+        if (good.some((r) => r.kind === 'radarr')) { setRadarrUrl(''); setRadarrKey(''); }
+        if (good.some((r) => r.kind === 'sonarr')) { setSonarrUrl(''); setSonarrKey(''); }
       }
-      if (sonarrUrl && sonarrKey) {
-        const s = await fetch(apiUrl(`/nexup/sonarr/connect?url=${encodeURIComponent(sonarrUrl)}&api_key=${encodeURIComponent(sonarrKey)}`), { method: 'POST', credentials: 'include' });
-        results.push(`Sonarr: ${s.ok ? 'connected' : 'failed'}`);
-      }
-      const anyFail = results.some((r) => r.includes('failed'));
-      setNexupResult({ ok: !anyFail && results.length > 0, msg: results.length ? results.join(' · ') : 'Nothing to connect.' });
-    } catch {
-      setNexupResult({ ok: false, msg: 'Connection error.' });
+      const parts = results.map((r) => (r.ok ? `${r.label} connected.` : `${r.label} did not connect: ${r.why}.`));
+      half.forEach((label) => parts.push(`${label} needs both the URL and the API key.`));
+      setNexupResult({ ok: good.length === results.length && !half.length, msg: parts.join(' ') });
+      // NeX-Up downloads nothing until it has a folder, and there is no
+      // default: keep the one shown below unless another is already saved.
+      if (good.length && !trailerFolderSaved && nexupStorage.trim()) await saveNexupStorage();
     } finally {
       setNexupBusy(false);
     }
@@ -336,11 +437,17 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       const res = await fetch(apiUrl('settings/preroll-folder'), {
         method: 'PUT', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: storagePath }),
+        body: JSON.stringify({ folder: storagePath.trim() }),
       });
       const data = await safeJson(res);
-      if (res.ok) setStorageResult({ ok: true, msg: 'Storage folder saved.' });
-      else setStorageResult({ ok: false, msg: (data && (data.detail || data.message)) || 'Could not save folder.' });
+      // A folder NeXroll can't write to is answered 200 with {error}.
+      if (res.ok && data && data.status === 'ok' && data.folder) {
+        setStorageResult({ ok: true, msg: `Prerolls will be stored in ${data.folder}.` });
+        setFolderInfo((prev) => ({ ...(prev || {}), current_folder: data.folder, is_custom: true }));
+        setStoragePath('');
+      } else {
+        setStorageResult({ ok: false, msg: "NeXroll can't create or write to that folder. Check the path, and that the drive or share exists." });
+      }
     } catch {
       setStorageResult({ ok: false, msg: 'Connection error.' });
     } finally {
@@ -440,16 +547,56 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     } catch { /* Settings, General has the same choice */ }
   };
   const startSetup = () => { saveTimezoneChoice(); next(); };
+  const jumpTo = (i) => { if (stepIdx === 0 && i !== 0) saveTimezoneChoice(); goTo(i); };
+
+  const naming = (ids) => ids.map((id) => SERVER_LABELS[id] || id).join(' and ');
+  const serverDone = connectedServers.length > 0 || !!(install && install.has_server);
+  const pluginServers = connectedServers.filter((id) => id !== 'plex');
+  const arrNames = [arrConnected.radarr && 'Radarr', arrConnected.sonarr && 'Sonarr'].filter(Boolean);
+  const mappingsSaved = !!(pathResult && pathResult.ok) || !!(installInfo && installInfo.mappings && installInfo.mappings.length);
+  const accountDone = accountExists || !!(acctResult && acctResult.ok);
+  const currentFolder = (folderInfo && folderInfo.current_folder) || (installInfo && installInfo.prerolls_dir) || '';
+
+  // Which steps are really done, as opposed to walked past.
+  const stepDone = {
+    welcome: stepIdx > 0,
+    server: serverDone,
+    paths: mappingsSaved,
+    nexup: arrNames.length > 0,
+    storage: visited.has('storage') && step.key !== 'storage',
+    account: accountDone,
+    done: false,
+  };
+
+  // Something typed on this step that no button has saved yet.
+  const unsaved = {
+    server: (serverUrl.trim() || serverApiKey.trim()) ? 'You entered server details but have not connected. Press Test & Connect to use them.' : null,
+    paths: pathDirty ? 'You changed the path mappings but have not saved them. Press Save mappings to keep them.' : null,
+    nexup: (radarrUrl.trim() || radarrKey.trim() || sonarrUrl.trim() || sonarrKey.trim())
+      ? 'You entered Radarr or Sonarr details but have not connected. Press Connect to use them.' : null,
+    storage: storagePath.trim() ? 'You entered a folder but have not saved it. Press Save folder to use it.' : null,
+    account: (!accountDone && (acctUser.trim() || acctPass)) ? 'You filled in an account but have not created it. Press Create account to make it.' : null,
+  }[step.key] || null;
+  const advance = () => {
+    if (unsaved && leaveNote !== step.key) { setLeaveNote(step.key); return; }
+    next();
+  };
+  const onEnter = (action) => (e) => { if (e.key === 'Enter') { e.preventDefault(); action(); } };
 
   const summaryItems = [
-    { label: 'Media server', done: !!(serverResult && serverResult.ok) || plexOAuth.status === 'connected' || !!(install && install.has_server),
-      detail: (serverResult && serverResult.ok) || plexOAuth.status === 'connected' || (install && install.has_server)
-        ? 'Connected' : 'Not connected yet' },
-    ...(showPaths ? [{ label: 'Path mappings', done: !!(pathResult && pathResult.ok) || !!(installInfo && installInfo.mappings && installInfo.mappings.length),
-      detail: (pathResult && pathResult.ok) || (installInfo && installInfo.mappings && installInfo.mappings.length) ? 'Saved' : 'Not set, so Plex may not find your prerolls' }] : []),
-    { label: 'NeX-Up', done: !!(nexupResult && nexupResult.ok), detail: (nexupResult && nexupResult.ok) ? 'Connected' : 'Optional, skipped' },
-    { label: 'Storage', done: !!(storageResult && storageResult.ok), detail: (storageResult && storageResult.ok) ? 'Custom folder saved' : 'Using the default folder' },
-    { label: 'Account', done: accountExists || !!(acctResult && acctResult.ok), detail: accountExists || (acctResult && acctResult.ok) ? 'Ready' : 'No login required' },
+    { label: 'Media server', done: serverDone,
+      detail: connectedServers.length ? `${naming(connectedServers)} connected` : (serverDone ? 'Connected' : 'Not connected yet') },
+    ...(showPaths ? [{ label: 'Path mappings', done: mappingsSaved,
+      detail: mappingsSaved ? 'Saved' : 'Not set, so Plex may not find your prerolls' }] : []),
+    { label: 'NeX-Up', done: arrNames.length > 0 && trailerFolderSaved,
+      detail: arrNames.length
+        ? (trailerFolderSaved ? `${arrNames.join(' and ')} connected` : `${arrNames.join(' and ')} connected, but no trailer folder is saved`)
+        : 'Optional, skipped' },
+    { label: 'Storage', done: true,
+      detail: currentFolder
+        ? ((folderInfo && folderInfo.is_custom) ? currentFolder : `Default folder: ${currentFolder}`)
+        : 'Using the default folder' },
+    { label: 'Account', done: accountDone, detail: accountDone ? 'Ready' : 'No login required' },
     ...(tzChoice ? [{ label: 'Timezone', done: true, detail: `Schedules run on ${tzChoice} time` }] : []),
   ];
 
@@ -467,8 +614,10 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     return rows.map((r, ri) => (ri === i ? { ...r, local: mount } : r));
   });
 
-  const updatePathRow = (idx, key, value) =>
+  const updatePathRow = (idx, key, value) => {
+    setPathDirty(true);
     setPathRows((rows) => rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
+  };
   const addPathRow = () => setPathRows((rows) => [...rows, { local: '', plex: '' }]);
   const removePathRow = (idx) =>
     setPathRows((rows) => (rows.length > 1 ? rows.filter((_, i) => i !== idx) : [{ local: '', plex: '' }]));
@@ -490,7 +639,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         body: JSON.stringify({ mappings }),
       });
       const data = await safeJson(res);
-      if (res.ok) setPathResult({ ok: true, msg: `Saved ${mappings.length} mapping${mappings.length === 1 ? '' : 's'}.` });
+      if (res.ok) { setPathDirty(false); setPathResult({ ok: true, msg: `Saved ${mappings.length} mapping${mappings.length === 1 ? '' : 's'}.` }); }
       else setPathResult({ ok: false, msg: (data && (data.detail || data.message)) || 'Could not save mappings.' });
     } catch {
       setPathResult({ ok: false, msg: 'Connection error.' });
@@ -520,6 +669,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       });
       if (!res.ok) return false;
       setPathRows(mappings);
+      setPathDirty(false);
       setPathResult({ ok: true, msg: incoming.length === 1 ? 'Mapping saved.' : `${incoming.length} mappings saved.` });
       return true;
     } catch {
@@ -558,29 +708,36 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
   };
 
   // ---- UI helpers ----
+  // Colors come from the theme, so a wizard reopened under any theme matches it.
+  const ACCENT = 'var(--button-bg)';
+  const GOOD = 'var(--success-color)';
+  const BAD = 'var(--error-color)';
+  const WARN = 'var(--warning-color)';
+  const LINE = 'var(--border-color)';
+  const TINT = (color, pct) => `color-mix(in srgb, ${color} ${pct}%, transparent)`;
   const card = {
     width: '100%', maxWidth: '640px',
-    backgroundColor: darkMode ? '#25253a' : '#fff',
+    backgroundColor: 'var(--card-bg)',
     borderRadius: '16px', padding: '2rem',
     boxShadow: '0 10px 40px rgba(0,0,0,0.25)',
-    border: `1px solid ${darkMode ? '#3a3a5a' : '#e0e0e0'}`,
+    border: `1px solid ${LINE}`,
   };
-  const txt = darkMode ? '#e0e0e0' : '#222';
-  const sub = darkMode ? '#aaa' : '#666';
+  const txt = 'var(--text-color)';
+  const sub = 'var(--text-secondary)';
   const inputStyle = {
     width: '100%', padding: '0.6rem 0.75rem', borderRadius: '8px',
-    border: `1px solid ${darkMode ? '#3a3a5a' : '#ccc'}`,
-    background: darkMode ? '#1e1e2e' : '#fff', color: txt, fontSize: '0.95rem',
+    border: `1px solid ${LINE}`,
+    background: 'var(--input-bg)', color: txt, fontSize: '0.95rem',
   };
   const labelStyle = { display: 'block', marginBottom: '0.35rem', fontWeight: 600, color: txt, fontSize: '0.85rem' };
   const primaryBtn = {
     padding: '0.6rem 1.25rem', border: 'none', borderRadius: '8px',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '0.95rem',
+    background: ACCENT,
+    color: 'var(--button-text)', fontWeight: 600, cursor: 'pointer', fontSize: '0.95rem',
     display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
   };
   const ghostBtn = {
-    padding: '0.6rem 1.1rem', border: `1px solid ${darkMode ? '#3a3a5a' : '#ccc'}`,
+    padding: '0.6rem 1.1rem', border: `1px solid ${LINE}`,
     borderRadius: '8px', background: 'transparent', color: txt, cursor: 'pointer', fontSize: '0.9rem',
     display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
   };
@@ -590,13 +747,13 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     return (
       <div style={{
         marginTop: '0.75rem', padding: '0.6rem 0.8rem', borderRadius: '8px', fontSize: '0.85rem',
-        display: 'flex', alignItems: 'center', gap: '0.5rem',
-        background: result.ok ? 'rgba(40,167,69,0.12)' : 'rgba(220,53,69,0.12)',
-        color: result.ok ? '#22c55e' : '#ef4444',
-        border: `1px solid ${result.ok ? 'rgba(40,167,69,0.35)' : 'rgba(220,53,69,0.35)'}`,
+        display: 'flex', flexWrap: 'nowrap', alignItems: 'flex-start', gap: '0.5rem', lineHeight: 1.45,
+        background: result.ok ? 'var(--success-soft)' : 'var(--error-soft)',
+        color: result.ok ? GOOD : BAD,
+        border: `1px solid ${TINT(result.ok ? GOOD : BAD, 35)}`,
       }}>
-        {result.ok ? <Check size={16} /> : <AlertCircle size={16} />}
-        <span>{result.msg}</span>
+        {result.ok ? <Check size={16} style={{ flexShrink: 0 }} /> : <AlertCircle size={16} style={{ flexShrink: 0 }} />}
+        <span role={result.ok ? 'status' : 'alert'} style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{result.msg}</span>
       </div>
     );
   };
@@ -605,28 +762,33 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
     <div style={{
       minHeight: '100vh', display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
-      backgroundColor: darkMode ? '#1a1a2e' : '#f5f5f5',
+      backgroundColor: 'var(--bg-color)',
     }}>
-      {/* Step indicator */}
-      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+      {/* Step indicator: a tick means the step is set up, not just passed. */}
+      <nav aria-label="Setup steps" style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
         {steps.map((s, i) => {
           const Icon = s.icon;
           const active = i === stepIdx;
-          const done = i < stepIdx;
+          const done = !active && !!stepDone[s.key];
+          const skipped = !active && !done && visited.has(s.key);
           return (
-            <div key={s.key} style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.7rem',
-              borderRadius: '20px', fontSize: '0.78rem', fontWeight: active ? 700 : 500,
-              background: active ? 'rgba(102,126,234,0.18)' : (done ? 'rgba(40,167,69,0.12)' : 'transparent'),
-              color: active ? '#818cf8' : (done ? '#22c55e' : sub),
-              border: `1px solid ${active ? 'rgba(102,126,234,0.4)' : 'transparent'}`,
-            }}>
+            <button key={s.key} type="button" onClick={() => jumpTo(i)}
+              aria-current={active ? 'step' : undefined}
+              title={done ? `${s.label}: done` : (skipped ? `${s.label}: skipped for now` : s.label)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.7rem',
+                borderRadius: '20px', fontSize: '0.78rem', fontWeight: active ? 700 : 500, cursor: 'pointer',
+                background: active ? TINT(ACCENT, 18) : (done ? 'var(--success-soft)' : 'transparent'),
+                color: active ? ACCENT : (done ? GOOD : sub),
+                border: `1px solid ${active ? TINT(ACCENT, 40) : 'transparent'}`,
+                opacity: skipped ? 0.75 : 1,
+              }}>
               {done ? <Check size={14} /> : <Icon size={14} />}
               <span>{s.label}</span>
-            </div>
+            </button>
           );
         })}
-      </div>
+      </nav>
 
       <div style={card}>
         {/* Logo */}
@@ -637,7 +799,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         {/* ---- Welcome ---- */}
         {step.key === 'welcome' && (
           <div style={{ textAlign: 'center' }}>
-            <Rocket size={40} style={{ color: '#818cf8', marginBottom: '0.75rem' }} />
+            <Rocket size={40} style={{ color: ACCENT, marginBottom: '0.75rem' }} />
             <h2 style={{ color: txt, margin: '0 0 0.5rem' }}>
               {isRerun ? 'Setup wizard' : 'Welcome to NeXroll'}
             </h2>
@@ -679,11 +841,12 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
               {['plex', 'jellyfin', 'emby'].map((t) => (
                 <button key={t} type="button" onClick={() => { setServerType(t); setServerResult(null); }}
-                  style={{ ...ghostBtn, flex: 1, justifyContent: 'center', textTransform: 'capitalize',
-                    borderColor: serverType === t ? '#667eea' : (darkMode ? '#3a3a5a' : '#ccc'),
-                    background: serverType === t ? 'rgba(102,126,234,0.12)' : 'transparent',
-                    color: serverType === t ? '#818cf8' : txt, fontWeight: serverType === t ? 700 : 500 }}>
-                  {t}
+                  aria-pressed={serverType === t}
+                  style={{ ...ghostBtn, flex: 1, justifyContent: 'center',
+                    borderColor: serverType === t ? ACCENT : LINE,
+                    background: serverType === t ? TINT(ACCENT, 12) : 'transparent',
+                    color: serverType === t ? ACCENT : txt, fontWeight: serverType === t ? 700 : 500 }}>
+                  {SERVER_LABELS[t]}
                 </button>
               ))}
             </div>
@@ -695,8 +858,8 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             {(serverType === 'jellyfin' || serverType === 'emby') && (
               <div style={{
                 marginBottom: '1rem', padding: '0.85rem 1rem', borderRadius: '10px',
-                background: darkMode ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)',
-                border: `1px solid ${darkMode ? 'rgba(245,158,11,0.30)' : 'rgba(245,158,11,0.25)'}`,
+                background: 'var(--warning-soft)',
+                border: `1px solid ${TINT(WARN, 30)}`,
               }}>
                 <div style={{ fontWeight: 700, color: txt, fontSize: '0.88rem', marginBottom: '0.3rem' }}>
                   {serverType === 'emby' ? 'Emby' : 'Jellyfin'} also needs the NeXroll Intros plugin
@@ -714,8 +877,8 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             {serverType === 'plex' ? (
               <div style={{
                 marginBottom: '1rem', padding: '0.9rem 1rem', borderRadius: '10px',
-                background: darkMode ? 'rgba(246,104,94,0.10)' : 'rgba(246,104,94,0.08)',
-                border: `1px solid ${darkMode ? 'rgba(246,104,94,0.30)' : 'rgba(246,104,94,0.25)'}`,
+                background: TINT(ACCENT, 10),
+                border: `1px solid ${TINT(ACCENT, 30)}`,
               }}>
                 <div style={{ fontWeight: 700, color: txt, fontSize: '0.88rem', marginBottom: '0.3rem' }}>
                   Sign in with Plex (recommended)
@@ -726,7 +889,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                 </p>
 
                 {plexOAuth.status === 'connected' ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', color: '#22c55e', fontSize: '0.86rem', fontWeight: 600 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', color: GOOD, fontSize: '0.86rem', fontWeight: 600 }}>
                     <Check size={16} /> Signed in with Plex
                   </div>
                 ) : (
@@ -753,13 +916,13 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                       <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: sub, lineHeight: 1.55 }}>
                         Waiting for you to approve NeXroll in the Plex tab. If no tab opened,
                         your browser blocked the popup:{' '}
-                        <a href={plexOAuth.url} target="_blank" rel="noopener noreferrer" style={{ color: '#818cf8' }}>
+                        <a href={plexOAuth.url} target="_blank" rel="noopener noreferrer" style={{ color: ACCENT }}>
                           open the Plex sign-in page
                         </a>.
                       </div>
                     )}
                     {plexOAuth.status === 'expired' && (
-                      <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: '#f59e0b' }}>
+                      <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: WARN }}>
                         That sign-in request timed out. Start it again when you are ready.
                       </div>
                     )}
@@ -772,16 +935,20 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               <summary style={{ cursor: 'pointer', color: sub, fontSize: '0.84rem', marginBottom: '0.6rem' }}>
                 {serverType === 'plex' ? 'Or enter a server URL and token manually' : 'Server details'}
               </summary>
-              <label style={labelStyle}>Server URL</label>
+              <label htmlFor="nx-wiz-server-url" style={labelStyle}>Server URL</label>
               <input
+                id="nx-wiz-server-url"
+                onKeyDown={onEnter(() => { if (!serverBusy && serverUrl.trim() && serverApiKey.trim()) connectServer(); })}
                 style={inputStyle}
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
                 placeholder={serverType === 'plex' ? 'http://192.168.1.10:32400' : 'http://192.168.1.10:8096'}
               />
               <div style={{ height: '0.75rem' }} />
-              <label style={labelStyle}>{serverType === 'plex' ? 'Plex Token' : 'API Key'}</label>
+              <label htmlFor="nx-wiz-server-key" style={labelStyle}>{serverType === 'plex' ? 'Plex Token' : 'API Key'}</label>
               <input
+                id="nx-wiz-server-key"
+                onKeyDown={onEnter(() => { if (!serverBusy && serverUrl.trim() && serverApiKey.trim()) connectServer(); })}
                 type="password"
                 autoComplete="off"
                 style={inputStyle}
@@ -790,8 +957,8 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                 placeholder={serverType === 'plex' ? 'X-Plex-Token' : 'API key'}
               />
               <div style={{ marginTop: '1rem' }}>
-                <button type="button" style={primaryBtn} disabled={serverBusy || !serverUrl || !serverApiKey} onClick={connectServer}>
-                  {serverBusy ? <Loader2 size={16} className="spin" /> : <Server size={16} />} Test &amp; Connect
+                <button type="button" style={primaryBtn} disabled={serverBusy || !serverUrl.trim() || !serverApiKey.trim()} onClick={connectServer}>
+                  {serverBusy ? <Loader2 size={16} className="spin" /> : <Server size={16} />} {serverBusy ? 'Connecting...' : 'Test & Connect'}
                 </button>
               </div>
             </details>
@@ -801,14 +968,13 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                 is the moment to say a second is possible - not the Connect page
                 the user may not visit for weeks. */}
             {connectedServers.length > 0 && (() => {
-              const LABELS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+              const LABELS = SERVER_LABELS;
               const remaining = ['plex', 'jellyfin', 'emby'].filter((t) => !connectedServers.includes(t));
-              const naming = (ids) => ids.map((id) => LABELS[id]).join(' and ');
               return (
                 <div style={{
                   marginTop: '1rem', padding: '0.85rem 1rem', borderRadius: '10px',
-                  background: darkMode ? 'rgba(102,126,234,0.10)' : 'rgba(102,126,234,0.08)',
-                  border: `1px solid ${darkMode ? 'rgba(102,126,234,0.30)' : 'rgba(102,126,234,0.22)'}`,
+                  background: TINT(ACCENT, 10),
+                  border: `1px solid ${TINT(ACCENT, 30)}`,
                 }}>
                   <div style={{ fontWeight: 700, color: txt, fontSize: '0.88rem', marginBottom: '0.3rem' }}>
                     {naming(connectedServers)} connected
@@ -844,7 +1010,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         {step.key === 'paths' && (
           <div>
             <h2 style={{ color: txt, marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Box size={20} style={{ color: '#818cf8' }} /> {dockerInfo ? 'One thing Docker needs' : 'Make sure Plex can find your prerolls'}
+              <Box size={20} style={{ color: ACCENT }} /> {dockerInfo ? 'One thing Docker needs' : 'Make sure Plex can find your prerolls'}
             </h2>
             <p style={{ color: sub, marginTop: 0, lineHeight: 1.6 }}>
               {dockerInfo
@@ -871,8 +1037,8 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             {/* Worked example, using this install's real preroll folder. */}
             <div style={{
               marginTop: '1rem', padding: '0.85rem 1rem', borderRadius: '10px',
-              background: darkMode ? 'rgba(102,126,234,0.10)' : 'rgba(102,126,234,0.08)',
-              border: `1px solid ${darkMode ? 'rgba(102,126,234,0.30)' : 'rgba(102,126,234,0.25)'}`,
+              background: TINT(ACCENT, 10),
+              border: `1px solid ${TINT(ACCENT, 30)}`,
             }}>
               <div style={{ fontWeight: 700, color: txt, fontSize: '0.85rem', marginBottom: '0.6rem' }}>
                 The same file, two names
@@ -888,9 +1054,9 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                 </div>
               </div>
               <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: sub }}>
-                So the mapping is <code style={{ color: '#818cf8', overflowWrap: 'anywhere' }}>{exampleLocal}</code>
+                So the mapping is <code style={{ color: ACCENT, overflowWrap: 'anywhere' }}>{exampleLocal}</code>
                 {' '}<ArrowRight size={11} style={{ verticalAlign: 'middle' }} />{' '}
-                <code style={{ color: '#818cf8' }}>/mnt/media/prerolls</code>. Only the start of
+                <code style={{ color: ACCENT }}>/mnt/media/prerolls</code>. Only the start of
                 the path changes; NeXroll keeps the rest.
               </div>
             </div>
@@ -910,7 +1076,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                       onClick={() => applyMountToRow(m)}
                       style={{
                         padding: '0.25rem 0.55rem', borderRadius: '999px', cursor: 'pointer',
-                        border: `1px solid ${darkMode ? '#3a3a5a' : '#ccc'}`,
+                        border: `1px solid ${LINE}`,
                         background: 'transparent', color: txt, fontSize: '0.74rem',
                         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                       }}
@@ -938,7 +1104,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                       onChange={(e) => updatePathRow(idx, 'local', e.target.value)}
                     />
                   </div>
-                  <ArrowRight size={16} style={{ color: '#818cf8', flexShrink: 0, marginBottom: '0.65rem' }} />
+                  <ArrowRight size={16} style={{ color: ACCENT, flexShrink: 0, marginBottom: '0.65rem' }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {idx === 0 && <label style={labelStyle}>Path Plex uses</label>}
                     <div style={{ display: 'flex', gap: '0.35rem' }}>
@@ -976,7 +1142,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             <button
               type="button"
               onClick={() => setPathHelpOpen((o) => !o)}
-              style={{ ...ghostBtn, marginTop: '0.9rem', border: 'none', padding: '0.3rem 0', color: '#818cf8' }}
+              style={{ ...ghostBtn, marginTop: '0.9rem', border: 'none', padding: '0.3rem 0', color: ACCENT }}
             >
               <HelpCircle size={15} /> Where do I find the path Plex uses?
             </button>
@@ -1012,7 +1178,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
 
             {/* Prove it: translate a real path with the rules just saved. */}
             {pathResult && pathResult.ok && (
-              <div style={{ marginTop: '1rem', paddingTop: '0.9rem', borderTop: `1px solid ${darkMode ? '#3a3a5a' : '#e0e0e0'}` }}>
+              <div style={{ marginTop: '1rem', paddingTop: '0.9rem', borderTop: `1px solid ${LINE}` }}>
                 <label style={labelStyle}>Check it (optional)</label>
                 <div style={{ display: 'flex', gap: '0.45rem' }}>
                   <input
@@ -1028,16 +1194,16 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                 {testOut && !testOut.pending && (
                   <div style={{ marginTop: '0.55rem', fontSize: '0.8rem', color: sub }}>
                     {testOut.error || !testOut.output ? (
-                      <span style={{ color: '#ef4444' }}>Could not translate that path. Try again.</span>
+                      <span style={{ color: BAD }}>Could not translate that path. Try again.</span>
                     ) : (
                       <>
                         {testOut.matched === false && (
-                          <div style={{ color: '#f59e0b', marginBottom: '0.3rem' }}>
+                          <div style={{ color: WARN, marginBottom: '0.3rem' }}>
                             No mapping matched that path, so Plex would get it unchanged. Check that the left-hand column above starts the same way.
                           </div>
                         )}
                         Plex will be told:{' '}
-                        <code style={{ color: testOut.matched === false ? txt : '#22c55e', overflowWrap: 'anywhere' }}>{testOut.output}</code>
+                        <code style={{ color: testOut.matched === false ? txt : GOOD, overflowWrap: 'anywhere' }}>{testOut.output}</code>
                         {testOut.plex && (
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.35rem', marginTop: '0.35rem' }}>
                             <StatusIcon status={testOut.plex.status} size={14} />
@@ -1076,20 +1242,37 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               Connect Radarr and/or Sonarr to auto-download trailers for upcoming content.
               Skip if you don't use them.
             </p>
-            <label style={labelStyle}>Radarr URL</label>
-            <input style={inputStyle} value={radarrUrl} onChange={(e) => setRadarrUrl(e.target.value)} placeholder="http://192.168.1.10:7878" />
+            {arrNames.length > 0 && (
+              <div style={{
+                marginBottom: '0.9rem', padding: '0.6rem 0.8rem', borderRadius: '9px', fontSize: '0.84rem',
+                display: 'flex', flexWrap: 'nowrap', alignItems: 'flex-start', gap: '0.5rem', lineHeight: 1.45,
+                background: 'var(--success-soft)', color: GOOD, border: `1px solid ${TINT(GOOD, 35)}`,
+              }}>
+                <Check size={16} style={{ flexShrink: 0 }} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  {arrNames.join(' and ')} {arrNames.length > 1 ? 'are' : 'is'} connected. Fill in a field below only to add the other one or to replace a connection.
+                </span>
+              </div>
+            )}
+            <label htmlFor="nx-wiz-radarr-url" style={labelStyle}>Radarr URL{arrConnected.radarr ? ' (connected)' : ''}</label>
+            <input id="nx-wiz-radarr-url" onKeyDown={onEnter(connectNexup)} style={inputStyle} value={radarrUrl} onChange={(e) => setRadarrUrl(e.target.value)} placeholder="http://192.168.1.10:7878" />
             <div style={{ height: '0.5rem' }} />
-            <label style={labelStyle}>Radarr API Key</label>
-            <input type="password" autoComplete="off" style={inputStyle} value={radarrKey} onChange={(e) => setRadarrKey(e.target.value)} />
+            <label htmlFor="nx-wiz-radarr-key" style={labelStyle}>Radarr API Key</label>
+            <input id="nx-wiz-radarr-key" onKeyDown={onEnter(connectNexup)} type="password" autoComplete="off" style={inputStyle} value={radarrKey} onChange={(e) => setRadarrKey(e.target.value)} />
             <div style={{ height: '1rem' }} />
-            <label style={labelStyle}>Sonarr URL</label>
-            <input style={inputStyle} value={sonarrUrl} onChange={(e) => setSonarrUrl(e.target.value)} placeholder="http://192.168.1.10:8989" />
+            <label htmlFor="nx-wiz-sonarr-url" style={labelStyle}>Sonarr URL{arrConnected.sonarr ? ' (connected)' : ''}</label>
+            <input id="nx-wiz-sonarr-url" onKeyDown={onEnter(connectNexup)} style={inputStyle} value={sonarrUrl} onChange={(e) => setSonarrUrl(e.target.value)} placeholder="http://192.168.1.10:8989" />
             <div style={{ height: '0.5rem' }} />
-            <label style={labelStyle}>Sonarr API Key</label>
-            <input type="password" autoComplete="off" style={inputStyle} value={sonarrKey} onChange={(e) => setSonarrKey(e.target.value)} />
+            <label htmlFor="nx-wiz-sonarr-key" style={labelStyle}>Sonarr API Key</label>
+            <input id="nx-wiz-sonarr-key" onKeyDown={onEnter(connectNexup)} type="password" autoComplete="off" style={inputStyle} value={sonarrKey} onChange={(e) => setSonarrKey(e.target.value)} />
+            <p style={{ color: sub, fontSize: '0.78rem', margin: '0.4rem 0 0', lineHeight: 1.5 }}>
+              The API key is in Radarr and Sonarr under Settings, General.
+            </p>
             <div style={{ marginTop: '1rem' }}>
-              <button type="button" style={primaryBtn} disabled={nexupBusy || (!radarrUrl && !sonarrUrl)} onClick={connectNexup}>
-                {nexupBusy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />} Connect
+              <button type="button" style={primaryBtn}
+                disabled={nexupBusy || !(radarrUrl.trim() || radarrKey.trim() || sonarrUrl.trim() || sonarrKey.trim())}
+                onClick={connectNexup}>
+                {nexupBusy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />} {nexupBusy ? 'Connecting...' : 'Connect'}
               </button>
             </div>
             <ResultBadge result={nexupResult} />
@@ -1097,7 +1280,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
             {/* Trailer storage. Asked here rather than left to the NeX-Up page,
                 because a trailer NeX-Up can download but the media server cannot
                 open is the most common way this feature appears broken. */}
-            <div style={{ marginTop: '1.4rem', paddingTop: '1.1rem', borderTop: `1px solid ${darkMode ? '#3a3a5a' : '#e0e0e0'}` }}>
+            <div style={{ marginTop: '1.4rem', paddingTop: '1.1rem', borderTop: `1px solid ${LINE}` }}>
               <div style={{ fontWeight: 700, color: txt, fontSize: '0.9rem', marginBottom: '0.3rem' }}>
                 Where should trailers be saved?
               </div>
@@ -1107,8 +1290,10 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                   : 'Keeping this under your prerolls folder means your media server can reach it with no extra setup.'}
               </p>
 
-              <label style={labelStyle}>Trailer folder</label>
+              <label htmlFor="nx-wiz-trailer-folder" style={labelStyle}>Trailer folder</label>
               <input
+                id="nx-wiz-trailer-folder"
+                onKeyDown={onEnter(() => { if (!nexupStorageBusy && nexupStorage.trim()) saveNexupStorage(); })}
                 style={inputStyle}
                 value={nexupStorage}
                 onChange={(e) => { setNexupStorage(e.target.value); setStorageCheck(null); }}
@@ -1117,7 +1302,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               {suggestedNexupPath && nexupStorage !== suggestedNexupPath && (
                 <button
                   type="button"
-                  style={{ ...ghostBtn, marginTop: '0.5rem', border: 'none', padding: '0.25rem 0', color: '#818cf8', fontSize: '0.8rem' }}
+                  style={{ ...ghostBtn, marginTop: '0.5rem', border: 'none', padding: '0.25rem 0', color: ACCENT, fontSize: '0.8rem' }}
                   onClick={() => { setNexupStorage(suggestedNexupPath); setStorageCheck(null); }}
                 >
                   Use the recommended folder ({suggestedNexupPath})
@@ -1135,9 +1320,9 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                 <div style={{
                   marginTop: '0.7rem', padding: '0.6rem 0.8rem', borderRadius: '9px',
                   display: 'flex', gap: '0.5rem', alignItems: 'flex-start', fontSize: '0.82rem', lineHeight: 1.5,
-                  background: storageCheck.reachable ? 'rgba(40,167,69,0.12)' : 'rgba(245,158,11,0.12)',
-                  color: storageCheck.reachable ? '#22c55e' : '#f59e0b',
-                  border: `1px solid ${storageCheck.reachable ? 'rgba(40,167,69,0.35)' : 'rgba(245,158,11,0.35)'}`,
+                  background: storageCheck.reachable ? 'var(--success-soft)' : 'var(--warning-soft)',
+                  color: storageCheck.reachable ? GOOD : WARN,
+                  border: `1px solid ${TINT(storageCheck.reachable ? GOOD : WARN, 35)}`,
                 }}>
                   {storageCheck.reachable ? <Check size={15} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
                                           : <AlertCircle size={15} style={{ flexShrink: 0, marginTop: '0.1rem' }} />}
@@ -1152,14 +1337,32 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         {step.key === 'storage' && (
           <div>
             <h2 style={{ color: txt, marginTop: 0 }}>Preroll storage</h2>
-            <p style={{ color: sub, marginTop: 0 }}>
-              Where should NeXroll store uploaded prerolls? Leave blank to use the default location.
+            <p style={{ color: sub, marginTop: 0, lineHeight: 1.6 }}>
+              {currentFolder
+                ? 'Uploaded prerolls are stored here. This works as it is; change it only if you want them on another drive or share.'
+                : 'Where should NeXroll store uploaded prerolls? Leave blank to use the default location.'}
             </p>
-            <label style={labelStyle}>Storage folder path</label>
-            <input style={inputStyle} value={storagePath} onChange={(e) => setStoragePath(e.target.value)}
-              placeholder="/data/prerolls  (or  C:\\NeXroll\\Prerolls)" />
+            {currentFolder && (
+              <div style={{
+                marginBottom: '1rem', padding: '0.6rem 0.8rem', borderRadius: '9px',
+                border: `1px solid ${LINE}`, background: 'var(--neutral-soft)',
+              }}>
+                <div style={{ color: sub, fontSize: '0.75rem', marginBottom: '0.15rem' }}>
+                  {(folderInfo && folderInfo.is_custom) ? 'Your folder' : 'Default folder'}
+                </div>
+                <code style={{ color: txt, fontSize: '0.84rem', overflowWrap: 'anywhere' }}>{currentFolder}</code>
+              </div>
+            )}
+            <label htmlFor="nx-wiz-storage" style={labelStyle}>Use a different folder (optional)</label>
+            <input id="nx-wiz-storage" style={inputStyle} value={storagePath} onChange={(e) => setStoragePath(e.target.value)}
+              onKeyDown={onEnter(() => { if (!storageBusy && storagePath.trim()) saveStorage(); })}
+              placeholder={currentFolder.includes('\\') ? 'D:\\Media\\Prerolls' : '/media/prerolls'} />
+            <p style={{ color: sub, fontSize: '0.78rem', margin: '0.35rem 0 0', lineHeight: 1.5 }}>
+              The folder is created if it does not exist.
+              {isRerun ? ' Prerolls already in the old folder are not moved; Settings, Storage can move them.' : ''}
+            </p>
             <div style={{ marginTop: '1rem' }}>
-              <button type="button" style={primaryBtn} disabled={storageBusy || !storagePath} onClick={saveStorage}>
+              <button type="button" style={primaryBtn} disabled={storageBusy || !storagePath.trim()} onClick={saveStorage}>
                 {storageBusy ? <Loader2 size={16} className="spin" /> : <HardDrive size={16} />} Save folder
               </button>
             </div>
@@ -1180,37 +1383,40 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
                 <div style={{
                   marginTop: '0.9rem', padding: '0.7rem 0.9rem', borderRadius: '10px',
                   display: 'flex', alignItems: 'center', gap: '0.5rem',
-                  background: 'rgba(40,167,69,0.12)', color: '#22c55e',
-                  border: '1px solid rgba(40,167,69,0.35)', fontSize: '0.85rem',
+                  background: 'var(--success-soft)', color: GOOD,
+                  border: `1px solid ${TINT(GOOD, 35)}`, fontSize: '0.85rem',
                 }}>
                   <Check size={16} /> Account already set up
                 </div>
               </>
+            ) : (acctResult && acctResult.ok) ? (
+              <ResultBadge result={acctResult} />
             ) : (
               <>
                 <p style={{ color: sub, marginTop: 0 }}>
                   Recommended. Creates an admin account so you can require login to protect your NeXroll.
                 </p>
-                <label style={labelStyle}>Username</label>
-                <input style={inputStyle} value={acctUser} onChange={(e) => setAcctUser(e.target.value)} placeholder="admin" autoComplete="username" />
-                <div style={{ fontSize: '0.75rem', color: acctUser && validateUsername(acctUser) ? '#f59e0b' : sub, marginTop: '0.25rem' }}>
+                <label htmlFor="nx-wiz-user" style={labelStyle}>Username</label>
+                <input id="nx-wiz-user" onKeyDown={onEnter(createAccount)} style={inputStyle} value={acctUser} onChange={(e) => setAcctUser(e.target.value)} placeholder="admin" autoComplete="username" />
+                <div style={{ fontSize: '0.75rem', color: acctUser && validateUsername(acctUser) ? WARN : sub, marginTop: '0.25rem' }}>
                   {(acctUser && validateUsername(acctUser)) || 'Letters and numbers only, at least 3 characters.'}
                 </div>
                 <div style={{ height: '0.5rem' }} />
-                <label style={labelStyle}>Password</label>
-                <input type="password" style={inputStyle} value={acctPass} onChange={(e) => setAcctPass(e.target.value)} autoComplete="new-password" />
-                <div style={{ fontSize: '0.75rem', color: acctPass && validatePassword(acctPass) ? '#f59e0b' : sub, marginTop: '0.25rem' }}>
+                <label htmlFor="nx-wiz-pass" style={labelStyle}>Password</label>
+                <input id="nx-wiz-pass" onKeyDown={onEnter(createAccount)} type="password" style={inputStyle} value={acctPass} onChange={(e) => setAcctPass(e.target.value)} autoComplete="new-password" />
+                <div style={{ fontSize: '0.75rem', color: acctPass && validatePassword(acctPass) ? WARN : sub, marginTop: '0.25rem' }}>
                   {(acctPass && validatePassword(acctPass)) || 'At least 8 characters, mixed case, and a number.'}
                 </div>
                 <div style={{ height: '0.5rem' }} />
-                <label style={labelStyle}>Confirm password</label>
-                <input type="password" style={inputStyle} value={acctConfirm} onChange={(e) => setAcctConfirm(e.target.value)} autoComplete="new-password" />
+                <label htmlFor="nx-wiz-confirm" style={labelStyle}>Confirm password</label>
+                <input id="nx-wiz-confirm" onKeyDown={onEnter(createAccount)} type="password" style={inputStyle} value={acctConfirm} onChange={(e) => setAcctConfirm(e.target.value)} autoComplete="new-password" />
                 {acctConfirm && acctPass !== acctConfirm && (
-                  <div style={{ fontSize: '0.75rem', color: '#f59e0b', marginTop: '0.25rem' }}>Passwords do not match.</div>
+                  <div style={{ fontSize: '0.75rem', color: WARN, marginTop: '0.25rem' }}>Passwords do not match.</div>
                 )}
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.9rem', color: txt, fontSize: '0.88rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={acctEnableAuth} onChange={(e) => setAcctEnableAuth(e.target.checked)} />
-                  Require login after setup (recommended)
+                  <input type="checkbox" checked={acctEnableAuth} onChange={(e) => setAcctEnableAuth(e.target.checked)}
+                    style={{ flex: '0 0 auto', margin: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0 }}>Require login after setup (recommended)</span>
                 </label>
                 <div style={{ marginTop: '1rem' }}>
                   <button type="button" style={primaryBtn} disabled={acctBusy || !acctUser || !acctPass} onClick={createAccount}>
@@ -1226,31 +1432,47 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         {/* ---- Done ---- */}
         {step.key === 'done' && (
           <div style={{ textAlign: 'center' }}>
-            <CheckCircle size={44} style={{ color: '#22c55e', marginBottom: '0.75rem' }} />
-            <h2 style={{ color: txt, margin: '0 0 0.5rem' }}>You&apos;re all set!</h2>
+            {serverDone
+              ? <CheckCircle size={44} style={{ color: GOOD, marginBottom: '0.75rem' }} />
+              : <Server size={44} style={{ color: WARN, marginBottom: '0.75rem' }} />}
+            <h2 style={{ color: txt, margin: '0 0 0.5rem' }}>{serverDone ? "You're all set!" : 'One thing is still missing'}</h2>
             <p style={{ color: sub, lineHeight: 1.6, maxWidth: '420px', margin: '0 auto 1rem' }}>
-              Here is where things stand. Anything left undone is waiting for you in the
-              sidebar, and you can reopen this wizard any time from Settings, System.
+              {serverDone
+                ? 'Here is where things stand. Anything left undone is waiting for you in the sidebar, and you can reopen this wizard any time from Settings, System.'
+                : 'No media server is connected, so nothing can play yet. Connect one now, or later from the Connect page.'}
             </p>
+            {!serverDone && (
+              <div style={{ marginBottom: '1rem' }}>
+                <button type="button" style={ghostBtn} onClick={() => jumpTo(steps.findIndex((x) => x.key === 'server'))}>
+                  <Server size={15} /> Connect a media server
+                </button>
+              </div>
+            )}
 
             {/* What actually got configured, so nobody has to guess. */}
             <div style={{ textAlign: 'left', maxWidth: '440px', margin: '0 auto 1.25rem', display: 'grid', gap: '0.4rem' }}>
               {summaryItems.map((item) => (
                 <div key={item.label} style={{
-                  display: 'flex', alignItems: 'center', gap: '0.55rem',
+                  display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.2rem 0.55rem',
                   padding: '0.5rem 0.7rem', borderRadius: '9px',
-                  border: `1px solid ${darkMode ? '#3a3a5a' : '#e0e0e0'}`,
-                  background: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+                  border: `1px solid ${LINE}`,
+                  background: 'var(--neutral-soft)',
                 }}>
                   {item.done
-                    ? <Check size={15} style={{ color: '#22c55e', flexShrink: 0 }} />
+                    ? <Check size={15} style={{ color: GOOD, flexShrink: 0 }} />
                     : <span style={{ width: 15, height: 15, borderRadius: '50%', flexShrink: 0, border: `1.5px solid ${sub}` }} />}
                   <span style={{ color: txt, fontSize: '0.85rem', fontWeight: 600, minWidth: '106px' }}>{item.label}</span>
-                  <span style={{ color: sub, fontSize: '0.8rem' }}>{item.detail}</span>
+                  <span style={{ color: sub, fontSize: '0.8rem', flex: '1 1 170px', minWidth: 0, overflowWrap: 'anywhere' }}>{item.detail}</span>
                 </div>
               ))}
             </div>
 
+            {pluginServers.length > 0 && (
+              <p style={{ color: sub, fontSize: '0.83rem', lineHeight: 1.55, maxWidth: '440px', margin: '0 auto 1.25rem', textAlign: 'left' }}>
+                <strong style={{ color: txt }}>Next:</strong> {naming(pluginServers)} {pluginServers.length > 1 ? 'play' : 'plays'} prerolls
+                through the NeXroll Intros plugin. If it is not installed yet, open Connect after this for the download and the steps.
+              </p>
+            )}
             <button type="button" style={{ ...primaryBtn, fontSize: '1rem', padding: '0.7rem 1.6rem' }}
               disabled={finishing} onClick={completeOnboarding}>
               {finishing ? <Loader2 size={18} className="spin" /> : <Rocket size={18} />} Finish &amp; open NeXroll
@@ -1259,19 +1481,26 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
         )}
 
         {/* ---- Footer nav ---- */}
+        {step.key !== 'done' && leaveNote === step.key && unsaved && (
+          <div role="alert" style={{
+            marginTop: '1.25rem', padding: '0.6rem 0.8rem', borderRadius: '9px', fontSize: '0.84rem', lineHeight: 1.5,
+            background: 'var(--warning-soft)', color: WARN, border: `1px solid ${TINT(WARN, 35)}`,
+          }}>
+            {unsaved} Or continue without it.
+          </div>
+        )}
         {step.key !== 'done' && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: leaveNote === step.key && unsaved ? '0.9rem' : '1.75rem' }}>
             <button type="button" style={{ ...ghostBtn, visibility: stepIdx === 0 ? 'hidden' : 'visible' }} onClick={back}>
               <ChevronLeft size={16} /> Back
             </button>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              {stepIdx !== 0 && (
-                <button type="button" style={ghostBtn} onClick={next}>Skip</button>
-              )}
-              <button type="button" style={primaryBtn} onClick={stepIdx === 0 ? startSetup : next}>
-                {stepIdx === 0 ? 'Get started' : 'Next'} <ChevronRight size={16} />
-              </button>
-            </div>
+            {/* One way forward. It reads Skip until the step has something set up. */}
+            <button type="button" style={stepIdx === 0 || stepDone[step.key] || step.key === 'storage' ? primaryBtn : ghostBtn}
+              onClick={stepIdx === 0 ? startSetup : advance}>
+              {stepIdx === 0 ? 'Get started'
+                : (leaveNote === step.key && unsaved) ? 'Continue without it'
+                  : (stepDone[step.key] || step.key === 'storage') ? 'Next' : 'Skip for now'} <ChevronRight size={16} />
+            </button>
           </div>
         )}
       </div>

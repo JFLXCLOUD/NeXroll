@@ -74,3 +74,82 @@ test('a rerun keeps the saved timezone unless it is changed, and skipping still 
   await waitFor(() => expect(onFinish).toHaveBeenCalled());
   expect(JSON.parse(timezonePuts()[0][1].body)).toEqual({ timezone: 'UTC' });
 });
+// Radarr/Sonarr and the preroll folder answer 200 for a failure, with the
+// reason in the body. The wizard used to read every 200 as success.
+function mockSetup(overrides = {}) {
+  global.fetch = jest.fn((url, options = {}) => {
+    for (const [prefix, answer] of Object.entries(overrides)) {
+      if (url.startsWith(prefix)) return ok(typeof answer === 'function' ? answer(url, options) : answer);
+    }
+    if (url.startsWith('/onboarding/status')) return ok({ is_rerun: false, users_exist: false, has_server: false });
+    if (url.startsWith('/onboarding/docker-info')) return ok({ is_docker: false, prerolls_dir: 'C:\\Prerolls', mounts: [], mappings: [], nexup_suggested_path: 'C:\\Prerolls\\nexup_trailers' });
+    if (url.startsWith('/settings/preroll-folder')) return ok({ current_folder: 'C:\\Prerolls', default_folder: 'C:\\Prerolls', is_custom: false });
+    return ok({});
+  });
+}
+const openStep = async (label) => {
+  fireEvent.click(await screen.findByRole('button', { name: label }));
+};
+
+test('a Radarr that refuses the key is not reported as connected', async () => {
+  mockSetup({
+    '/nexup/radarr/connect': { success: false, message: 'Invalid API key' },
+    '/nexup/sonarr/connect': { success: true },
+  });
+  render(<OnboardingWizard apiUrl={apiUrl} darkMode onFinish={() => {}} />);
+  await openStep('NeX-Up');
+  fireEvent.change(screen.getByLabelText('Radarr URL'), { target: { value: 'http://radarr:7878' } });
+  fireEvent.change(screen.getByLabelText('Radarr API Key'), { target: { value: 'wrong' } });
+  fireEvent.change(screen.getByLabelText('Sonarr URL'), { target: { value: 'http://sonarr:8989' } });
+  fireEvent.change(screen.getByLabelText('Sonarr API Key'), { target: { value: 'right' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+  expect(await screen.findByText(/Radarr did not connect: the API key was not accepted\. Sonarr connected\./)).toBeInTheDocument();
+  // The trailer folder shown is kept, since NeX-Up downloads nothing without one.
+  await waitFor(() => expect(fetch.mock.calls.some(([url, o]) => url.startsWith('/nexup/settings?storage_path=') && o.method === 'PUT')).toBe(true));
+  await openStep('Finish');
+  expect(screen.getByText('Sonarr connected')).toBeInTheDocument();
+  // No media server: the last step says so instead of "You're all set!".
+  expect(screen.getByText('One thing is still missing')).toBeInTheDocument();
+});
+
+test('a URL without its API key is called out, and nothing is sent', async () => {
+  mockSetup();
+  render(<OnboardingWizard apiUrl={apiUrl} darkMode onFinish={() => {}} />);
+  await openStep('NeX-Up');
+  fireEvent.change(screen.getByLabelText('Radarr URL'), { target: { value: 'http://radarr:7878' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+  expect(await screen.findByText('Radarr needs both the URL and the API key.')).toBeInTheDocument();
+  expect(fetch.mock.calls.some(([url]) => url.startsWith('/nexup/radarr/connect'))).toBe(false);
+  // Leaving with it typed asks once, then lets you go.
+  fireEvent.click(screen.getByRole('button', { name: /Skip for now/ }));
+  expect(screen.getByText(/have not connected/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /Continue without it/ }));
+  expect(await screen.findByText('Preroll storage')).toBeInTheDocument();
+});
+
+test('a folder NeXroll cannot write to is not reported as saved', async () => {
+  mockSetup({
+    '/settings/preroll-folder': (url, options) => (options.method === 'PUT'
+      ? { error: 'Folder is not writable: [WinError 3]' }
+      : { current_folder: 'C:\\Prerolls', default_folder: 'C:\\Prerolls', is_custom: false }),
+  });
+  render(<OnboardingWizard apiUrl={apiUrl} darkMode onFinish={() => {}} />);
+  await openStep('Storage');
+  expect(await screen.findByText('C:\\Prerolls')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText(/Use a different folder/), { target: { value: 'Z:\\nope' } });
+  fireEvent.click(screen.getByRole('button', { name: /Save folder/ }));
+  expect(await screen.findByText(/can't create or write to that folder/)).toBeInTheDocument();
+});
+
+test('reopening the wizard shows what is already connected', async () => {
+  mockSetup({
+    '/onboarding/status': { is_rerun: true, users_exist: true, has_server: true },
+    '/jellyfin/status': { connected: true },
+    '/nexup/settings': { radarr_connected: true, sonarr_connected: false, storage_path: 'C:\\Prerolls\\nexup_trailers' },
+  });
+  render(<OnboardingWizard apiUrl={apiUrl} darkMode onFinish={() => {}} />);
+  await openStep('Media Server');
+  expect(await screen.findByText('Jellyfin connected')).toBeInTheDocument();
+  await openStep('NeX-Up');
+  expect(screen.getByText(/Radarr is connected/)).toBeInTheDocument();
+});

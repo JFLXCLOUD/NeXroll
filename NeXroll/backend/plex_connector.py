@@ -200,9 +200,9 @@ class PlexConnector:
                         self.headers = {'X-Plex-Token': self.token}
                         return True
                 else:
-                    print(f"ℹ No token found in {self.config_file} (already migrated or not configured)")
+                    print(f"INFO: No token found in {self.config_file} (already migrated or not configured)")
             else:
-                print("ℹ No plex_config.json found; token should be in secure store or needs manual entry")
+                print("INFO: No plex_config.json found; token should be in secure store or needs manual entry")
         except Exception as e:
             print(f"Error loading Plex token: {e}")
 
