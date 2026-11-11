@@ -13,6 +13,15 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.5.0
+
+- **NeX-Up's trailer options do what they say.** Coming Soon trailers keep playing for Days visible after their movie or show arrives, every sync follows Include unmonitored movies, the release date preference and the storage limit, and a title you leave off the Coming Soon list stays off. See [Upcoming Releases](NeX-Up#upcoming-releases) and [Available Now!](NeX-Up#available-now).
+- **The dashboard shows what is really playing,** and warns when the schedule showing has no prerolls or Plex hasn't taken a change. See [Reading the dashboard](Dashboard#reading-the-dashboard).
+- **Plex's preroll list stays playable while things change:** a removed trailer stays until Plex lets go of it, a renamed or deleted preroll gets Plex a new list, and Apply asks before changing the list in the middle of someone's prerolls.
+- **Connecting Plex sets up path mappings by itself,** and System health's **Fix it for me** repairs them in one click. See [Path Mappings](Path-Mappings#the-quick-way-221).
+- **A schedule that wins with nothing to play now plays nothing.** Plex used to keep the previous schedule's prerolls. See [Standard, Exclusive and Blend](Scheduling#standard-exclusive-and-blend).
+- **The setup wizard, Connect page and Sequence Builder tell you what really happened,** and the Builder won't save a block that has nothing to play.
+
 ## What's New in v2.4.0
 
 - **Install updates from the web UI on Windows.** Settings > System > Install Update backs up the database, checks the download against GitHub and restarts NeXroll; Automatic Updates can do it at an hour you pick. Install 2.4.0 by hand once. See [Install Update](Configuration#install-update-windows).
