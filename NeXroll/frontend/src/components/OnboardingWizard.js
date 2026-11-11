@@ -229,6 +229,31 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
 
   const safeJson = async (res) => { try { return await res.json(); } catch { return null; } };
 
+  // With Plex just connected, find NeXroll's folders on it and save the
+  // mappings needed, so the Paths step usually has nothing left to ask.
+  const setUpPlexPaths = async () => {
+    try {
+      const res = await fetch(apiUrl('settings/path-mappings/auto-setup'), { method: 'POST', credentials: 'include' });
+      const data = res.ok ? await safeJson(res) : null;
+      if (!data) return;
+      const saved = Array.isArray(data.saved) ? data.saved : [];
+      if (saved.length) {
+        const bare = (p) => (p || '').trim().replace(/[\\/]+$/, '').toLowerCase();
+        const replaced = new Set(saved.map((m) => bare(m.local)));
+        setPathRows((rows) => [
+          ...rows.filter((r) => (r.local || '').trim() && (r.plex || '').trim() && !replaced.has(bare(r.local))),
+          ...saved,
+        ]);
+        setPathDirty(false);
+        setPathResult({ ok: true, msg: saved.length === 1
+          ? `NeXroll found your preroll folder on the Plex server (${saved[0].plex}) and saved the mapping.`
+          : `NeXroll found your folders on the Plex server and saved ${saved.length} mappings.` });
+      } else if (data.working) {
+        setPathResult({ ok: true, msg: 'Plex already reaches your preroll folder, so no mapping is needed.' });
+      }
+    } catch { /* the Paths step still offers Find it for me */ }
+  };
+
   // Radarr and Sonarr report failures in their own words; say them plainly.
   const arrReason = (raw) => {
     const text = String(raw || '').trim();
@@ -278,7 +303,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
       const label = SERVER_LABELS[serverType];
       if (res.ok) {
         setConnectedServers((prev) => (prev.includes(serverType) ? prev : [...prev, serverType]));
-        if (serverType === 'plex') setPlexReady(true);
+        if (serverType === 'plex') { setPlexReady(true); setUpPlexPaths(); }
         setServerResult({ ok: true, msg: `${label} connected.` });
         setServerUrl('');
         setServerApiKey('');
@@ -332,6 +357,7 @@ function OnboardingWizard({ apiUrl, darkMode, onFinish }) {
               setPlexOAuth((p) => ({ ...p, status: 'connected' }));
               setConnectedServers((prev) => (prev.includes('plex') ? prev : [...prev, 'plex']));
               setPlexReady(true);
+              setUpPlexPaths();
               setServerResult({ ok: true, msg: cd.server_name ? `Connected to ${cd.server_name}.` : 'Connected to Plex.' });
             } else {
               setPlexOAuth((p) => ({ ...p, status: 'idle' }));

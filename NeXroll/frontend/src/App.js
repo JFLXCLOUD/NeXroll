@@ -403,6 +403,8 @@ const HEALTH_CHECK_ACTIONS = {
   library: { tab: 'library/add', label: 'Add prerolls' },
   community_index: { tab: 'community-prerolls', label: 'Refresh index' },
   plugin_keys: { tab: 'connect', label: 'Give plugin a key' },
+  // Fixed in place: NeXroll looks for its folders on the Plex server itself.
+  plex_paths: { tab: 'settings/paths', label: 'Fix it for me', fix: 'plex_paths' },
 };
 
 const getPrimaryHealthAction = (summary) => {
@@ -1558,6 +1560,12 @@ function App() {
   const [plexPickerRow, setPlexPickerRow] = useState(null);
   const [plexCheckKey, setPlexCheckKey] = useState(0);
   const [plexPathSummary, setPlexPathSummary] = useState(null);
+  // Path Mappings: the hand-edited rules and the path tester stay folded away
+  // until asked for (null = decide from what is saved), and Save says when
+  // there is something to save.
+  const [pathsManualOpen, setPathsManualOpen] = useState(null);
+  const [pathMappingsDirty, setPathMappingsDirty] = useState(false);
+  const [plexPathsFixing, setPlexPathsFixing] = useState(false);
 
   // Preroll Storage Folder
   const [prerollFolderInfo, setPrerollFolderInfo] = useState(null);
@@ -7789,10 +7797,13 @@ const DashboardTiles = {
           <button
             className="nx-card-link nx-no-drag"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => setActiveTab(healthAction.tab)}
-            title={`Open ${healthAction.label.toLowerCase()}`}
+            disabled={healthAction.fix === 'plex_paths' && plexPathsFixing}
+            onClick={() => (healthAction.fix === 'plex_paths' ? setUpPlexPaths() : setActiveTab(healthAction.tab))}
+            title={healthAction.fix === 'plex_paths'
+              ? 'Look for your preroll folders on the Plex server and set up the path mappings'
+              : `Open ${healthAction.label.toLowerCase()}`}
           >
-            {healthAction.label} <ArrowRight size={12} />
+            {healthAction.fix === 'plex_paths' && plexPathsFixing ? 'Searching Plex...' : healthAction.label} <ArrowRight size={12} />
           </button>
         </div>
         {!h ? (
@@ -9072,8 +9083,11 @@ const DashboardTiles = {
             )}
             {activeTab === 'settings/paths' && (
               <>
-                <button type="button" className="button button-secondary" onClick={runMappingsTest}><FlaskConical size={15} /> Test paths</button>
-                <button type="button" className="button" onClick={addMappingRow}><Plus size={15} /> Add mapping</button>
+                <button type="button" className="button button-secondary" onClick={() => {
+                  setPathsManualOpen(true);
+                  setTimeout(() => document.querySelector('.nx-settings-path-test textarea')?.focus(), 80);
+                }}><FlaskConical size={15} /> Test a path</button>
+                <button type="button" className="button" onClick={() => { setPathsManualOpen(true); addMappingRow(); }}><Plus size={15} /> Add mapping</button>
               </>
             )}
             {activeTab === 'settings/apikeys' && (
@@ -21878,6 +21892,7 @@ const DashboardTiles = {
         if (data.connected) {
           alert('Successfully connected to Plex using manual token!');
           fetchData();
+          setUpPlexPaths({ afterConnect: true });
         } else {
           alert('Failed to connect to Plex. Please check your URL and token.');
         }
@@ -21903,6 +21918,7 @@ const DashboardTiles = {
         if (data.connected) {
           alert('Successfully connected to Plex using stable token!');
           fetchData();
+          setUpPlexPaths({ afterConnect: true });
         } else {
           alert('Failed to connect to Plex. Please check your URL and ensure the stable token is configured.');
         }
@@ -22285,6 +22301,7 @@ const DashboardTiles = {
       setPlexOAuth(prev => ({ ...prev, status: 'connected' }));
       alert('Successfully connected to Plex via Plex.tv!');
       fetchData();
+      setUpPlexPaths({ afterConnect: true });
     } catch (e) {
       setPlexOAuth(prev => ({ ...prev, status: 'error', error: String(e?.message || e) }));
     }
@@ -23024,10 +23041,16 @@ const DashboardTiles = {
   }, []);
 
   const addMappingRow = () => setPathMappings(prev => [...prev, { local: '', plex: '' }]);
-  const updateMappingRow = (idx, field, value) =>
+  const updateMappingRow = (idx, field, value) => {
+    setPathMappingsDirty(true);
     setPathMappings(prev => prev.map((m, i) => (i === idx ? { ...m, [field]: value } : m)));
-  const removeMappingRow = (idx) =>
+  };
+  const removeMappingRow = (idx) => {
+    // Removing an empty row changes nothing that was saved.
+    const row = (pathMappings || [])[idx] || {};
+    if ((row.local || '').trim() || (row.plex || '').trim()) setPathMappingsDirty(true);
     setPathMappings(prev => prev.filter((_, i) => i !== idx));
+  };
 
   const tryPutMappings = async (list, shape) => {
     const body = shape === 'array' ? list : { mappings: list };
@@ -23054,9 +23077,51 @@ const DashboardTiles = {
       await tryPutMappings(list, 'array').catch(async () => await tryPutMappings(list, 'object'));
       alert('Path mappings saved.');
       await loadPathMappings();
+      setPathMappingsDirty(false);
       setPlexCheckKey(k => k + 1);
     } catch (e) {
       alert('Failed to save mappings: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  // Find NeXroll's folders on the Plex server and save the mappings needed,
+  // in one go. Runs after Plex is connected (quietly unless it did something
+  // or could not), and from the dashboard's "Fix it for me".
+  const setUpPlexPaths = async ({ afterConnect = false } = {}) => {
+    if (plexPathsFixing) return null;
+    setPlexPathsFixing(true);
+    try {
+      const res = await fetch(apiUrl('settings/path-mappings/auto-setup'), { method: 'POST' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) throw new Error((data && typeof data.detail === 'string' && data.detail) || `HTTP ${res.status}`);
+      const saved = data.saved || [];
+      const missing = data.not_found || [];
+      if (saved.length) {
+        await loadPathMappings();
+        setPathMappingsDirty(false);
+        setPlexCheckKey(k => k + 1);
+      }
+      if (missing.length) {
+        showAlert(`NeXroll could not find ${missing.join(' or ')} on the Plex server, so Plex may not be able to play ${missing.length > 1 ? 'them' : 'it'}. Open Settings, Path Mappings to set the folder by hand.`, 'warning');
+        if (!afterConnect) setActiveTab('settings/paths');
+      } else if (saved.length) {
+        showAlert(saved.length === 1
+          ? `Plex sees your preroll folder as ${saved[0].plex}. NeXroll saved that path mapping for you.`
+          : `NeXroll found your folders on the Plex server and saved ${saved.length} path mappings for you.`, 'success');
+      } else if (!afterConnect) {
+        showAlert('Plex already reaches every folder NeXroll uses, so no mapping is needed. If something still does not play, open Settings, Path Mappings.', 'info');
+      }
+      fetchData();
+      return data;
+    } catch (e) {
+      // After a connect this is a courtesy: the connection itself succeeded.
+      if (!afterConnect) {
+        showAlert('Could not look for your folders on the Plex server: ' + (e && e.message ? e.message : e), 'error');
+        setActiveTab('settings/paths');
+      }
+      return null;
+    } finally {
+      setPlexPathsFixing(false);
     }
   };
 
@@ -23074,6 +23139,7 @@ const DashboardTiles = {
     try {
       await tryPutMappings(list, 'array').catch(async () => await tryPutMappings(list, 'object'));
       await loadPathMappings();
+      setPathMappingsDirty(false);
       setPlexCheckKey(k => k + 1);
       return true;
     } catch (e) {
@@ -30939,63 +31005,86 @@ const DashboardTiles = {
   );
 
   // Settings - Path Mappings Tab
-  const renderSettingsPaths = () => (
+  const renderSettingsPaths = () => {
+    const plexOn = plexStatus === 'Connected';
+    const pluginServers = getConnectedServers().filter(id => id !== 'plex');
+    const savedCount = (pathMappings || []).filter(m => (m.local || '').trim() && (m.plex || '').trim()).length;
+    // Saved rules are shown to someone who has Plex; everyone else opens them on request.
+    const manualOpen = pathsManualOpen ?? (plexOn && savedCount > 0);
+    // Plex is set to play files it can't open: look for them straight away
+    // instead of waiting for the button to be found.
+    const plexCantOpen = plexOn && !!plexPathSummary && plexPathSummary.missing > 0;
+    return (
     <>
     {/* Path Mappings Card */}
     <div className="card nx-settings-panel nx-settings-path-rules" style={{ marginBottom: '1.5rem' }}>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FolderSync size={20} style={{ color: 'var(--nx-sec-connect)' }} /> Path Mappings (Plex)
+        <FolderSync size={20} style={{ color: 'var(--nx-sec-connect)' }} /> Path Mappings
       </h2>
-      <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-        Plex plays prerolls straight from its own disk, so it needs every file's path as the Plex server sees it.
-        When NeXroll reaches the same folder under a different path, as it does in Docker, on another computer
-        or through a network share, add a mapping: the folder as NeXroll sees it on the left, as Plex sees it on
-        the right. The longest matching folder wins.
-      </p>
 
-      {plexStatus === 'Connected' && (
-        <div className="nx-plexpath-tools">
-          <PlexPathCheck apiUrl={apiUrl} refreshKey={plexCheckKey} onResult={setPlexPathSummary} />
-          <FindPlexFolder apiUrl={apiUrl} onUseMappings={applyDetectedMappings} />
+      {plexOn && (
+        <>
+          <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+            Plex plays prerolls from its own disk, so it needs each file's path the way the Plex server sees it.
+            NeXroll checks that with Plex and can set it up for you.
+          </p>
+          <div className="nx-plexpath-tools">
+            <PlexPathCheck apiUrl={apiUrl} refreshKey={plexCheckKey} onResult={setPlexPathSummary} />
+            <FindPlexFolder apiUrl={apiUrl} onUseMappings={applyDetectedMappings} autoStart={plexCantOpen} />
+          </div>
+        </>
+      )}
+
+      {/* Only Plex uses these: it plays prerolls off its own filesystem, while
+          the Jellyfin and Emby plugin streams the file from NeXroll and never
+          sees a path. Say so first, and name every plugin server connected. */}
+      {!plexOn && serversChecked && pluginServers.length > 0 && (
+        <div className="nx-notice success nx-paths-answer">
+          <strong><CheckCircle size={16} /> Nothing to set up for {describeServers(pluginServers)}.</strong>
+          <p>
+            Path mappings are only for Plex. {describeServers(pluginServers)} {pluginServers.length > 1 ? 'get' : 'gets'} prerolls
+            from NeXroll directly, so no paths are involved.
+          </p>
+        </div>
+      )}
+      {!plexOn && !serversChecked && (
+        <div className="nx-notice nx-paths-answer"><p style={{ margin: 0 }}>Checking your servers...</p></div>
+      )}
+      {!plexOn && serversChecked && pluginServers.length === 0 && (
+        <div className="nx-notice nx-paths-answer">
+          <strong>Only Plex needs this.</strong>
+          <p>
+            Connect Plex first. NeXroll then checks whether Plex can open your prerolls and, if it can't,
+            finds the right folder for you. Jellyfin and Emby never need path mappings.
+          </p>
+          <button type="button" className="button" onClick={() => setActiveTab('connect')}><Link2 size={14} /> Go to Connect</button>
         </div>
       )}
 
-      {/* These rules really are Plex-only: Plex plays prerolls off its own
-          filesystem, so it needs a path it can resolve, whereas the Jellyfin and
-          Emby plugin streams the file from NeXroll and never sees a path at all.
-          A Jellyfin user reading a page headed "(Plex)" reasonably assumed it
-          was mislabelled, so say which servers it affects instead. */}
-      {plexStatus !== 'Connected' && (jellyfinStatus === 'Connected' || embyStatus === 'Connected') && (() => {
-        // Name every plugin server that is connected. This read the Emby status
-        // and fell back to "Jellyfin", so a household running both was told
-        // "Nothing to do here for Emby" with no mention of its Jellyfin at all.
-        const pluginServers = getConnectedServers().filter(id => id !== 'plex');
-        const named = describeServers(pluginServers);
-        return (
-        <div style={{
-          marginBottom: '1.5rem', padding: '0.75rem 0.9rem', borderRadius: '8px',
-          fontSize: '0.85rem', lineHeight: 1.55,
-          color: darkMode ? '#cfd8dc' : '#455a64',
-          backgroundColor: darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 8%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 6%, transparent)',
-          border: `1px solid ${darkMode ? 'color-mix(in srgb, var(--nx-sec-connect) 20%, transparent)' : 'color-mix(in srgb, var(--nx-sec-connect) 15%, transparent)'}`
-        }}>
-          <strong>Nothing to do here for {named}.</strong>{' '}
-          These rules only affect Plex, which plays prerolls from its own filesystem and so needs a
-          path it can resolve. The NeXroll plugin streams prerolls to {named}
-          {' '}directly, so no translation is involved.
-          The settings below are kept in case you connect Plex later.
-        </div>
-        );
-      })()}
+      <button type="button" className="nx-paths-manual-toggle" aria-expanded={manualOpen}
+        onClick={() => setPathsManualOpen(!manualOpen)}>
+        <ChevronRight size={15} className={manualOpen ? 'open' : ''} />
+        <span>{plexOn ? 'Set mappings by hand' : 'Mappings for a Plex server you connect later'}</span>
+        <em>{savedCount ? `${savedCount} saved` : 'none saved'}</em>
+      </button>
+
+      {manualOpen && (
+        <p style={{ margin: '0.75rem 0 1rem', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+          Add a mapping when NeXroll reaches the preroll folder under a different path than Plex does, as in Docker,
+          on another computer or through a network share: the folder as NeXroll sees it on the left, the same folder
+          as Plex sees it on the right. The longest matching folder wins.
+        </p>
+      )}
 
       {/* Mappings List */}
+      {manualOpen && (
       <div className="nx-setting-row">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-          <Layers size={16} style={{ color: 'var(--nx-sec-connect)' }} />
-          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>Path Translation Rules</span>
-        </div>
-        
+        <div style={{ display: 'none' }} />
+
         <div style={{ display: 'grid', gap: '0.75rem' }}>
+          {(pathMappings || []).length === 0 && (
+            <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.88rem' }}>No mappings yet.</p>
+          )}
           {(pathMappings || []).map((m, idx) => (
             <div key={idx} style={{ 
               display: 'flex', 
@@ -31073,19 +31162,6 @@ const DashboardTiles = {
           <button 
             type="button" 
             className="button" 
-            onClick={loadPathMappings} 
-            disabled={pathMappingsLoading}
-            style={{ 
-              backgroundColor: 'transparent',
-              border: '1px solid var(--border-color)',
-              color: 'var(--text-color)'
-            }}
-          >
-            <RotateCw size={14} style={{marginRight: '0.35rem'}} /> Reload
-          </button>
-          <button 
-            type="button" 
-            className="button" 
             onClick={savePathMappings} 
             disabled={pathMappingsLoading} 
             style={{ 
@@ -31096,8 +31172,12 @@ const DashboardTiles = {
           >
             <Save size={14} style={{marginRight: '0.35rem'}} /> Save Mappings
           </button>
+          {pathMappingsDirty && (
+            <span role="status" style={{ alignSelf: 'center', color: 'var(--warning-color)', fontSize: '0.85rem' }}>Not saved yet</span>
+          )}
         </div>
       </div>
+      )}
       <PlexFolderPicker
         apiUrl={apiUrl}
         open={plexPickerRow !== null}
@@ -31107,10 +31187,11 @@ const DashboardTiles = {
       />
     </div>
 
-    {/* Test Translation Card */}
+    {/* Test a path: for checking hand-made rules, so it comes with them. */}
+    {manualOpen && (
     <div className="card nx-settings-panel nx-settings-path-test">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FlaskConical size={20} style={{ color: 'var(--nx-sec-library)' }} /> Test Translation
+        <FlaskConical size={20} style={{ color: 'var(--nx-sec-library)' }} /> Test a path
       </h2>
       <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
         Paste the full path of one or more prerolls as NeXroll sees them, one per line. NeXroll shows the path it
@@ -31185,8 +31266,10 @@ const DashboardTiles = {
         )}
       </div>
     </div>
+    )}
     </>
-  );
+    );
+  };
 
   // Settings - Backup & Restore Tab
   const renderSettingsBackup = () => (

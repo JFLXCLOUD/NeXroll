@@ -149,9 +149,11 @@ function FolderResult({ f }) {
   );
 }
 
-export function FindPlexFolder({ apiUrl, onUseMappings }) {
+export function FindPlexFolder({ apiUrl, onUseMappings, autoStart = false }) {
   const [state, setState] = useState({ phase: 'idle' });
+  const started = useRef(false);
   const search = async () => {
+    started.current = true;
     setState({ phase: 'searching' });
     try {
       const data = await readJson(await fetch(apiUrl('settings/path-mappings/detect'), {
@@ -162,6 +164,12 @@ export function FindPlexFolder({ apiUrl, onUseMappings }) {
       setState({ phase: 'done', error: e.message });
     }
   };
+  // When Plex is already failing to open files, look for them without
+  // waiting to be asked. Once only: a second search is the user's call.
+  useEffect(() => {
+    if (autoStart && !started.current) search();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart]);
   const { phase, data, error } = state;
   const folders = data ? (Array.isArray(data.folders) && data.folders.length ? data.folders : [{ ...data, label: 'Prerolls', kind: 'prerolls' }]) : [];
   const suggestions = data ? (data.suggestions || (data.mapping_needed && data.suggestion ? [data.suggestion] : [])) : [];
@@ -194,10 +202,10 @@ export function FindPlexFolder({ apiUrl, onUseMappings }) {
             {folders.map(f => <FolderResult key={`${f.kind}:${f.local_folder}`} f={f} />)}
           </div>
           {suggestions.length > 0 && (state.added
-            ? <p className="nx-plexpath-added"><CheckCircle size={15} className="nx-plexpath-ok" /> {suggestions.length === 1 ? 'Mapping added.' : 'Mappings added.'} Plex gets these paths the next time NeXroll applies your prerolls.</p>
+            ? <p className="nx-plexpath-added"><CheckCircle size={15} className="nx-plexpath-ok" /> {suggestions.length === 1 ? 'Mapping saved.' : 'Mappings saved.'} NeXroll gives Plex the new paths within a minute, after any prerolls that are playing.</p>
             : (
               <button type="button" className="button nx-plexpath-primary" disabled={state.adding} onClick={add}>
-                {state.adding ? 'Adding...' : suggestions.length === 1 ? 'Add this mapping' : `Add these ${suggestions.length} mappings`}
+                {state.adding ? 'Saving...' : suggestions.length === 1 ? 'Use this mapping' : `Use these ${suggestions.length} mappings`}
               </button>
             ))}
         </div>

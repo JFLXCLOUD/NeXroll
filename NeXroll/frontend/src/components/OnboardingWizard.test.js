@@ -153,3 +153,22 @@ test('reopening the wizard shows what is already connected', async () => {
   await openStep('NeX-Up');
   expect(screen.getByText(/Radarr is connected/)).toBeInTheDocument();
 });
+
+test('connecting Plex sets the path mapping up without being asked', async () => {
+  const saved = [{ local: '/data/prerolls', plex: '/mnt/media/prerolls' }];
+  mockSetup({
+    '/plex/connect': { connected: true },
+    '/settings/path-mappings/auto-setup': { saved, working: true, not_found: [] },
+  });
+  render(<OnboardingWizard apiUrl={apiUrl} darkMode onFinish={() => {}} />);
+  await openStep('Media Server');
+  fireEvent.click(screen.getByText(/enter a server URL and token manually/));
+  fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'http://plex:32400' } });
+  fireEvent.change(screen.getByLabelText('Plex Token'), { target: { value: 'token' } });
+  fireEvent.click(screen.getByRole('button', { name: /Test & Connect/ }));
+  expect(await screen.findByText('Plex connected.')).toBeInTheDocument();
+  await waitFor(() => expect(fetch.mock.calls.some(([url, o]) => url.startsWith('/settings/path-mappings/auto-setup') && o.method === 'POST')).toBe(true));
+  await openStep('Paths');
+  expect(await screen.findByText(/found your preroll folder on the Plex server \(\/mnt\/media\/prerolls\) and saved the mapping/)).toBeInTheDocument();
+  expect(screen.getByDisplayValue('/mnt/media/prerolls')).toBeInTheDocument();
+});

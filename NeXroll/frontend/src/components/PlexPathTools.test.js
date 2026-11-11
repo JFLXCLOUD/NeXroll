@@ -57,10 +57,10 @@ test('Find it for me proposes the mapping and hands it back when accepted', asyn
   fireEvent.click(screen.getByRole('button', { name: /Find it for me/ }));
   expect(await screen.findByText('/Volumes/Plex/PreRoll')).toBeInTheDocument();
   expect(screen.getByText('Confirmed by finding 3 of your prerolls there.')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Add this mapping' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Use this mapping' }));
   expect(onUse).toHaveBeenCalledWith([suggestion]);
-  expect(await screen.findByText(/Mapping added\./)).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Add this mapping' })).not.toBeInTheDocument();
+  expect(await screen.findByText(/Mapping saved\./)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Use this mapping' })).not.toBeInTheDocument();
   expect(fetch.mock.calls[0][0]).toBe('/settings/path-mappings/detect');
   expect(fetch.mock.calls[0][1].method).toBe('POST');
 });
@@ -70,7 +70,7 @@ test('Find it for me explains when nothing was found', async () => {
   render(<FindPlexFolder apiUrl={apiUrl} onUseMappings={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: /Find it for me/ }));
   expect(await screen.findByText(/No folder the Plex server can see/)).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Add this mapping' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Use this mapping' })).not.toBeInTheDocument();
 });
 
 test('Find it for me says when no mapping is needed', async () => {
@@ -100,9 +100,9 @@ test('Find it for me covers every folder and adds all needed mappings at once', 
   expect(screen.getByText('Movie library (Library Trailers)')).toBeInTheDocument();
   expect(screen.getByText('Confirmed by finding 2 of your trailers there.')).toBeInTheDocument();
   expect(screen.getByText('/Volumes/Plex/Trailers')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Add these 2 mappings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Use these 2 mappings' }));
   expect(onUse).toHaveBeenCalledWith([pre, movies]);
-  expect(await screen.findByText(/Mappings added\./)).toBeInTheDocument();
+  expect(await screen.findByText(/Mappings saved\./)).toBeInTheDocument();
 });
 
 test('the picker walks Plex folders and returns the chosen one', async () => {
@@ -130,4 +130,17 @@ test('the picker cannot choose the top level and closes on Escape', async () => 
   expect(screen.getByRole('button', { name: /Use this folder/ })).toBeDisabled();
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(onClose).toHaveBeenCalled();
+});
+
+test('Find it for me starts by itself when Plex cannot open the files', async () => {
+  const suggestion = { local: '/data/prerolls', plex: '/Volumes/Plex/PreRoll' };
+  fetch.mockImplementation(() => reply({ found: true, already_working: false, mapping_needed: true, suggestion, verified: ['a'] }));
+  const { rerender } = render(<FindPlexFolder apiUrl={apiUrl} onUseMappings={jest.fn()} autoStart={false} />);
+  expect(fetch).not.toHaveBeenCalled();
+  rerender(<FindPlexFolder apiUrl={apiUrl} onUseMappings={jest.fn()} autoStart />);
+  expect(await screen.findByText('/Volumes/Plex/PreRoll')).toBeInTheDocument();
+  // Once only: the check running again must not start another search.
+  rerender(<FindPlexFolder apiUrl={apiUrl} onUseMappings={jest.fn()} autoStart={false} />);
+  rerender(<FindPlexFolder apiUrl={apiUrl} onUseMappings={jest.fn()} autoStart />);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

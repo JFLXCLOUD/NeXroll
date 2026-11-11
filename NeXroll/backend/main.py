@@ -15661,6 +15661,41 @@ def detect_path_mapping(req: Optional[DetectMappingRequest] = None, db: Session 
     return {**results[0], "folders": results, "suggestions": suggestions}
 
 
+@app.post("/settings/path-mappings/auto-setup")
+def auto_setup_path_mappings(db: Session = Depends(get_db)):
+    """Find NeXroll's folders on the Plex server and save the mappings needed.
+
+    What "Find it for me" plus "Use these mappings" do, in one call, so that
+    connecting Plex (or the dashboard's fix button) can set paths up without
+    the user visiting Path Mappings. Only mappings the search confirmed by
+    finding the user's own files (or its marker file) in the folder are saved;
+    a mapping for the same NeXroll folder is replaced, every other one is
+    kept. Folders that were not found are reported and left alone.
+
+    Returns the detect report plus ``saved`` (the mappings written),
+    ``not_found`` (labels) and ``working`` (every folder is reachable now).
+    """
+    report = detect_path_mapping(None, db)
+    folders = report.get("folders") or []
+    suggestions = [s for s in (report.get("suggestions") or []) if s.get("local") and s.get("plex")]
+    saved = []
+    if suggestions:
+        def bare(path):
+            return str(path or "").rstrip("/\\").lower()
+        setting = db.query(models.Setting).first()
+        replaced = {bare(s["local"]) for s in suggestions}
+        kept = [m for m in path_mapping.mappings_from_setting(setting)
+                if m.get("local") and m.get("plex") and bare(m["local"]) not in replaced]
+        merged = kept + [{"local": s["local"], "plex": s["plex"]} for s in suggestions]
+        put_path_mappings(PathMappingsPayload(mappings=[PathMapping(**m) for m in merged]), False, db)
+        saved = [{"local": s["local"], "plex": s["plex"]} for s in suggestions]
+        log_event('INFO', 'plex',
+                  f"Set up {len(saved)} path mapping(s) from the folders found on the Plex server",
+                  source='auto_setup_path_mappings', details={"mappings": saved}, db=db)
+    not_found = [f.get("label") or f.get("local_folder") for f in folders if not f.get("found")]
+    return {**report, "saved": saved, "not_found": not_found, "working": bool(folders) and not not_found}
+
+
 def _detect_folder(db: Session, files, local_root: str, known: list) -> dict:
     """Detect one folder. An empty folder (a fresh install, which is exactly
     when this is first needed) gets a small, clearly named file for the

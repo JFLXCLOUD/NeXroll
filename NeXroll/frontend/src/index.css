@@ -14889,3 +14889,20 @@ body.theme-screenplay .nx-modal-title { justify-content: center; text-transform:
 .nx-schedule-idle strong { color: var(--text-color); }
 .nx-schedule-warning-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 5px; }
 .nx-schedule-idle .nx-card-link, .nx-schedule-warning-actions .nx-card-link { padding: 0; font-size: 12px; }
+
+/* Path Mappings: the answer first, hand-made rules folded away. */
+.nx-paths-answer { margin-bottom: 1rem; }
+.nx-paths-answer strong { display: flex; align-items: center; gap: 0.4rem; color: var(--text-color); }
+.nx-paths-answer p { margin: 0.4rem 0 0; color: var(--text-secondary); font-size: 0.9rem; line-height: 1.55; }
+.nx-paths-answer .button { margin-top: 0.75rem; }
+.nx-paths-manual-toggle {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  margin-top: 0.25rem; padding: 0.7rem 0.85rem;
+  background: var(--neutral-soft); border: 1px solid var(--border-color); border-radius: 8px;
+  color: var(--text-color); font-size: 0.92rem; font-weight: 600; text-align: left; cursor: pointer;
+}
+.nx-paths-manual-toggle:hover { background: var(--hover-bg); }
+.nx-paths-manual-toggle svg { flex-shrink: 0; transition: transform 0.15s; }
+.nx-paths-manual-toggle svg.open { transform: rotate(90deg); }
+.nx-paths-manual-toggle span { flex: 1; min-width: 0; }
+.nx-paths-manual-toggle em { font-style: normal; font-weight: 400; font-size: 0.82rem; color: var(--text-secondary); }
