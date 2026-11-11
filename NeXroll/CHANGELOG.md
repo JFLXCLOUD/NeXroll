@@ -1,5 +1,48 @@
 ﻿# Changelog
 
+## [2.5.0] - 11-11-2026
+
+> NeX-Up's trailer options now do what they say, the dashboard shows what is really playing, and Plex's preroll list stays playable while things change. Also: connecting Plex sets up path mappings by itself, and the setup wizard, Connect page and Sequence Builder tell you what really happened.
+
+### Upgrading
+
+- **A schedule, blend or filler that wins with nothing to play now plays nothing.** Plex used to keep playing the previous schedule's prerolls. Add prerolls to it, or switch it off, if that is not what you want.
+- **Windows: Settings > System > Install Update** installs 2.5.0 on 2.4.0, or run the installer over your existing install.
+- **Docker: `:2.4` stays on 2.4.0.** Use `:2.5`, `:2` or `latest` for this release.
+- **No settings to change and no plugin update.** A table for Coming Soon exclusions and an arrival date on NeX-Up trailers are added on first start; titles you excluded stay excluded.
+
+### Added
+
+- **Connecting Plex sets up path mappings by itself** when NeXroll finds your preroll folder on the Plex server. When Plex can't open your prerolls, System health's **Fix it for me** does the same in one click.
+- **Any upcoming title can be left off the Coming Soon list,** with or without a trailer, and stays off after its trailer is removed.
+- **NeX-Up Settings has a storage limit control again.**
+
+### Changed
+
+- **The dashboard shows what is really playing:** each schedule's playback mode and enabled preroll count, and a warning when the schedule showing has no prerolls, a blended schedule is left out, or Plex hasn't taken a change. It loads quickly with a server down and says "Checking" instead of "Not connected" while it loads.
+- **Path Mappings says up front whether there is anything to do,** finds the folders by itself when Plex can't open your prerolls, and keeps the manual rules folded away until you want them.
+- **Apply on a category or sequence, and the external API, ask before changing Plex's list in the middle of someone's prerolls.**
+- **Coming Soon trailers keep playing for Days visible after their movie or show arrives,** instead of being removed at the next sync, and the Upcoming page keeps a movie downloaded early as Available Now.
+- **The Sequence Builder marks blocks that have nothing to play and won't save until they are fixed,** keeps unsaved work when you leave, and has **Back to schedule** when opened from a schedule.
+- **The setup wizard follows your theme, works with the keyboard and warns before leaving a step with unsaved details;** its last step shows what is really set up.
+- **NeXroll API keys are kept in UI backups** (as hashes, never the key), so scripts and plugin keys keep working after moving to a new install.
+- **Jellyfin and Emby follow a schedule's Sequential playback setting.**
+- **Small text across the app is larger,** and messages such as "Schedule name is required" show even with notifications turned off.
+- **Community Prerolls: the bulk download bar stays on screen while you scroll.**
+
+### Fixed
+
+- **Plex could miss a trailer** when the preroll list changed between two items of a movie that had just started. A removed trailer now stays on disk until Plex's list no longer has it.
+- **A blend got stuck on a schedule whose category is empty,** so Plex kept the previous list all day. That schedule is now left out.
+- **A preroll in Plex's list that was renamed, moved, replaced or deleted stayed in the list,** as did old paths after the path mappings changed; Plex now gets a new list within a minute. Coming Soon lists and generated prerolls are swapped in only once fully rendered.
+- **The external API's apply-category ignored path mappings** and included disabled prerolls, and the Scheduler tile's Last applied could show a list Plex never took.
+- **The automatic movie trailer sync ignored Include unmonitored movies, the release date preference and the storage limit,** and didn't download a trailer again when its file was deleted. Coming Soon lists ignored Include unmonitored movies, and the list preview ignored the Available Now limit.
+- **A trailer whose release date moved was removed early and downloaded again;** trailers now follow the current date in Radarr and Sonarr.
+- **TV trailers:** Maximum stored trailers didn't hold across syncs, the automatic sync removed them 5 days after a premiere instead of after Days visible, and a failed download was never tried again. Re-releases of older movies no longer get trailers.
+- **The setup wizard reported Radarr, Sonarr or a storage folder as connected or saved when they failed.** Connecting Emby or Plex to a wrong address gives a plain message, and changing the preroll folder no longer fails on some Windows installs after it was saved.
+- **The Connect page didn't say when the Jellyfin or Emby plugin is set up for another NeXroll;** it now warns and asks before taking it over. The plugin's API key is no longer sent to the browser, an Emby plugin address NeXroll repaired is no longer reported as "Plugin Not Found", and the Plex token instructions are correct.
+- **A Database restore could turn sign-in on for an install with no accounts,** and hand-added NeX-Up trailers were left out of the System Backup.
+
 ## [2.4.0] - 11-05-2026
 
 > Windows installs can now install updates from Settings > System, or on their own at an hour you pick. Also: setup asks for your timezone and NeXroll says when it differs from your device's, and with login on NeXroll names Jellyfin and Emby plugins that connect without an API key.
