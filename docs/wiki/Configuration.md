@@ -418,7 +418,7 @@ Always download a backup before:
 
 ### Test Path Mappings
 
-Use the Test Translation feature to verify paths before applying to Plex. Incorrect path mappings are the most common cause of "prerolls not playing" issues.
+Use **Test a path** on the Path Mappings page to verify paths before applying to Plex. Incorrect path mappings are the most common cause of "prerolls not playing" issues.
 
 ### Check Timezone
 

@@ -40,6 +40,7 @@ If NeXroll is already connected to Emby, it can detect and configure the plugin 
 1. In NeXroll's **Connect → Emby** section, look for the **Plugin Detection** panel
 2. Click **Detect Plugin** — NeXroll will check if the plugin is already installed
 3. If detected, click **Configure Plugin** to push your NeXroll URL and settings to the plugin
+   If the plugin is set up for another NeXroll (or its key was deleted here), the panel says so and fills in this NeXroll's address; **Link plugin to this NeXroll** asks first, because the other NeXroll then stops playing prerolls on this server.
 
 ### Option 2: Manual Install
 

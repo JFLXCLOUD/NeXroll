@@ -25,16 +25,16 @@ You don't have to work it out yourself. From 2.2.1, **Settings > Path Mappings**
 ## The quick way (2.2.1)
 
 1. Connect Plex under [Connect](Connect) with the Plex server owner's account.
-2. Go to **Settings > Path Mappings** and click **Find it for me**. NeXroll looks through the folders your Plex server can see for every folder it hands Plex files from:
+2. NeXroll looks for its folders on the Plex server as soon as Plex is connected and saves the mappings it finds, so there is often nothing left to do. To run it again, go to **Settings > Path Mappings**. When Plex is set to play files it cannot open, the search starts by itself; otherwise click **Find it for me**. NeXroll looks through the folders your Plex server can see for every folder it hands Plex files from:
    - your preroll folder;
    - NeX-Up's trailer storage, if you moved it outside the preroll folder;
    - the movie folders [Library Trailers](NeX-Up#library-trailers) read trailer files from, when a trailer sits beside the movie.
 
    It only proposes a folder after finding some of your actual files in it, subfolders included, and says which folders already work.
-3. Click **Add this mapping** (or **Add these mappings** when there are several).
+3. Click **Use this mapping** (or **Use these mappings** when there are several).
 4. Apply a schedule or category, then click **Check again** under **Can Plex open your prerolls?**
 
-The first-run setup wizard offers the same **Find it for me** on its **Paths** step, which appears whenever Plex is connected. It works even before you have added any prerolls: NeXroll puts a small, clearly named test file in the folder, looks for it from Plex, and removes it.
+The first-run setup wizard runs the same search as soon as Plex is connected, so its **Paths** step (shown whenever Plex is connected) usually opens with the mapping already saved; **Find it for me** is there to run it again. It works even before you have added any prerolls: NeXroll puts a small, clearly named test file in the folder, looks for it from Plex, and removes it.
 
 If **Find it for me** can't find the folder, click **Browse Plex** next to a mapping's Plex path and pick the folder yourself. The list shows exactly what Plex can see. If you can't find your preroll folder there either, Plex can't reach it; see [Troubleshooting](#troubleshooting).
 
@@ -194,7 +194,7 @@ From 2.2.1, NeXroll asks Plex about the files before it changes Plex's preroll s
 - **Plex can see none of them:** Plex's current prerolls are left in place instead of being replaced with files Plex can't open, and System health reports an error.
 - **The check can't run** (NeXroll isn't connected with the owner account, the Plex version doesn't support it, or the network timed out): the prerolls are applied exactly as before 2.2.1.
 
-**Test Translation** on the Path Mappings page also shows whether Plex can open each translated path.
+**Test a path** on the Path Mappings page (open **Set mappings by hand**) also shows whether Plex can open each translated path.
 
 To switch the check off, set the environment variable `NEXROLL_PLEX_PATH_CHECK=0`.
 
@@ -241,4 +241,4 @@ The paths are fine; check the Plex side:
 When a preroll's main category changes, NeXroll files it in that category's folder and gives Plex the new path, so playback isn't affected.
 
 **The dashboard says "Plex connected" but prerolls don't play**
-"Connected" only means NeXroll can talk to Plex. **Plex can open prerolls** in System health tells you whether Plex can open the files.
+"Connected" only means NeXroll can talk to Plex. **Plex can open prerolls** in System health tells you whether Plex can open the files. When that is the top problem, the System health button reads **Fix it for me**: it runs the same search as Path Mappings and saves the mappings it finds, and only opens Path Mappings when a folder can't be found.

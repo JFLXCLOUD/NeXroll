@@ -651,12 +651,49 @@ Content-Type: application/json
 {
   "mappings": [
     {
-      "nexroll_path": "/prerolls",
-      "plex_path": "/media/prerolls"
+      "local": "/prerolls",
+      "plex": "/media/prerolls"
     }
   ]
 }
 ```
+
+Replaces every mapping. Add `?merge=true` to keep the existing ones and replace only those with the same `local` folder.
+
+### Test a Path
+
+```http
+POST /settings/path-mappings/test
+Content-Type: application/json
+
+{"paths": ["/prerolls/Christmas/intro.mp4"], "check_plex": true}
+```
+
+Shows how each path is translated and which mapping matched; with `check_plex`, also whether Plex can open the result.
+
+### Find the Folders on Plex
+
+```http
+POST /settings/path-mappings/detect
+```
+
+What **Find it for me** runs: looks for NeXroll's folders (prerolls, NeX-Up storage outside it, Library Trailers movie folders) among the folders the Plex server can see. Returns `folders` (one result each, with `found`) and `suggestions` (the mappings needed). Nothing is saved. Send `{"local_folder": "..."}` to check one folder.
+
+### Set Mappings Up Automatically
+
+```http
+POST /settings/path-mappings/auto-setup
+```
+
+Runs the same search and saves every mapping it confirmed; a mapping for the same NeXroll folder is replaced and the others are kept. Returns the detect report plus `saved` (the mappings written), `not_found` (folders it could not find) and `working` (every folder is reachable). NeXroll calls it after Plex is connected and from the dashboard's **Fix it for me**.
+
+### Browse Plex Folders
+
+```http
+GET /plex/browse?path=/media
+```
+
+Lists a folder as the Plex server sees it (the **Browse Plex** picker). Without `path`, lists the top-level folders. Needs the Plex server owner's account.
 
 ---
 

@@ -158,7 +158,7 @@ For **Jellyfin and Emby**, path mappings can also be configured in the NeXroll I
 
 ### Testing Mappings
 
-Use **Settings → Test Translation** to verify paths before applying categories to Plex.
+Use **Settings → Path Mappings → Test a path** to verify paths before applying categories to Plex.
 
 ## Linux Host Networking (Alternative)
 

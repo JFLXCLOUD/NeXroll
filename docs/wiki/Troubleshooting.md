@@ -235,7 +235,7 @@ docker compose up -d
 
 ### Prerolls Not Playing
 
-1. **Test translation**: Settings → Test Translation
+1. **Test a path**: Settings → Path Mappings → Test a path
 2. **Verify your media server can access** the translated path
 3. **Check permissions**: Can the media server read the files?
 4. **NeX-Up trailers**: Don't forget to add mappings for trailer storage paths too
