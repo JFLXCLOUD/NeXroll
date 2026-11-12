@@ -13,6 +13,10 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.5.1
+
+- **NeX-Up Settings has the Include unmonitored switches again.** They went missing from the page in 2.2.0. Find them under **NeX-Up > Settings > Upcoming and retention**. See [NeX-Up settings](NeX-Up#nex-up-settings).
+
 ## What's New in v2.5.0
 
 - **NeX-Up's trailer options do what they say.** Coming Soon trailers keep playing for Days visible after their movie or show arrives, every sync follows Include unmonitored movies, the release date preference and the storage limit, and a title you leave off the Coming Soon list stays off. See [Upcoming Releases](NeX-Up#upcoming-releases) and [Available Now!](NeX-Up#available-now).
