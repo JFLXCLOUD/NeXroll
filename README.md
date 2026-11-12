@@ -15,6 +15,9 @@
 
 ---
 
+> **Fork:** this is artic5693's fork of [JFLXCLOUD/NeXroll](https://github.com/JFLXCLOUD/NeXroll). Docker images are published to `ghcr.io/artic5693/nexroll`; badges and release links point upstream.
+
+
 NeXroll turns your home theater into a night at the cinema. It's a preroll manager for Plex, Jellyfin, and Emby that plays the cinematic intros before a movie, with holiday and seasonal scheduling, automatic trailers for upcoming releases, and a built-in community intro library. Install it on Windows or run it in Docker, self-contained and ready to go in a few minutes.
 
 ---
@@ -84,7 +87,7 @@ After install, visit http://localhost:9393 to use the web UI.
 NeXroll is available as an official Docker image supporting AMD64 and ARM64.
 
 ```bash
-docker pull jbrns/nexroll:latest
+docker pull ghcr.io/artic5693/nexroll:latest
 ```
 
 ### docker-compose (Recommended)
@@ -93,7 +96,7 @@ docker pull jbrns/nexroll:latest
 version: "3.8"
 services:
   nexroll:
-    image: jbrns/nexroll:latest
+    image: ghcr.io/artic5693/nexroll:latest
     container_name: nexroll
     ports:
       - "9393:9393"
@@ -152,7 +155,7 @@ Because NeXroll runs inside a container, paths it sees differ from what your med
 ### Updating
 
 ```bash
-docker pull jbrns/nexroll:latest
+docker pull ghcr.io/artic5693/nexroll:latest
 docker compose up -d --force-recreate
 ```
 
