@@ -1,5 +1,17 @@
 ﻿# Changelog
 
+## [2.5.1] - 11-12-2026
+
+> One fix for NeX-Up Settings: the Include unmonitored switches are back.
+
+### Upgrading
+
+- **No plugin update is needed.** No settings or database changes.
+
+### Fixed
+
+- **NeX-Up Settings has the Include unmonitored movies and Include unmonitored TV shows switches again.** They went missing from the page in 2.2.0, so the setting could not be changed; whatever it was set to before then stayed in effect.
+
 ## [2.5.0] - 11-11-2026
 
 > NeX-Up's trailer options now do what they say, the dashboard shows what is really playing, and Plex's preroll list stays playable while things change. Also: connecting Plex sets up path mappings by itself, and the setup wizard, Connect page and Sequence Builder tell you what really happened.
