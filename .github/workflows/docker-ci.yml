@@ -141,6 +141,7 @@ jobs:
         run: |
           docker run --rm nexroll:ci sh -c '
             if python -c "import pip" 2>/dev/null; then echo "::error::pip is installed"; exit 1; fi
+            if ls /usr/local/lib/python3.*/ensurepip/_bundled/*.whl 2>/dev/null; then echo "::error::ensurepip bundled wheel shipped"; exit 1; fi
             for pkg in typescript eslint prettier; do
               if [ -d /opt/bgutil-provider/server/node_modules/$pkg ]; then echo "::error::$pkg shipped"; exit 1; fi
             done
