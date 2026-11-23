@@ -10,11 +10,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  # GitHub forces Node 24 for JS actions from 2026-06-16; opt in now so the
-  # switch is validated on our schedule. Safe to delete after 2026-09-16.
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 # Least privilege by default; jobs that publish declare more.
 permissions:
   contents: read
@@ -26,8 +21,8 @@ jobs:
       run:
         working-directory: NeXroll/frontend
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -40,8 +35,8 @@ jobs:
   backend-syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Compile all backend sources
