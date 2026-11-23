@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import TimezoneNotice from './TimezoneNotice';
-import { browserTimeZone } from '../utils/timezones';
+import { browserTimeZone, zoneOffsetMinutes } from '../utils/timezones';
 
 const NOW = new Date(Date.UTC(2026, 10, 3, 0, 47));
 const DEVICE = browserTimeZone();
@@ -32,7 +32,10 @@ test('Keep hides it in this browser until either zone changes', () => {
   const again = render(<TimezoneNotice timeZone={OTHER} now={NOW} onUse={() => {}} />);
   expect(again.container).toBeEmptyDOMElement();
   again.unmount();
-  const third = OTHER === 'UTC' ? 'Asia/Tokyo' : 'UTC';
+  // A third zone on another offset from this device's: UTC itself on a device
+  // that runs on UTC (CI does) would hide the notice.
+  const third = ['UTC', 'Asia/Tokyo'].find(
+    (zone) => zone !== OTHER && zoneOffsetMinutes(zone, NOW) !== zoneOffsetMinutes(DEVICE, NOW));
   render(<TimezoneNotice timeZone={third} now={NOW} onUse={() => {}} />);
   expect(screen.getByText(`Schedules run on ${third} time, not this device's`)).toBeInTheDocument();
 });
