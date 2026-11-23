@@ -1,5 +1,33 @@
 ﻿# Changelog
 
+## [2.5.2] - 11-23-2026
+
+> A security and upkeep update: the Docker image moves to Python 3.14 and its weekly refresh really rebuilds it, the YouTube PO-token provider gets its security fixes, and NeX-Up tells age-restricted trailers apart from YouTube's bot block.
+
+### Upgrading
+
+- **Windows: Settings > System > Install Update** installs 2.5.2, or run the installer over your existing install.
+- **Docker: the image runs Python 3.14** instead of 3.12. Nothing to change.
+- **Running from source needs Python 3.11 or newer.** 3.10 reached end of life in October.
+- **No plugin update is needed.** No settings or database changes.
+
+### Security
+
+- **The Docker image runs Python 3.14,** the same version as the Windows installer, with CPython security fixes that 3.12 no longer gets.
+- **The weekly Docker refresh rebuilds the image from scratch.** In weeks when Docker's Python base image hadn't changed, it published the same image again, without the newest Debian security updates or yt-dlp.
+- **The YouTube PO-token provider is updated to 2.0.2** (security fixes in its dependencies). Windows installs offer Update in NeX-Up Settings; Docker images include it.
+- **Updated libraries.** The Windows installer moves to Python 3.14.10 with current packages, including yt-dlp 2026.10.26 (2.5.1 had 2026.8.19).
+
+### Changed
+
+- **Docker images are tested before they are published,** the weekly refresh included: if a new release of a dependency breaks NeXroll, the previous image stays in place.
+
+### Fixed
+
+- **Age-restricted trailers are reported as age-restricted,** not as a YouTube bot block, so the Sync button no longer asks to re-export cookies for them.
+- **NeX-Up no longer calls TMDB with NeXroll's old built-in key,** which TMDB revoked. Add your own free key in NeX-Up Settings for more trailer sources and trailer languages.
+- **Docker: time zone names such as US/Eastern and Canada/Eastern are recognized.** The image quietly used UTC for them, so dates and the Available Now cut-off changed over at the wrong hour.
+
 ## [2.5.1] - 11-12-2026
 
 > One fix for NeX-Up Settings: the Include unmonitored switches are back.
