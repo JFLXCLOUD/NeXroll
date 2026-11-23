@@ -436,7 +436,7 @@ def reset_state() -> None:
 # -- finding NeXroll's folder on the Plex side ---------------------------------
 
 def is_system_folder(path: str) -> bool:
-    """A folder no preroll library lives in (/dev, C:\Windows, ...)."""
+    r"""A folder no preroll library lives in (/dev, C:\Windows, ...)."""
     mod = plex_path_module(path)
     if mod.__name__ == "ntpath":
         name = mod.basename(path.rstrip("\\/")).lower()
