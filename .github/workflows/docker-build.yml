@@ -164,6 +164,8 @@ jobs:
       # Nothing is pushed until the release's backend tests pass inside the
       # amd64 image (the same step as docker-ci.yml): packages resolve at build
       # time from minimums in requirements.txt. The push below reuses its layers.
+      # Unchanged layers (apt, pip) come from the cache, which the weekly
+      # refresh rebuilds from scratch, so they are at most about a week old.
       - name: Build the amd64 image for the tests
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -179,7 +181,7 @@ jobs:
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Backend tests in the image
         run: |

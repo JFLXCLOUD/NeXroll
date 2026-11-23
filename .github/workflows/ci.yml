@@ -1,11 +1,12 @@
 name: CI
 
 # Every push to main and every pull request: the frontend tests and build, and
-# the backend tests on the two Pythons NeXroll ships with (3.12 in the Docker
-# image, 3.14 in the Windows installer). requirements.txt sets only minimums,
-# so the newest releases are installed and a breaking one fails here. The
-# Docker workflows run the backend tests again inside the image before they
-# push it.
+# the backend tests on Linux and Windows with the Python NeXroll ships (3.14 in
+# both the Docker image and the Windows installer), plus Linux with an older
+# Python for people who run it from source. requirements.txt sets only
+# minimums, so the newest releases are installed and a breaking one fails
+# here. The Docker workflows run the backend tests again inside the image
+# before they push it.
 on:
   push:
     branches: [main]
@@ -43,9 +44,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: Docker, Linux + Python 3.12
+          - label: Docker, Linux + Python 3.14
             os: ubuntu-latest
-            python: "3.12"
+            python: "3.14"
             extra: ""
           # The installer's build environment also has pywin32 (Windows
           # Credential Manager for the secure store).
@@ -53,6 +54,12 @@ jobs:
             os: windows-latest
             python: "3.14"
             extra: pywin32
+          # The Docker image ran 3.12 until 2.5.2; kept so source installs on
+          # an older Python stay covered.
+          - label: source installs, Linux + Python 3.12
+            os: ubuntu-latest
+            python: "3.12"
+            extra: ""
     runs-on: ${{ matrix.os }}
     defaults:
       run:

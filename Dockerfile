@@ -4,11 +4,18 @@
 # Pinned like BGUTIL_VERSION below; bump it when yt-dlp needs a newer Deno.
 ARG DENO_VERSION=2.9.7
 
+# Python for both the builder and the runtime stage. They must match: the
+# wheels built in one are installed in the other. Same minor version as the
+# Windows installer (.venv314). The slim tag follows the newest patch release.
+# It was 3.12 until 2.5.2, when image scans listed five CPython security fixes
+# that only reached 3.13 and 3.14.
+ARG PYTHON_VERSION=3.14
+
 # --- Deno binary (copied into the runtime stage) ---
 FROM denoland/deno:bin-${DENO_VERSION} AS deno
 
 # --- Build stage: compile Python wheels with native deps ---
-FROM python:3.12-slim AS builder
+FROM python:${PYTHON_VERSION}-slim AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -25,11 +32,12 @@ RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 # --- PO-token provider build stage (bgutil) ---
 # Builds the YouTube Proof-of-Origin token server. This is what gets NeX-Up past
 # YouTube's "Sign in to confirm you're not a bot" wall. node:22 + bookworm keeps
-# it glibc-compatible with the python:3.12-slim runtime so we can copy node and
-# the (native-canvas) node_modules across stages. node:22 (>=22.12) is required
-# because the provider's jsdom stack pulls an ESM-only @exodus/bytes that is
-# loaded via require(); on Node <22.12 that crashes the server at startup with
-# ERR_REQUIRE_ESM. Keep BGUTIL_VERSION in sync with the bgutil-ytdlp-pot-provider
+# it glibc-compatible with the Python runtime stage (Debian trixie, newer glibc)
+# so we can copy node and the (native-canvas) node_modules across stages.
+# node:22 (>=22.12) is required because the provider's jsdom stack pulls an
+# ESM-only @exodus/bytes that is loaded via require(); on Node <22.12 that
+# crashes the server at startup with ERR_REQUIRE_ESM. Keep BGUTIL_VERSION in
+# sync with the bgutil-ytdlp-pot-provider
 # pin in requirements.txt and PROVIDER_VERSION in backend/nexup_potoken.py.
 # 2.0.0 fixes a remote code execution hole (GHSA-qpv9-8xfj-xx9m) in servers
 # listening on every interface, which 1.x did by default; 2.0.1 and 2.0.2 are
@@ -81,7 +89,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends zip && \
     zip -j /out/NeXroll.Jellyfin.zip publish/NeXroll.Jellyfin.dll meta.json thumb.png
 
 # --- Runtime stage: slim image without build tools ---
-FROM python:3.12-slim
+FROM python:${PYTHON_VERSION}-slim
 
 ARG APP_VERSION=dev
 ARG VERSION=dev
@@ -160,7 +168,7 @@ COPY requirements.txt /app/NeXroll/requirements.txt
 RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
     pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt && \
     python -m pip uninstall -y pip && \
-    rm -rf /usr/local/lib/python3.12/ensurepip/_bundled /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12
+    rm -rf /usr/local/lib/python3.*/ensurepip/_bundled /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.*
 
 # Fail the build if a broken/partial yt-dlp wheel is ever resolved — this is
 # the exact failure shape that caused a day-long outage in the field

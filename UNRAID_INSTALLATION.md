@@ -277,7 +277,7 @@ http://[UNRAID-IP]:9393
 - **Current Version:** 1.11.0
 - **Docker Image:** `jbrns/nexroll:latest`
 - **Platform:** linux/amd64, linux/arm64
-- **Base:** Python 3.12 + prebuilt frontend
+- **Base:** Python 3.14 + prebuilt frontend
 
 ---
 

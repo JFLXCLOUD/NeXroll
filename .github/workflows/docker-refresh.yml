@@ -19,6 +19,13 @@ name: Scheduled Docker Refresh (floating tags)
 # inside it; nothing is pushed unless they pass. requirements.txt sets only
 # minimums, so a breaking upstream release stops here and last week's image
 # stays in place.
+#
+# Every build here skips the layer cache. With the cache, a week in which
+# Docker's python base image had not changed re-pushed the same image: the
+# cached `pip wheel` and `apt-get upgrade` layers kept last week's yt-dlp and
+# Debian packages (November 23, 2026: every layer cached, a one-minute run,
+# and Debian's glibc fixes left out). The push builds still export their
+# fresh layers, which docker-build.yml's release builds start from.
 
 on:
   schedule:
@@ -133,7 +140,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Nothing is pushed until the backend tests pass inside the amd64 image
-      # (the same step as docker-ci.yml). The push below reuses its layers.
+      # (the same step as docker-ci.yml). The push below builds the release
+      # again, also without the cache, minutes later: both resolve the same
+      # packages unless a new one is published in between.
       - name: Build the amd64 image for the tests
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -145,11 +154,11 @@ jobs:
           tags: nexroll:test
           build-args: |
             VERSION=${{ needs.resolve-refs.outputs.stable_tag }}
-          cache-from: type=gha
+          no-cache: true
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Backend tests in the image
         run: |
@@ -171,7 +180,7 @@ jobs:
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
           build-args: |
             VERSION=${{ needs.resolve-refs.outputs.stable_tag }}
-          cache-from: type=gha
+          no-cache: true
           cache-to: type=gha,mode=max
 
   refresh-beta:
@@ -207,7 +216,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Nothing is pushed until the backend tests pass inside the amd64 image
-      # (the same step as docker-ci.yml). The push below reuses its layers.
+      # (the same step as docker-ci.yml). The push below builds it again
+      # without the cache, as refresh-latest does.
       - name: Build the amd64 image for the tests
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -219,11 +229,11 @@ jobs:
           tags: nexroll:test
           build-args: |
             VERSION=${{ needs.resolve-refs.outputs.beta_tag }}
-          cache-from: type=gha
+          no-cache: true
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Backend tests in the image
         run: |
@@ -247,5 +257,5 @@ jobs:
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
           build-args: |
             VERSION=${{ needs.resolve-refs.outputs.beta_tag }}
-          cache-from: type=gha
+          no-cache: true
           cache-to: type=gha,mode=max

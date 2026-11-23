@@ -60,11 +60,13 @@ jobs:
 
       # The backend tests inside the image: its Python and the exact packages it
       # ships, with its ffmpeg, fonts and tzdata. The image has no pip, so pytest
-      # comes from the runner; the checkout is mounted read-only. The release
-      # build and the weekly refresh run the same step before they push.
+      # comes from the runner (pure Python, so it also runs in an image built
+      # from an older tag with an older Python); the checkout is mounted
+      # read-only. The release build and the weekly refresh run the same step
+      # before they push.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Backend tests in the image
         run: |
