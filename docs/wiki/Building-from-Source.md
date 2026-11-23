@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11 or newer (the released installer is built with 3.14)
 - Node.js 14+ and npm
 - NSIS 3+ (for installer)
 - PyInstaller

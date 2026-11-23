@@ -89,7 +89,7 @@ For developers or advanced users who want to run from source.
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.11 or higher (3.14 recommended; the Windows installer and Docker image use it)
 - pip (Python package manager)
 - FFmpeg (for thumbnails, video scaling, and Coming Soon List generation)
 - Git (optional, for cloning)
