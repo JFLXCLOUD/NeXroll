@@ -13,6 +13,14 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
+## What's New in v2.5.2
+
+- **The Docker image runs Python 3.14,** the same version as the Windows installer, and the weekly image refresh now rebuilds it from scratch, so each week brings the newest Debian security updates and yt-dlp. Images are tested before they are published. See [Docker](Docker).
+- **The YouTube PO-token provider is updated to 2.0.2** for security fixes in its dependencies; Windows installs offer **Update** in NeX-Up Settings. See [YouTube Downloads](NeX-Up#youtube-downloads-cookie-free).
+- **Age-restricted trailers are reported as age-restricted,** not as a YouTube bot block. See [Why are my trailer downloads failing?](FAQ#why-are-my-trailer-downloads-failing)
+- **NeX-Up uses only your own TMDB key,** since TMDB revoked the one NeXroll shipped. See [NeX-Up settings](NeX-Up#nex-up-settings).
+- **Docker accepts time zone names such as `US/Eastern`,** which used to mean UTC, and running from source needs Python 3.11 or newer. See [Docker](Docker#schedules-running-at-wrong-time) and [Installation](Installation#python-manual).
+
 ## What's New in v2.5.1
 
 - **NeX-Up Settings has the Include unmonitored switches again.** They went missing from the page in 2.2.0. Find them under **NeX-Up > Settings > Upcoming and retention**. See [NeX-Up settings](NeX-Up#nex-up-settings).

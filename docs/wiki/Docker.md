@@ -338,6 +338,7 @@ docker run --user $(id -u):$(id -g) ...
 - **Set your timezone!** Use the `TZ` environment variable
 - Example: `TZ=America/New_York`, `TZ=Europe/London`
 - List of timezones: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+- Before 2.5.2, older names such as `US/Eastern` or `Canada/Eastern` (often copied from a Sonarr or Radarr container) silently meant UTC. Update, or use the Region/City name (`America/New_York`, `America/Toronto`).
 
 ### ARM64 Issues
 - NeXroll supports ARM64 natively
