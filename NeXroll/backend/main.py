@@ -20582,25 +20582,27 @@ async def test_tmdb_key(api_key: Optional[str] = None, db: Session = Depends(get
     """Validate a TMDB API key against TMDB's own /authentication endpoint —
     a lightweight, side-effect-free way to check a key without searching for
     a real movie. If api_key isn't passed (e.g. testing what's already saved),
-    falls back to the configured key, then NeXroll's bundled key, mirroring
-    TMDBTrailerFetcher's own fallback in radarr_connector.py.
+    the configured key is tested. There is no built-in key any more (TMDB
+    revoked the one NeXroll shipped), so without either nothing is sent.
     """
     import httpx
-    from backend.radarr_connector import TMDB_API_KEY, TMDB_BASE_URL
+    from backend.radarr_connector import TMDB_BASE_URL, tmdb_key
 
-    key = api_key
+    key = tmdb_key(api_key)
     if not key:
         setting = db.query(models.Setting).first()
-        key = getattr(setting, 'nexup_tmdb_api_key', None) if setting else None
+        key = tmdb_key(getattr(setting, 'nexup_tmdb_api_key', None) if setting else None)
     using_custom_key = bool(key)
-    key = key or TMDB_API_KEY
+    if not key:
+        return {"valid": False, "using_custom_key": False,
+                "message": "No TMDB API key is set, so NeX-Up skips TMDB's trailer lists."}
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(f"{TMDB_BASE_URL}/authentication", params={'api_key': key})
         if response.status_code == 200:
             return {"valid": True, "using_custom_key": using_custom_key,
-                    "message": "TMDB API key is valid." if using_custom_key else "Using NeXroll's bundled TMDB key (valid)."}
+                    "message": "TMDB API key is valid."}
         elif response.status_code == 401:
             return {"valid": False, "using_custom_key": using_custom_key,
                     "message": "TMDB rejected this key (invalid or expired)."}
@@ -23527,7 +23529,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
                     clean = rest.strip()
 
             if err_code in ('VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED', 'TOO_LONG', 'NO_LANGUAGE_MATCH',
-                            'TMDB_KEY_REJECTED'):
+                            'TMDB_KEY_REJECTED', 'TMDB_KEY_MISSING'):
                 # Concrete, known reason from YouTube — show it verbatim (already
                 # written for users, and NOT "try again", which would mislead).
                 help_msg = clean
@@ -24261,13 +24263,15 @@ async def sync_nexup(db: Session = Depends(get_db)):
                         results["skipped_no_language"] = results.get("skipped_no_language", 0) + 1
                         _nexup_sync_progress["status"] = f"Skipped '{movie['title']}' - no trailer in your language yet"
                         _file_log(f"NeX-Up sync: Skipped '{movie['title']}' - {detail_msg.split(':', 1)[-1].strip()}")
-                    elif error_code == 'TMDB_KEY_REJECTED':
+                    elif error_code in ('TMDB_KEY_REJECTED', 'TMDB_KEY_MISSING'):
                         # The same for every movie, so it is reported once.
                         error_msg = detail_msg.split(':', 1)[-1].strip()
                         if error_msg not in results["errors"]:
                             results["errors"].append(error_msg)
                             log_event('WARNING', 'nexup', error_msg, source='sync_nexup', db=db)
-                        _nexup_sync_progress["status"] = f"Couldn't look up '{movie['title']}' - TMDB rejected the API key"
+                        _nexup_sync_progress["status"] = (
+                            f"Couldn't look up '{movie['title']}' - "
+                            + ("TMDB rejected the API key" if error_code == 'TMDB_KEY_REJECTED' else "no TMDB API key"))
                         _file_log(f"NeX-Up sync: '{movie['title']}' - {error_msg}")
                     elif 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
                         error_msg = "YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"

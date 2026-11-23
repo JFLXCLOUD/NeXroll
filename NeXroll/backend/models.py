@@ -371,7 +371,7 @@ class Setting(Base):
     nexup_download_delay = Column(Integer, default=5)  # Seconds to wait between downloads (YouTube rate limiting)
     nexup_max_concurrent = Column(Integer, default=1)  # Max concurrent downloads (1 = sequential)
     nexup_bulk_warning_threshold = Column(Integer, default=5)  # Show warning when downloading more than this many
-    nexup_tmdb_api_key = Column(String, nullable=True)  # User's TMDB API key (optional, uses fallback if not provided)
+    nexup_tmdb_api_key = Column(String, nullable=True)  # User's TMDB API key (optional; without it TMDB is skipped)
     
     # NeX-Up Sonarr Settings (TV show trailers)
     nexup_sonarr_enabled = Column(Boolean, default=False)  # Enable Sonarr integration

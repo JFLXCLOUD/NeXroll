@@ -113,7 +113,8 @@ class TmdbLookupTests(unittest.TestCase):
 
     def sources(self, language, results):
         FakeClient.results = results
-        return asyncio.run(TMDBTrailerFetcher().get_trailer_sources(603, language=language))
+        # TMDB is only asked with a key of the user's own.
+        return asyncio.run(TMDBTrailerFetcher(tmdb_api_key="users-key").get_trailer_sources(603, language=language))
 
     def test_english_lookup_is_unchanged(self):
         self.sources("en", [video("en1", "en", "US")])
@@ -183,7 +184,9 @@ class DownloaderLanguageTests(unittest.TestCase):
         return src
 
     def download(self, language="en", fallback="english", url=RADARR_URL, only_provided_url=False):
-        downloader = TrailerDownloader(self.tmp.name, "1080", language=language, language_fallback=fallback)
+        # TMDB lists sources only for a user's key (none is built in now).
+        downloader = TrailerDownloader(self.tmp.name, "1080", tmdb_api_key="users-key",
+                                       language=language, language_fallback=fallback)
         # Rank as the real fetcher would for this language.
         for src in self.tmdb_sources:
             src["language_rank"] = (0 if language == "en" else

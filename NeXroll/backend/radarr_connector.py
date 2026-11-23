@@ -21,9 +21,16 @@ from backend.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
-# TMDB API for getting trailer sources
-TMDB_API_KEY = "8d6d91941230817f7571f3524e6d49fc"  # Public API key for trailer lookups
+# TMDB API for getting trailer sources. Lookups use the user's own key
+# (NeX-Up > Settings); without one TMDB is skipped. NeXroll used to ship a
+# shared key, but TMDB revoked it (401 since at least October 2026), so every
+# sync made a failing call and logged a warning.
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
+
+
+def tmdb_key(value) -> Optional[str]:
+    """The user's TMDB key, trimmed; None when there isn't one."""
+    return (str(value).strip() or None) if value else None
 
 # Apple Trailers base URL
 APPLE_TRAILERS_BASE = "https://trailers.apple.com"
@@ -109,10 +116,11 @@ class TMDBTrailerFetcher:
     """Fetches trailer URLs from TMDB with multiple source support"""
     
     def __init__(self, tmdb_api_key: str = None):
-        self.api_key = tmdb_api_key or TMDB_API_KEY
+        self.api_key = tmdb_key(tmdb_api_key)
         self.base_url = TMDB_BASE_URL
         self.apple_fetcher = AppleTrailerFetcher()
-        self.tmdb_available = True  # Track if TMDB is working
+        # False without a key, or once TMDB rejects it.
+        self.tmdb_available = bool(self.api_key)
     
     async def get_trailer_sources(self, tmdb_id: int, title: str = None, year: int = None,
                                   language: str = trailer_language.DEFAULT_LANGUAGE) -> List[Dict[str, Any]]:
@@ -1068,12 +1076,19 @@ class TrailerDownloader:
                 trailer_sources = self._order_by_language(trailer_sources)
                 if not trailer_sources and tmdb_id and not self.tmdb.tmdb_available:
                     # Not "no trailer in that language": NeXroll couldn't ask.
+                    if self.tmdb.api_key:
+                        message = (
+                            f"TMDB_KEY_REJECTED: TMDB rejected the API key, so NeXroll can't look up "
+                            f"{trailer_language.label(self.language)} trailers. Check your TMDB API key with "
+                            f"Test key under NeX-Up > Settings > Metadata and automation, then sync again.")
+                        logger.warning(f"{title}: {message}")
+                        return {'error': 'TMDB_KEY_REJECTED', 'message': message}
                     message = (
-                        f"TMDB_KEY_REJECTED: TMDB rejected the API key, so NeXroll can't look up "
-                        f"{trailer_language.label(self.language)} trailers. Add your own free TMDB API key "
-                        f"under NeX-Up > Settings > Metadata and automation, then sync again.")
-                    logger.warning(f"{title}: {message}")
-                    return {'error': 'TMDB_KEY_REJECTED', 'message': message}
+                        f"TMDB_KEY_MISSING: {trailer_language.label(self.language)} trailers come from TMDB, "
+                        f"which needs an API key. Add your own free TMDB API key under NeX-Up > Settings > "
+                        f"Metadata and automation, then sync again.")
+                    logger.info(f"{title}: {message}")
+                    return {'error': 'TMDB_KEY_MISSING', 'message': message}
                 if not trailer_sources:
                     message = (
                         f"NO_LANGUAGE_MATCH: TMDB lists no {trailer_language.label(self.language)} trailer for "

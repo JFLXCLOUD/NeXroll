@@ -16,8 +16,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# TMDB API for getting trailer sources
-TMDB_API_KEY = "8d6d91941230817f7571f3524e6d49fc"  # Public API key for trailer lookups
+# TMDB API for getting trailer sources: the user's own key only (TMDB revoked
+# the shared key NeXroll used to ship; see radarr_connector.tmdb_key).
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 
 
@@ -382,9 +382,10 @@ class TVTrailerFetcher:
     """Fetches trailer URLs from TMDB and IMDB for TV shows"""
     
     def __init__(self, tmdb_api_key: str = None):
-        self.api_key = tmdb_api_key or TMDB_API_KEY
+        self.api_key = (str(tmdb_api_key).strip() or None) if tmdb_api_key else None
         self.base_url = TMDB_BASE_URL
-        self.tmdb_available = True  # Track if TMDB is working
+        # False without a key (IMDB is the fallback), or once TMDB rejects it.
+        self.tmdb_available = bool(self.api_key)
     
     async def get_imdb_trailers(self, imdb_id: str) -> List[Dict[str, Any]]:
         """

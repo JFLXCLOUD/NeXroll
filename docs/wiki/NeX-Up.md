@@ -78,6 +78,7 @@ Go to the **Settings** tab to configure:
 | **Auto-Cleanup** | Remove trailers after content releases and lands in your library | Enabled |
 | **Release Date to Use** | Which date a trailer follows: **Digital First** (default), **Digital Only** (skip movies with no digital date), **Physical First**, or **Theatrical**. Retention is measured from this date, so a trailer is never removed before the movie is out. Every sync brings the stored date up to date, so a movie that moves keeps its trailer until the new date | Digital First |
 | **Include Unmonitored** | Include unmonitored content from Radarr/Sonarr: in the syncs, on the Upcoming page and on Coming Soon lists | Disabled |
+| **TMDB API key** | Under **Metadata and automation**. Your own free key from TMDB (Settings → API). NeX-Up uses TMDB's trailer lists to find more trailers to try when Radarr's link fails, and for [trailer languages](#trailer-languages). Without a key, NeX-Up skips TMDB | Add one |
 
 
 ### Trailer languages
@@ -88,7 +89,7 @@ Radarr's trailer link is the English trailer. With a **Trailer language** set, N
 2. A trailer in the same language from another region.
 3. Otherwise, Radarr's English trailer and the other English sources, unless the fallback is **Skip the movie for now**. Skipped movies show in the sync summary and are checked again on the next sync, so they pick up a localized trailer once TMDB lists one.
 
-> **You need your own TMDB API key for this.** TMDB no longer accepts the key built into NeXroll. A key is free: create a TMDB account, request one under Settings → API, and paste the API key (v3) into **NeX-Up → Settings → Metadata and automation**. Without one, the English fallback still downloads Radarr's trailer, and **Skip the movie for now** reports that TMDB rejected the key.
+> **You need your own TMDB API key for this.** NeXroll no longer ships a key of its own (TMDB revoked the one it used). A key is free: create a TMDB account, request one under Settings → API, and paste the API key (v3) into **NeX-Up → Settings → Metadata and automation**. Without one, the English fallback still downloads Radarr's trailer, and **Skip the movie for now** reports that a TMDB key is needed.
 
 Changing the setting affects new downloads only. To replace a trailer you already have, delete it and download it again.
 
