@@ -308,7 +308,8 @@ class SharedResolverTests(unittest.TestCase):
 
     def test_plex_schedule_apply_honours_conditions(self):
         connector = MagicMock()
-        connector.get_server_info.return_value = {"platform": "Windows"}
+        # The platform the test's temp paths belong to (Plex refuses another style).
+        connector.get_server_info.return_value = {"platform": "Windows" if os.name == "nt" else "Linux"}
         connector.set_preroll.return_value = True
         schedule = scheduler_module.models.Schedule(
             id=1, name="Guarded", category_id=None,

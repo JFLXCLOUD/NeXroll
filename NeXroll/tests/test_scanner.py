@@ -116,7 +116,11 @@ class PrerollScannerCategoryTests(unittest.TestCase):
 
     def test_ignore_matching_is_case_and_separator_insensitive(self):
         path = self._write_video("Generic", "intro.mp4")
-        scruffy = path.replace(os.sep, os.sep + "." + os.sep).upper()
+        scruffy = path.replace(os.sep, os.sep + "." + os.sep)
+        # Case only folds where paths do (Windows); on Linux INTRO.MP4 is a
+        # different file from intro.mp4.
+        if os.path.normcase("A") == "a":
+            scruffy = scruffy.upper()
 
         stats = reconcile_prerolls(
             self.db, self.temp_dir.name, ignored_path_keys={self._norm(scruffy)}

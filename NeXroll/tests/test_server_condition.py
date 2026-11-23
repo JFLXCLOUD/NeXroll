@@ -6,6 +6,7 @@ servers it names, with its Otherwise playing everywhere else.
 """
 import datetime
 import json
+import os
 from unittest.mock import Mock, patch
 
 import pytest
@@ -90,7 +91,8 @@ def test_the_plugin_gets_its_own_prerolls(db, two_folders, header, expected):
 def test_plex_gets_the_otherwise(db, two_folders):
     schedule, files = two_folders
     connector = Mock()
-    connector.get_server_info.return_value = {"platform": "Windows"}  # the test paths are Windows paths
+    # The platform the test's temp paths belong to (Plex refuses another style).
+    connector.get_server_info.return_value = {"platform": "Windows" if os.name == "nt" else "Linux"}
     connector.set_preroll.return_value = True
     scheduler = sched.Scheduler()
     with patch.object(sched, 'PlexConnector', return_value=connector), \

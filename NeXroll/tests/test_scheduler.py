@@ -462,7 +462,8 @@ class SequentialSequenceResolutionTests(unittest.TestCase):
         dropped from the blended playlist and a preroll whose file no longer
         existed was still published to Plex."""
         connector = MagicMock()
-        connector.get_server_info.return_value = {"platform": "Windows"}
+        # The platform the test's temp paths belong to (Plex refuses another style).
+        connector.get_server_info.return_value = {"platform": "Windows" if os.name == "nt" else "Linux"}
         connector.set_preroll.return_value = True
 
         with self.Session() as db, patch.object(
@@ -500,7 +501,8 @@ class SequentialSequenceResolutionTests(unittest.TestCase):
 
     def test_sequential_only_schedule_and_saved_filler_apply_identically(self):
         connector = MagicMock()
-        connector.get_server_info.return_value = {"platform": "Windows"}
+        # The platform the test's temp paths belong to (Plex refuses another style).
+        connector.get_server_info.return_value = {"platform": "Windows" if os.name == "nt" else "Linux"}
         connector.set_preroll.return_value = True
         schedule = make_schedule(
             name="Sequential schedule",
