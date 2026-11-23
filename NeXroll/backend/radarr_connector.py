@@ -629,6 +629,10 @@ class RadarrConnector:
         return None
 
 
+_AGE_GATE_PHRASES = ('confirm your age', 'age-restricted', 'age restricted', 'age-gated',
+                     'inappropriate for some users')
+
+
 def classify_ytdlp_error(msg: str) -> dict:
     """Map a yt-dlp error string to a stable category + user-facing guidance.
 
@@ -638,6 +642,13 @@ def classify_ytdlp_error(msg: str) -> dict:
     re-export cookies when the cookies are fine and only that video is bad.
     """
     m = (msg or '').lower()
+    # YouTube's age gate ("Sign in to confirm your age. This video may be
+    # inappropriate for some users.") starts with the same words as the bot
+    # wall ("Sign in to confirm you're not a bot"), so it is checked first.
+    # Before, every age-restricted trailer was reported as a bot block.
+    if (any(s in m for s in _AGE_GATE_PHRASES)
+            or (re.search(r'\bage\b', m) and 'restrict' in m)):
+        return {'category': 'age_restricted', 'reason': 'This video is age-restricted. Signed-in cookies are required for this one specifically.'}
     if any(s in m for s in ["sign in to confirm", "who's watching", 'not a bot',
                             'confirm you', 'sign in to view']):
         return {'category': 'auth', 'reason': 'YouTube is requiring sign-in (bot wall). Your cookies are missing, stale, or rate-limited.'}
@@ -645,8 +656,6 @@ def classify_ytdlp_error(msg: str) -> dict:
                             'no longer available', 'this video is not available', 'members-only',
                             'account associated with this video has been terminated']):
         return {'category': 'video_unavailable', 'reason': 'This specific video is unavailable (private, removed, members-only, or region-locked) - not a cookie problem.'}
-    if 'age' in m and ('restrict' in m or 'confirm' in m):
-        return {'category': 'age_restricted', 'reason': 'This video is age-restricted. Signed-in cookies are required for this one specifically.'}
     if 'http error 429' in m or 'too many requests' in m:
         return {'category': 'rate_limited', 'reason': 'YouTube is rate-limiting your IP. Wait a while, or try a VPN/different network.'}
     if 'unable to download video data' in m and '403' in m:
@@ -1207,6 +1216,9 @@ class TrailerDownloader:
 
                     # Track if cookies were tried and failed with bot detection
                     cookies_tried_but_failed = False
+                    # ... or still hit the age gate (expired cookies, or an
+                    # account that can't watch age-restricted videos).
+                    age_gate_with_cookies = False
                     source_too_long = False
                     best_error = None       # most specific classified yt-dlp error seen
                     last_strategy_msg = None  # raw text of the last failure
@@ -1235,12 +1247,20 @@ class TrailerDownloader:
                         if isinstance(result, dict) and result.get('message'):
                             last_strategy_msg = result['message']
                             cls = classify_ytdlp_error(last_strategy_msg)
-                            if best_error is None and cls['category'] in (
+                            if cls['category'] in (
                                     'video_unavailable', 'age_restricted', 'rate_limited', 'auth',
-                                    'sabr_blocked'):
+                                    'sabr_blocked') and (
+                                    best_error is None
+                                    # A client that reached the age gate got past the
+                                    # bot wall, so the age gate is the real reason.
+                                    or (cls['category'] == 'age_restricted'
+                                        and best_error['category'] == 'auth')):
                                 best_error = {'category': cls['category'], 'raw': last_strategy_msg}
                             if '--cookies' in actual_args and cls['category'] == 'auth':
                                 cookies_tried_but_failed = True
+                            if (cls['category'] == 'age_restricted'
+                                    and ('--cookies' in actual_args or '--cookies-from-browser' in actual_args)):
+                                age_gate_with_cookies = True
                         # A None result carries no error text, so it says nothing
                         # about the cookies; treating it as a sign-in failure is
                         # what turned skipped downloads into YOUTUBE_BOT_BLOCK.
@@ -1281,6 +1301,13 @@ class TrailerDownloader:
                             "your country. This is the video itself, not your NeXroll setup, so retrying won't "
                             "help; use a different trailer if one is available."
                             + (f" [YouTube: {raw_short}]" if raw_short else "")
+                        )
+                    elif cat == 'age_restricted' and age_gate_with_cookies:
+                        last_error = (
+                            "AGE_RESTRICTED: This trailer is age-restricted, and YouTube still asked to sign in "
+                            "with your cookies. They may have expired, or the account can't watch age-restricted "
+                            "videos. Export fresh cookies from a signed-in adult account ('Advanced: sign in for "
+                            "age-restricted trailers' on the YouTube Downloads card), then retry."
                         )
                     elif cat == 'age_restricted':
                         last_error = (
@@ -1453,7 +1480,11 @@ class TrailerDownloader:
                     return {'success': True, 'info': info}
             except yt_dlp.utils.DownloadError as e:
                 error_msg = str(e)
-                if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+                category = classify_ytdlp_error(error_msg)['category']
+                if category == 'age_restricted':
+                    logger.warning(f"YouTube age restriction: {error_msg[:300]}")
+                    return {'success': False, 'error': 'age_restricted', 'message': error_msg[:300]}
+                elif category == 'auth':
                     logger.warning(f"YouTube bot detection: {error_msg[:300]}")
                     return {'success': False, 'error': 'bot_detection', 'message': error_msg[:300]}
                 else:

@@ -22581,7 +22581,10 @@ async def test_youtube_download(payload: dict = Body(default=None), db: Session 
                 "auth_method": auth_method,
                 "category": target.get('category'),
                 "error": f"Authentication is working ({auth_method}), but that specific video failed: {target.get('reason')}",
-                "hint": "Try a different trailer — this one looks unavailable rather than a cookie problem.",
+                "hint": ("This one is age-restricted: it needs cookies from a signed-in adult account "
+                         "('Advanced: sign in for age-restricted trailers'), or pick a different trailer."
+                         if target.get('category') == 'age_restricted'
+                         else "Try a different trailer — this one looks unavailable rather than a cookie problem."),
             }
         return {
             "success": True,
@@ -24273,6 +24276,13 @@ async def sync_nexup(db: Session = Depends(get_db)):
                             f"Couldn't look up '{movie['title']}' - "
                             + ("TMDB rejected the API key" if error_code == 'TMDB_KEY_REJECTED' else "no TMDB API key"))
                         _file_log(f"NeX-Up sync: '{movie['title']}' - {error_msg}")
+                    elif error_code == 'AGE_RESTRICTED':
+                        # One video's age gate, not a block on this install:
+                        # no cookie alarm and no ERROR event.
+                        error_msg = detail_msg.split(':', 1)[-1].strip()
+                        _nexup_sync_progress["status"] = f"'{movie['title']}' has an age-restricted trailer - it needs YouTube sign-in"
+                        results["errors"].append(f"{movie['title']}: {error_msg}")
+                        _file_log(f"NeX-Up sync: '{movie['title']}' - trailer is age-restricted")
                     elif 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
                         error_msg = "YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
                         _nexup_sync_progress["status"] = f"YouTube blocked '{movie['title']}' - try re-exporting cookies"

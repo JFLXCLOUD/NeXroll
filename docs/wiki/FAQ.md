@@ -236,6 +236,8 @@ Yes, at least one of them. NeX-Up fetches upcoming release information from thes
 
 First, if the **Download** button on the Upcoming tab works but sync skips the same trailers, check **Max Trailer Duration** in NeX-Up settings: sync skips trailers longer than it, and most trailers run 2 to 3 minutes. Before 2.2.2 these skips were reported as a YouTube sign-in block.
 
+If the message says the trailer is **age-restricted**, YouTube wants a signed-in adult account for that one video: add cookies from such an account (see [YouTube Cookies](NeX-Up#youtube-cookies-fallback)) or pick a different trailer. Earlier versions reported these as a YouTube bot block.
+
 Otherwise, YouTube has aggressive bot detection. Try:
 1. **Upload YouTube cookies** — Export from an incognito browser session
 2. **Try a different VPN IP** — YouTube may have blocked your current IP

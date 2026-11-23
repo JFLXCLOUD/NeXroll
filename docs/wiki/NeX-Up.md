@@ -329,6 +329,8 @@ Trailers download in a **Plex-friendly H.264** format so they play correctly as 
 
 The PO-token provider handles most cases. If you still hit blocks (age-restricted or region-locked trailers), you can additionally supply a cookies file exported from your browser.
 
+An **age-restricted** trailer is reported as one: YouTube wants a signed-in adult account for that video, so add cookies from such an account or pick a different trailer. Earlier versions reported these as a YouTube bot block.
+
 ### Why Cookies?
 
 - Bypasses age restrictions
