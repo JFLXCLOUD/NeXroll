@@ -37,12 +37,17 @@ from urllib.error import URLError
 # bgutil's default port; the yt-dlp plugin auto-connects here with no config.
 DEFAULT_PORT = 4416
 
-# The provider release NeXroll installs and runs. 2.0.0 fixed a remote code
-# execution hole (GHSA-qpv9-8xfj-xx9m) in servers listening on every network
-# interface, which earlier releases did by default and NeXroll started them
-# that way. Keep in sync with BGUTIL_VERSION in the Dockerfile and the
-# bgutil-ytdlp-pot-provider pin in requirements.txt.
-PROVIDER_VERSION = "2.0.0"
+# The oldest provider NeXroll will run. 2.0.0 fixed a remote code execution
+# hole (GHSA-qpv9-8xfj-xx9m) in servers listening on every network interface,
+# which earlier releases did by default and NeXroll started them that way.
+MIN_PROVIDER_VERSION = "2.0.0"
+
+# The provider release NeXroll installs (Windows) and builds into the image.
+# 2.0.1 and 2.0.2 only update the server's npm dependencies for security
+# advisories, so an installed 2.0.x keeps running and the NeX-Up and System
+# pages offer the update. Keep in sync with BGUTIL_VERSION in the Dockerfile
+# and the bgutil-ytdlp-pot-provider pin in requirements.txt.
+PROVIDER_VERSION = "2.0.2"
 
 
 def _version_tuple(value) -> tuple:
@@ -65,7 +70,14 @@ def installed_provider_version(server_dir) -> Optional[str]:
 
 
 def provider_is_outdated(server_dir) -> bool:
-    """True when an installed provider predates PROVIDER_VERSION."""
+    """True when an installed provider predates MIN_PROVIDER_VERSION: it must not run."""
+    installed = installed_provider_version(server_dir)
+    return bool(installed) and _version_tuple(installed) < _version_tuple(MIN_PROVIDER_VERSION)
+
+
+def provider_update_available(server_dir) -> bool:
+    """True when an installed provider predates PROVIDER_VERSION (the release
+    NeXroll installs). Includes outdated ones; a newer one is left alone."""
     installed = installed_provider_version(server_dir)
     return bool(installed) and _version_tuple(installed) < _version_tuple(PROVIDER_VERSION)
 
@@ -301,7 +313,7 @@ class POTokenManager:
                 # NeX-Up page offers the update.
                 self._log(
                     f"[potoken] not starting provider {installed_provider_version(sdir)}: "
-                    f"{PROVIDER_VERSION} or later is required (security fix). "
+                    f"{MIN_PROVIDER_VERSION} or later is required (security fix). "
                     f"Update it from the NeX-Up settings page."
                 )
                 return self.status()
@@ -434,8 +446,12 @@ class POTokenManager:
             "base_url": self.base_url,
             "version": self.provider_version() if healthy else None,
             "installed_version": installed_provider_version(sdir),
-            "required_version": PROVIDER_VERSION,
+            "required_version": MIN_PROVIDER_VERSION,
             "outdated": provider_is_outdated(sdir),
+            # Runs, but a newer release with security fixes is what NeXroll
+            # installs now: offer Update without stopping anything.
+            "recommended_version": PROVIDER_VERSION,
+            "update_available": provider_update_available(sdir) and not provider_is_outdated(sdir),
             # Usable means yt-dlp will actually get tokens: plugin importable AND
             # a healthy server to talk to.
             "usable": bool(is_plugin_installed() and healthy),

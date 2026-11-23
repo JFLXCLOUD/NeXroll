@@ -3258,7 +3258,10 @@ def system_dependencies():
         dependencies["potoken"]["version"] = pot_status.get("version")
         dependencies["potoken"]["path"] = pot_status.get("server_dir")
         dependencies["potoken"]["detail"] = pot_status
-        dependencies["potoken"]["installable"] = (not is_docker) and not bool(pot_status.get("usable"))
+        # A running provider older than the release NeXroll installs is offered
+        # as an update (security releases of its dependencies).
+        dependencies["potoken"]["installable"] = (not is_docker) and (
+            not bool(pot_status.get("usable")) or bool(pot_status.get("update_available")))
     except Exception as _pe:
         print(f"potoken dependency probe failed: {_pe}")
 
@@ -3428,8 +3431,9 @@ def install_ytdlp():
 # an older Node are handled at launch via --experimental-require-module
 # (see nexup_potoken._needs_require_module_flag).
 _NODE_VERSION = "22.12.0"
-# The provider release is set in nexup_potoken.PROVIDER_VERSION (2.0.0 fixed a
-# remote code execution hole), which also keeps an older install from starting.
+# The provider release is set in nexup_potoken.PROVIDER_VERSION; its
+# MIN_PROVIDER_VERSION (2.0.0 fixed a remote code execution hole) keeps an
+# older install from starting.
 from backend.nexup_potoken import PROVIDER_VERSION as _BGUTIL_VERSION
 
 
@@ -3531,12 +3535,12 @@ def install_potoken():
             os.replace(staging, server_dir)
 
         if (os.path.isfile(os.path.join(server_dir, "build", "main.js"))
-                and not nexup_potoken.provider_is_outdated(server_dir)):
+                and not nexup_potoken.provider_update_available(server_dir)):
             steps.append("Provider already built.")
         else:
             if os.path.isfile(os.path.join(server_dir, "build", "main.js")):
                 steps.append(f"Updating provider {nexup_potoken.installed_provider_version(server_dir)} "
-                             f"to {_BGUTIL_VERSION} (security fix)...")
+                             f"to {_BGUTIL_VERSION} (security fixes)...")
             steps.append("Downloading PO-token provider...")
             url = f"https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{_BGUTIL_VERSION}.zip"
             tmpzip = os.path.join(tempfile.gettempdir(), f"bgutil-{_BGUTIL_VERSION}.zip")
@@ -3591,13 +3595,15 @@ def install_potoken():
                 pass
 
             # Same dependency fix as the Docker image (the Dockerfile's potoken
-            # stage): basic-ftp's DoS fix (CVE-2026-102990) is only in 6.x, outside
-            # the range get-uri allows, so pin it with an npm override.
+            # stage): basic-ftp's DoS fixes (CVE-2026-102990 in 6.2.1,
+            # GHSA-r4jh-29pc-gfqr and GHSA-5pm8-86m8-9m6r in 6.2.4) are outside the
+            # range get-uri allows, and the provider's own override (2.0.2) pins
+            # 6.2.1 exactly, so replace it with ours.
             try:
                 pkg_path = os.path.join(server_dir, "package.json")
                 with open(pkg_path, encoding="utf-8") as fh:
                     pkg = json.load(fh)
-                pkg.setdefault("overrides", {})["basic-ftp"] = "^6.2.1"
+                pkg.setdefault("overrides", {})["basic-ftp"] = "^6.2.6"
                 with open(pkg_path, "w", encoding="utf-8") as fh:
                     json.dump(pkg, fh, indent=2)
             except Exception as pkg_err:

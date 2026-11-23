@@ -321,6 +321,8 @@ NeXroll downloads trailers from YouTube **without cookies** using a built-in **P
 
 The provider only accepts connections from the machine NeXroll runs on. **Updating from 2.2.0 or earlier on Windows:** the card shows **Update needed** and NeXroll no longer starts the old provider, because versions before 2.0.0 accepted connections from the whole network and had a security flaw reachable that way. Click **Update** once; YouTube downloads carry on as before. Docker images from 2.2.1 already include the fixed provider.
 
+When a newer provider release only carries security fixes for its dependencies (2.0.1 and 2.0.2 are such releases), the installed one keeps running and **Provider dependency** offers **Update**. On Docker, pulling the latest image updates it.
+
 Trailers download in a **Plex-friendly H.264** format so they play correctly as prerolls (older builds could grab AV1, which silently failed on Plex).
 
 > If a specific trailer is unavailable or blocked, NeX-Up offers a **pick-an-alternate-trailer** flow so you can choose a working one.

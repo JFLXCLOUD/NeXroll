@@ -32,9 +32,10 @@ RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 # ERR_REQUIRE_ESM. Keep BGUTIL_VERSION in sync with the bgutil-ytdlp-pot-provider
 # pin in requirements.txt and PROVIDER_VERSION in backend/nexup_potoken.py.
 # 2.0.0 fixes a remote code execution hole (GHSA-qpv9-8xfj-xx9m) in servers
-# listening on every interface, which 1.x did by default.
+# listening on every interface, which 1.x did by default; 2.0.1 and 2.0.2 are
+# security releases of its npm dependencies.
 FROM node:22-bookworm-slim AS potoken
-ARG BGUTIL_VERSION=2.0.0
+ARG BGUTIL_VERSION=2.0.2
 # ca-certificates is required for the HTTPS git clone below (the slim node image
 # ships without it, so the clone fails with "server certificate verification
 # failed"). git pulls the provider; the rest are a fallback toolchain in case
@@ -50,15 +51,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # dependencies that fit the provider's version ranges; it never changes a
 # major version, and a registry outage does not fail the build.
 # basic-ftp is the exception: proxy-agent > pac-proxy-agent > get-uri pins
-# ^5.3.1, and its directory-listing DoS (CVE-2026-102990) is fixed only in
-# 6.2.1. get-uri uses the same Client calls in 6.x, and the provider only
-# reaches FTP for an ftp:// proxy auto-config URL, so the override is safe.
+# ^5.3.1, its directory-listing DoS (CVE-2026-102990) is fixed only in 6.2.1,
+# and two more crashes (GHSA-r4jh-29pc-gfqr, GHSA-5pm8-86m8-9m6r) in 6.2.4.
+# The provider's own override (2.0.2) pins 6.2.1 exactly; ours replaces it.
+# get-uri uses the same Client calls in 6.x, and the provider only reaches FTP
+# for an ftp:// proxy auto-config URL, so the override is safe.
 RUN git clone --depth 1 --branch ${BGUTIL_VERSION} \
         https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil-provider && \
     cd /opt/bgutil-provider/server && \
     npm ci --no-audit --no-fund && \
     npx tsc && \
-    npm pkg set 'overrides.basic-ftp=^6.2.1' && \
+    npm pkg set 'overrides.basic-ftp=^6.2.6' && \
     npm install --no-audit --no-fund && \
     (npm audit fix --omit=dev --no-fund || true) && \
     npm prune --omit=dev --no-audit --no-fund && \

@@ -24343,7 +24343,7 @@ const DashboardTiles = {
   // Install the provider from the NeX-Up card (reuses the System-page installer).
   const handleInstallPotokenFromNexup = async () => {
     setInstallingDep('potoken');
-    const updating = Boolean(potoken.status?.outdated);
+    const updating = Boolean(potoken.status?.outdated || potoken.status?.update_available);
     try {
       showAlert(`${updating ? 'Updating' : 'Installing'} the YouTube downloader (this can take a few minutes)…`, 'info');
       const res = await fetch(apiUrl('system/dependencies/install/potoken'), { method: 'POST', credentials: 'include' });
@@ -32356,7 +32356,9 @@ const DashboardTiles = {
                 <div className="nx-sys-row-name">YouTube PO-Token Provider</div>
                 <div className="nx-sys-note">
                   {systemDependencies?.dependencies?.potoken?.available
-                    ? `Active${systemDependencies.dependencies.potoken.version ? ' (bgutil ' + systemDependencies.dependencies.potoken.version + ')' : ''} — cookieless YouTube downloads enabled`
+                    ? (systemDependencies.dependencies.potoken.detail?.update_available
+                        ? `Active${systemDependencies.dependencies.potoken.version ? ' (bgutil ' + systemDependencies.dependencies.potoken.version + ')' : ''} — update to ${systemDependencies.dependencies.potoken.detail.recommended_version} for security fixes`
+                        : `Active${systemDependencies.dependencies.potoken.version ? ' (bgutil ' + systemDependencies.dependencies.potoken.version + ')' : ''} — cookieless YouTube downloads enabled`)
                     : (systemDependencies
                         ? (systemDependencies.dependencies?.potoken?.detail?.outdated
                             ? `Version ${systemDependencies.dependencies.potoken.detail.installed_version} has a security flaw fixed in ${systemDependencies.dependencies.potoken.detail.required_version}; update it to use it again`
@@ -32385,8 +32387,8 @@ const DashboardTiles = {
                   style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
                 >
                   {installingDep === 'potoken'
-                    ? <><Loader2 size={14} className="spin" /> {systemDependencies?.dependencies?.potoken?.detail?.outdated ? 'Updating…' : 'Installing…'}</>
-                    : <><Download size={14} /> {systemDependencies?.dependencies?.potoken?.detail?.outdated ? 'Update Provider' : 'Install Provider'}</>}
+                    ? <><Loader2 size={14} className="spin" /> {(systemDependencies?.dependencies?.potoken?.detail?.outdated || systemDependencies?.dependencies?.potoken?.detail?.update_available) ? 'Updating…' : 'Installing…'}</>
+                    : <><Download size={14} /> {(systemDependencies?.dependencies?.potoken?.detail?.outdated || systemDependencies?.dependencies?.potoken?.detail?.update_available) ? 'Update Provider' : 'Install Provider'}</>}
                 </button>
               )}
             </div>
