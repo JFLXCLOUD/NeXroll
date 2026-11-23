@@ -14,6 +14,11 @@ name: Scheduled Docker Refresh (floating tags)
 # here — those stay immutable snapshots of what was actually released. The
 # minor and major tags (:2.2, :2) are rebuilt with :latest, so people who pin
 # to them get the yt-dlp refresh as well.
+#
+# Each job builds the amd64 image first and runs the release's backend tests
+# inside it; nothing is pushed unless they pass. requirements.txt sets only
+# minimums, so a breaking upstream release stops here and last week's image
+# stays in place.
 
 on:
   schedule:
@@ -127,6 +132,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Nothing is pushed until the backend tests pass inside the amd64 image
+      # (the same step as docker-ci.yml). The push below reuses its layers.
+      - name: Build the amd64 image for the tests
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: nexroll:test
+          build-args: |
+            VERSION=${{ needs.resolve-refs.outputs.stable_tag }}
+          cache-from: type=gha
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Backend tests in the image
+        run: |
+          python -m pip install --quiet --target "$RUNNER_TEMP/pytest" pytest
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/pytest:/opt/pytest:ro" \
+            -e PYTHONPATH=/opt/pytest -w /src/NeXroll \
+            nexroll:test python -m pytest -q -p no:cacheprovider tests
+
       - name: Build and push :latest and its minor and major tags
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -174,6 +205,32 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Nothing is pushed until the backend tests pass inside the amd64 image
+      # (the same step as docker-ci.yml). The push below reuses its layers.
+      - name: Build the amd64 image for the tests
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: nexroll:test
+          build-args: |
+            VERSION=${{ needs.resolve-refs.outputs.beta_tag }}
+          cache-from: type=gha
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Backend tests in the image
+        run: |
+          python -m pip install --quiet --target "$RUNNER_TEMP/pytest" pytest
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/pytest:/opt/pytest:ro" \
+            -e PYTHONPATH=/opt/pytest -w /src/NeXroll \
+            nexroll:test python -m pytest -q -p no:cacheprovider tests
 
       - name: Build and push :beta
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0

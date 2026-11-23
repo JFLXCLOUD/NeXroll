@@ -161,6 +161,33 @@ jobs:
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Using tags: ${VERSION} ${FLOATING}"
 
+      # Nothing is pushed until the release's backend tests pass inside the
+      # amd64 image (the same step as docker-ci.yml): packages resolve at build
+      # time from minimums in requirements.txt. The push below reuses its layers.
+      - name: Build the amd64 image for the tests
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: nexroll:test
+          build-args: |
+            VERSION=${{ steps.version.outputs.tag }}
+          cache-from: type=gha
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Backend tests in the image
+        run: |
+          python -m pip install --quiet --target "$RUNNER_TEMP/pytest" pytest
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/pytest:/opt/pytest:ro" \
+            -e PYTHONPATH=/opt/pytest -w /src/NeXroll \
+            nexroll:test python -m pytest -q -p no:cacheprovider tests
+
       - name: Build and push Docker image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:

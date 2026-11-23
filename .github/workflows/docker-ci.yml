@@ -4,7 +4,9 @@ name: Docker image
 # runs on a published release, so until now nothing exercised the Dockerfile
 # before it shipped -- a change could be merged, tagged, and only fail when the
 # release build ran. Deliberately amd64-only and never pushed: the release
-# workflow still does the full multi-arch push.
+# workflow still does the full multi-arch push. The backend tests run inside
+# the image here, as they do in the release build and the weekly refresh
+# before either pushes.
 on:
   pull_request:
     paths:
@@ -55,6 +57,21 @@ jobs:
       # yt-dlp needs Deno for YouTube; it comes from Deno's binary image.
       - name: Deno runs
         run: docker run --rm nexroll:ci deno --version
+
+      # The backend tests inside the image: its Python and the exact packages it
+      # ships, with its ffmpeg, fonts and tzdata. The image has no pip, so pytest
+      # comes from the runner; the checkout is mounted read-only. The release
+      # build and the weekly refresh run the same step before they push.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Backend tests in the image
+        run: |
+          python -m pip install --quiet --target "$RUNNER_TEMP/pytest" pytest
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/pytest:/opt/pytest:ro" \
+            -e PYTHONPATH=/opt/pytest -w /src/NeXroll \
+            nexroll:ci python -m pytest -q -p no:cacheprovider tests
 
       - name: Backend starts and answers /health
         run: |
