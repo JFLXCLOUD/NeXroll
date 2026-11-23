@@ -122,6 +122,10 @@ RUN apt-get update && \
         curl \
         unzip \
         tzdata \
+        # Zone names such as US/Eastern and Canada/Eastern, which Sonarr and
+        # Radarr users often copy into TZ. Debian 13 moved them out of tzdata;
+        # without this package they silently meant UTC.
+        tzdata-legacy \
         # DejaVu + Liberation fonts so FFmpeg drawtext can render extended-Latin
         # glyphs (German umlauts ä/ö/ü, accents, etc.) in generated prerolls /
         # Coming Soon lists. Without a real fontfile, drawtext falls back to a

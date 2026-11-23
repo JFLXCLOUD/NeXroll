@@ -58,6 +58,18 @@ jobs:
       - name: Deno runs
         run: docker run --rm nexroll:ci deno --version
 
+      # Debian 13 keeps names like US/Eastern in tzdata-legacy; without it a
+      # TZ copied from a Sonarr or Radarr container silently meant UTC. The
+      # check reads the offset, since glibc's fallback name for an unknown
+      # zone isn't reliably "UTC". America/New_York is the control.
+      - name: Legacy time zone names resolve
+        run: |
+          for zone in America/New_York US/Eastern Canada/Eastern US/Pacific; do
+            offset=$(docker run --rm -e TZ="$zone" nexroll:ci python -c "import time; print(time.strftime('%z'))")
+            echo "$zone: $offset"
+            [ "$offset" != "+0000" ] || { echo "::error::TZ=$zone resolved to UTC"; exit 1; }
+          done
+
       # The backend tests inside the image: its Python and the exact packages it
       # ships, with its ffmpeg, fonts and tzdata. The image has no pip, so pytest
       # comes from the runner (pure Python, so it also runs in an image built
